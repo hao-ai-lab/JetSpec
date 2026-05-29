@@ -82,3 +82,44 @@ class LLM:
 
         text = self.tokenizer.decode(out_ids, skip_special_tokens=True)
         return {"token_ids": out_ids, "text": text}
+
+    @torch.inference_mode()
+    def generate_chain(self, prompt, drafter, block_size: int = 4, sampling_params: SamplingParams = None) -> dict:
+        """Chain (linear) speculative decode. Each round: the drafter proposes
+        `block_size-1` tokens, the target verifies them in one forward, and we
+        accept the longest prefix the target agrees with (greedy) plus one
+        correction token. Lossless — the output equals plain greedy regardless of
+        draft quality. Recompute-based (no KV reuse yet; M1a validates the accept
+        logic, not speed). Returns {token_ids, text, tpf}, tpf = new / forwards."""
+        sp = sampling_params or SamplingParams()
+        if isinstance(prompt, str):
+            committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+        else:
+            committed = prompt.to(self.device)
+        k = max(1, block_size - 1)
+        new_ids, rounds = [], 0
+        while len(new_ids) < sp.max_new_tokens:
+            drafts = drafter.propose(committed, k).to(self.device).view(-1)[:k]   # (k,)
+            seq = torch.cat([committed, drafts.view(1, -1)], dim=1)               # (1, p+k)
+            p = committed.shape[1]
+            pos = torch.arange(seq.shape[1], device=self.device).unsqueeze(0)
+            logits = self.model(input_ids=seq, position_ids=pos, use_cache=False).logits
+            rounds += 1
+            tgt = logits[0, p - 1:, :].argmax(-1)    # (k+1,) target greedy at the boundary positions
+            acc = 0
+            for i in range(k):
+                if int(drafts[i]) == int(tgt[i]):
+                    acc += 1
+                else:
+                    break
+            block_new = torch.cat([drafts[:acc], tgt[acc].view(1)])   # accepted drafts + 1 correction
+            committed = torch.cat([committed, block_new.view(1, -1)], dim=1)
+            for t in block_new.tolist():
+                new_ids.append(int(t))
+                if int(t) in self.eos_token_ids:
+                    break
+            if new_ids and new_ids[-1] in self.eos_token_ids:
+                break
+        new_ids = new_ids[: sp.max_new_tokens]
+        text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+        return {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
