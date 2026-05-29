@@ -123,3 +123,62 @@ class LLM:
         new_ids = new_ids[: sp.max_new_tokens]
         text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
         return {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
+
+    @torch.inference_mode()
+    def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
+                      budget: int = 15, algo: str = "crossproduct", sampling_params: SamplingParams = None) -> dict:
+        """Tree speculative decode. Each round: the tree drafter emits per-depth
+        logits, the tree algorithm builds a DraftTree, the target verifies all
+        nodes in one forward under a 4D ancestor mask, and tree_accept takes the
+        longest greedy-agreeing root-to-leaf path + a correction. Lossless —
+        output equals plain greedy. Recompute-based (validates the tree verify,
+        not speed). Returns {token_ids, text, tpf}."""
+        from ptd.tree import get_algorithm
+        from ptd.tree._core.ancestor import build_ancestor_matrix
+        from ptd.tree._core.accept import tree_accept
+
+        sp = sampling_params or SamplingParams()
+        if isinstance(prompt, str):
+            committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+        else:
+            committed = prompt.to(self.device)
+        D = max(1, block_size - 1)
+        algo_obj = get_algorithm(algo)
+        dtype = self.model.dtype
+        neg = torch.finfo(dtype).min
+        new_ids, rounds = [], 0
+        while len(new_ids) < sp.max_new_tokens:
+            draft_logits = tree_drafter.propose_logits(committed, D).to(self.device)      # (1, D, V)
+            tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device)
+            N = tree.num_nodes
+            prefix = committed[:, :-1]              # tokens before the anchor (= tree root)
+            P = prefix.shape[1]
+            seq = torch.cat([prefix, tree.token_ids.view(1, -1)], dim=1)                  # (1, P+N)
+            depths = tree.depth.tolist()
+            pos = torch.tensor([list(range(P)) + [P + d for d in depths]], device=self.device)
+            # 4D additive mask: prefix causal · every node sees all prefix · nodes see ancestors (incl self)
+            T = P + N
+            allowed = torch.zeros(T, T, dtype=torch.bool, device=self.device)
+            if P > 0:
+                allowed[:P, :P] = torch.tril(torch.ones(P, P, dtype=torch.bool, device=self.device))
+                allowed[P:, :P] = True
+            allowed[P:, P:] = build_ancestor_matrix(tree).bool()
+            mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
+                               torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, T, T)
+            logits = self.model(input_ids=seq, position_ids=pos, attention_mask=mask, use_cache=False).logits
+            target_logits = logits[:, P:, :]                                              # (1, N, V)
+            accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+            accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
+                else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
+            block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
+            committed = torch.cat([committed, block.view(1, -1)], dim=1)
+            rounds += 1
+            for t in block.tolist():
+                new_ids.append(int(t))
+                if int(t) in self.eos_token_ids:
+                    break
+            if new_ids and new_ids[-1] in self.eos_token_ids:
+                break
+        new_ids = new_ids[: sp.max_new_tokens]
+        text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+        return {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}

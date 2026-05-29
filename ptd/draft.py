@@ -63,3 +63,56 @@ class TargetEchoDrafter(Drafter):
             out.append(nxt)
             cur += 1
         return torch.cat(out, dim=1)[0]  # (k,)
+
+
+class TreeDrafter(ABC):
+    """A tree drafter emits per-depth logits `(1, D, vocab)`; the tree algorithm
+    (crossproduct, ...) turns those into a DraftTree. The real DraftHead emits
+    these from one forward; the stubs below validate the tree verify path."""
+
+    @abstractmethod
+    def propose_logits(self, context_ids: torch.Tensor, depth: int) -> torch.Tensor:
+        ...
+
+
+class RandomTreeDrafter(TreeDrafter):
+    """Trivial stub — random per-depth logits → a random tree. Lossless."""
+
+    def __init__(self, vocab_size: int):
+        self.vocab_size = vocab_size
+
+    def propose_logits(self, context_ids: torch.Tensor, depth: int) -> torch.Tensor:
+        return torch.randn(1, depth, self.vocab_size, device=context_ids.device)
+
+
+class TargetEchoTreeDrafter(TreeDrafter):
+    """Testing stub — per-depth logits = the target's OWN greedy logits, so the
+    crossproduct top-1 path IS the greedy chain → the verify accepts the full
+    depth. Proves losslessness + the multi-node-accept path (runs the target, so
+    no real speedup)."""
+
+    def __init__(self, model):
+        self.model = model
+
+    @torch.inference_mode()
+    def propose_logits(self, context_ids: torch.Tensor, depth: int) -> torch.Tensor:
+        from transformers import DynamicCache
+
+        ids = context_ids
+        cache = DynamicCache()
+        pos = torch.arange(ids.shape[1], device=ids.device).unsqueeze(0)
+        logits = self.model(
+            input_ids=ids, position_ids=pos, past_key_values=cache, use_cache=True
+        ).logits
+        cols = [logits[:, -1:, :]]            # logits predicting the depth-1 token
+        nxt = logits[:, -1:, :].argmax(-1)
+        cur = ids.shape[1]
+        for _ in range(depth - 1):
+            p = torch.tensor([[cur]], device=ids.device)
+            logits = self.model(
+                input_ids=nxt, position_ids=p, past_key_values=cache, use_cache=True
+            ).logits
+            cols.append(logits[:, -1:, :])
+            nxt = logits[:, -1:, :].argmax(-1)
+            cur += 1
+        return torch.cat(cols, dim=1)         # (1, depth, vocab)
