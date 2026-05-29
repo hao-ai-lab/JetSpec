@@ -1,9 +1,9 @@
 """The single place the engine touches the model forward.
 
-M0: a thin pass-through to the HF target with an explicit `position_ids` and an
-HF `DynamicCache`. M1 extends this with the draft-head forward and the tree-mask
-path (a 4D additive ancestor mask passed to the same HF forward); M2 swaps the
-mask path for a Triton tree-attention kernel.
+Today: a thin pass-through to the HF target with an explicit `position_ids` and
+an HF `DynamicCache`. The draft-head forward and the tree-mask path (a 4D additive
+ancestor mask passed to the same HF forward) build on this; a dedicated
+tree-attention kernel later swaps out the mask path.
 """
 import torch
 

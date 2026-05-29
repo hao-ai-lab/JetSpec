@@ -1,9 +1,9 @@
 """Offline single-stream LLM — a small nano-vLLM-style API.
 
-M0: plain autoregressive greedy/temperature decode over an HF `DynamicCache`
+Plain autoregressive greedy/temperature decode over an HF `DynamicCache`
 (prefill the prompt once, then single-token decode steps reusing the cache).
-This is the 1x baseline and the seam M1 extends with the draft head + tree
-verify. Single sequence, batch=1 (the offline-inference regime).
+This is the 1x baseline; the draft head + tree verify build on the same seam.
+Single sequence, batch=1 (the offline-inference regime).
 """
 from dataclasses import dataclass
 
@@ -89,7 +89,7 @@ class LLM:
         `block_size-1` tokens, the target verifies them in one forward, and we
         accept the longest prefix the target agrees with (greedy) plus one
         correction token. Lossless — the output equals plain greedy regardless of
-        draft quality. Recompute-based (no KV reuse yet; M1a validates the accept
+        draft quality. Recompute-based (no KV reuse yet — this validates the accept
         logic, not speed). Returns {token_ids, text, tpf}, tpf = new / forwards."""
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):

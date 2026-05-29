@@ -1,5 +1,5 @@
-"""M1a gate: chain speculative decoding is lossless — its output must equal plain
-greedy (M0) regardless of draft quality — and the verify loop must accept the
+"""Chain spec-decode gate: chain speculative decoding is lossless — its output must
+equal plain greedy regardless of draft quality — and the verify loop must accept the
 target's own drafts (multi-token accept). Needs CUDA + Qwen3-8B; run on b200.
 
     PTD_TEST_MODEL=Qwen/Qwen3-8B pytest tests/test_chain_lossless.py -x

@@ -1,4 +1,4 @@
-"""Minimal M0 demo: offline greedy generation.
+"""Minimal demo: offline greedy generation.
 
     python examples/simple_generate.py [model_name_or_path]
 """

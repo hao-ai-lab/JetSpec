@@ -1,4 +1,4 @@
-"""M0 gate: the offline engine must be token-identical to HF greedy generation,
+"""Offline-baseline gate: the offline engine must be token-identical to HF greedy generation,
 and must reuse the KV cache (never reprocess the prefix). Needs CUDA + Qwen3-8B,
 so it is skipped on CPU/CI; run it on the b200.
 
@@ -43,7 +43,7 @@ def test_byte_identical_to_hf_greedy(llm, prompt, max_new):
 
 
 # Pinned reference: Qwen3-8B greedy, 64 new tokens, captured on b200
-# (transformers 4.57.1, aaron-specforge) via the M0 reproducer. Catches drift
+# (transformers 4.57.1, aaron-specforge) via the offline reproducer. Catches drift
 # even if HF generation changes — the engine must reproduce this exactly.
 REF_PROMPT = "Solve: what is 17 times 23? Answer:"
 REF_TOKEN_IDS = [

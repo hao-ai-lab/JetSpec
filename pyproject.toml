@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "parallel-tree-decoding"
 version = "0.0.1"
-description = "PTD — lightweight offline tree-speculative decoding on top of HF transformers. M0: the Qwen3-8B 1x autoregressive baseline."
+description = "PTD — lightweight offline tree-speculative decoding on top of HF transformers (Qwen3-8B)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

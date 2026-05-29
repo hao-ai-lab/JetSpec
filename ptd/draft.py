@@ -7,7 +7,7 @@ greedily, regardless of draft quality — so any drafter (even a trivial stub)
 yields output byte-identical to plain greedy. That property lets the chain
 plumbing be validated before the real drafter checkpoint exists.
 
-The real drafter (M1a', checkpoint-gated) is `DraftHead`: a JF-trained causal
+The real drafter (checkpoint-gated) is `DraftHead`: a JF-trained causal
 head sharing the target's `embed_tokens` + `lm_head` and tapping `target_hidden`
 (the DFlash convention). Its variants are *parameters*, not subclasses
 (`draft_shift` = the I-DLM shift, `block_size`, `target_layer_ids`, ...).

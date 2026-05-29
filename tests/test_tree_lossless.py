@@ -1,5 +1,5 @@
-"""M1b gate: tree speculative decoding is lossless — output equals plain greedy
-(M0) for any tree drafter — and the echo tree drafter (whose top-1 path is the
+"""Tree spec-decode gate: tree speculative decoding is lossless — output equals plain
+greedy for any tree drafter — and the echo tree drafter (whose top-1 path is the
 greedy chain) accepts the full depth. Needs CUDA + Qwen3-8B; run on b200.
 
     PTD_TEST_MODEL=Qwen/Qwen3-8B pytest tests/test_tree_lossless.py -x

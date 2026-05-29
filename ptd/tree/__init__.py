@@ -1,6 +1,6 @@
 """Tree-construction algorithms (migrated from spec-infer; engine-agnostic).
 
-M1b ships only the V0 baseline (crossproduct); V5 lands in M3. Each algorithm
+Ships the V0 baseline (crossproduct); the V5 fanout-cap variant lands later. Each algorithm
 consumes per-depth draft logits and returns a DraftTree; the engine verifies it
 with a 4D ancestor mask + tree_accept.
 """

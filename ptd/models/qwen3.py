@@ -1,7 +1,7 @@
 """Target-model loading.
 
 DFlash convention: the *target* is any HF causal LM loaded via
-`AutoModelForCausalLM` (no custom forward). The M1 draft head will subclass the
+`AutoModelForCausalLM` (no custom forward). The draft head subclasses the
 HF per-architecture model (e.g. `Qwen3PreTrainedModel`) and share the target's
 `embed_tokens` + `lm_head`; multiple target architectures are supported the same
 way (one per-target draft checkpoint), so this loader stays architecture-generic.
