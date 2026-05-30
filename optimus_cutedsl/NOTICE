@@ -1,0 +1,57 @@
+optimus_cutedsl — NOTICES AND ATTRIBUTIONS
+==========================================
+
+This package ("optimus", import name `optimus_cutedsl`) is a CuTe-DSL kernel
+library vendored into parallel-tree-decoding so the repository is a single clone
+with no submodules. The tail-tree speculative-decode kernel it provides is the
+one behind the paper's wall-clock TPS number. See LICENSE for the governing terms.
+
+Provenance map (per area)
+-------------------------
+
+flash_attn/  — CuTe-DSL port of Dao-AILab/flash-attention (BSD-3-Clause).
+  * flash_fwd*.py, flash_bwd*.py, flash_fwd_combine*.py, flash_fwd_sm90_paged.py,
+    interface.py, block_info.py, named_barrier.py
+      Copyright (c) 2025 Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar,
+      Pradeep Ramani, Tri Dao. Reimplements the Dao-AILab flash-attention CUDA
+      kernels (https://github.com/Dao-AILab/flash-attention).
+  * ampere_helpers.py, blackwell_helpers.py, hopper_helpers.py, utils.py,
+    cute_dsl_utils.py, pipeline.py, tile_scheduler.py, fast_math.py, mask.py,
+    pack_gqa.py, softmax.py — Copyright (c) 2025 Tri Dao.
+  * mma_sm100_desc.py — Copyright (c) 2025 Tri Dao; ported from NVIDIA CUTLASS C++.
+  * copy_utils.py — Copyright (c) 2025 Wentao Guo, Ted Zadouri, Tri Dao.
+  * flash_bwd_sm100.py — Copyright (c) 2025 Ted Zadouri, Markus Hoehnerbach,
+    Jay Shah, Tri Dao.
+
+gemm_ar/  — mixed.
+  * gemm_ar_kernel.py — Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES,
+    SPDX-License-Identifier: BSD-3-Clause (derived from NVIDIA CUTLASS).
+  * autotuner.py — Copyright (c) 2025 Tri Dao; adapts the Triton runtime
+    autotuner (https://github.com/triton-lang/triton).
+
+top-level optimus_cutedsl/*.py
+  * rmsnorm.py, reduction_base.py, copy_utils.py, utils.py
+      Copyright (c) 2025 Wentao Guo, Ted Zadouri, Tri Dao.
+  * cute_dsl_utils.py, fast_math.py, pipeline.py, reduce.py, tile_scheduler.py
+      Copyright (c) 2025 Tri Dao.
+  * symmetric_dense_gemm_sm90.py — Copyright (c) 2025 NVIDIA CORPORATION &
+    AFFILIATES, SPDX-License-Identifier: BSD-3-Clause (derived from NVIDIA CUTLASS).
+
+Project-original (MIT, see ../LICENSE) — the parts written for this project:
+  * flash_attn/flash_fwd_sm90_paged_tree.py — the SM90 paged tail-tree attention
+    kernel (entry point `flash_attn_varlen_tree_paged_sm90`).
+  * flash_attn/tail_tree_attn/* — the PyTorch reference + correctness harness for
+    tree-masked decode attention.
+  * _cutlass_monkeypatch.py and other files carrying no upstream copyright header.
+
+Local modifications made during vendoring
+-----------------------------------------
+  * qknorm_rope.py: the `from optimus_benchmarks.api import ...` line (benchmark
+    harness, not shipped, not used by the decode path) was made optional via
+    try/except so the module imports without it.
+
+Hardware note
+-------------
+The tail-tree kernel is SM90 (Hopper) only — there is no SM100/Blackwell tree
+variant. It imports cleanly on any box but only *runs* on Hopper. Reachability is
+gated in `ptd.engine.optimus` (capability check before import).

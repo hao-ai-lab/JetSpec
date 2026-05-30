@@ -17,7 +17,18 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+# Opt-in: the vendored optimus_cutedsl tail-tree attention kernel (Hopper / SM90
+# only). `pip install -e .` never pulls these; only `pip install -e '.[optimus]'`.
+optimus = [
+    "nvidia-cutlass-dsl==4.3.0.dev0",   # validated importable on b200 aaron-specforge
+    "cuda-python>=12.8",
+    "einops",
+    "triton",                            # imported by gemm_ar; undeclared upstream
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ptd*"]
+include = ["ptd*", "optimus_cutedsl*"]
+
+[tool.setuptools.package-data]
+"optimus_cutedsl" = ["LICENSE", "NOTICE", "**/*.md", "flash_attn/pyproject.toml"]

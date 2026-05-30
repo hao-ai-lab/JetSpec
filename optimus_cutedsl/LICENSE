@@ -1,0 +1,54 @@
+optimus_cutedsl — licensing
+===========================
+
+This directory is a vendored CuTe-DSL kernel package with mixed provenance. See
+NOTICE for the per-file attribution map. Three regimes apply:
+
+1. BSD-3-Clause — code derived from NVIDIA CUTLASS and the CuTe-DSL port of
+   Dao-AILab/flash-attention. Covered files include (non-exhaustive; see NOTICE):
+     symmetric_dense_gemm_sm90.py, gemm_ar/gemm_ar_kernel.py,
+     flash_attn/mma_sm100_desc.py, and the flash_attn/flash_{fwd,bwd}*.py family.
+
+2. BSD-3-Clause — the flash-attention CuTe-DSL reimplementation authored by
+   Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, Tri Dao
+   (and contributors Wentao Guo, Ted Zadouri, Markus Hoehnerbach). Upstream:
+   https://github.com/Dao-AILab/flash-attention (BSD-3-Clause).
+
+3. MIT — the project-original files (the tail-tree speculative-decode kernel and
+   its reference: flash_attn/flash_fwd_sm90_paged_tree.py,
+   flash_attn/tail_tree_attn/*, _cutlass_monkeypatch.py, and other unmarked files)
+   are released under the MIT license of the parent repository (see ../LICENSE).
+
+The full text of the BSD-3-Clause License governing regimes (1) and (2) follows.
+
+---------------------------------------------------------------------------
+
+BSD 3-Clause License
+
+Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Copyright (c) 2025, Tri Dao and the flash-attention authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
