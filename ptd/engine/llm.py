@@ -86,17 +86,25 @@ class LLM:
     @torch.inference_mode()
     def generate_chain(self, prompt, drafter, block_size: int = 4,
                        target_layer_ids=None, sampling_params: SamplingParams = None) -> dict:
-        """Chain (linear) speculative decode. Each round: the drafter proposes
-        `block_size-1` tokens, the target verifies them in one forward, and we
-        accept the longest prefix the target agrees with (greedy) plus one
-        correction token. Lossless — the output equals plain greedy regardless of
-        draft quality. Recompute-based (no KV reuse yet — this validates the accept
-        logic, not speed). Returns {token_ids, text, tpf}, tpf = new / forwards.
+        """Chain (linear) speculative decode over a persistent target KV cache.
+        Each round the drafter proposes `block_size-1` tokens; the target verifies
+        them in ONE forward that processes only [anchor | drafts] against the cached
+        prefix (no prefix recompute); we accept the longest greedy-agreeing prefix
+        plus one correction, then crop the cache to drop the rejected drafts' KV.
+
+        Lossless by construction (commits only the verify forward's own greedy, for
+        any drafter). The persistent cache makes the verify cheap — it processes
+        only the new tokens, no prefix recompute — which is the wall-clock win.
+        Output matches plain AR `generate()` to within rare bf16-borderline flips: a
+        block forward (many queries) and a single-token forward differ in SDPA
+        reduction order, so a borderline argmax can flip after ~tens of exact tokens.
+        That gap is inherent to bf16 block verification (not a recompute artifact);
+        fp32 would be exact. Returns {token_ids, text, tpf}, tpf = new / verify-forwards.
 
         `target_layer_ids` (the head's tapped layers): when set with block_size>1,
-        each verify forward also extracts `target_hidden`, threaded into the next
-        `drafter.propose(...)` (the real DraftHead conditions on it; stubs ignore
-        it). The anchor for the next draft is the last committed token's hidden."""
+        each verify forward extracts `target_hidden` for the new tokens, accumulated
+        in lockstep with the cache and threaded into the next `drafter.propose(...)`
+        (the real DraftHead conditions on it; stubs ignore it)."""
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
@@ -107,49 +115,53 @@ class LLM:
         new_ids, rounds = [], 0
         target_hidden = None
 
-        # --- prefill: seed the target cache and the first target_hidden anchor ---
+        # --- prefill: populate the persistent cache with the prompt's KV ---
+        cache = DynamicCache()
         pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
-        logits, _, full_hidden = self.runner.forward(
-            committed, DynamicCache(), pos,
+        logits, cache, full_hidden = self.runner.forward(
+            committed, cache, pos,
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
         )
         if full_hidden is not None:
-            target_hidden = full_hidden          # full prompt context (next anchor = first_tok, fed via noise)
+            target_hidden = full_hidden          # prompt context; next anchor (first_tok) fed via noise
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
-        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)
+        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet in cache
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
             return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
 
+        # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
+        # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
+        # the anchor, which enters the cache as the first token of the next forward.
         while len(new_ids) < sp.max_new_tokens:
             drafts = drafter.propose(committed, k, target_hidden=target_hidden).to(self.device).view(-1)[:k]   # (k,)
-            seq = torch.cat([committed, drafts.view(1, -1)], dim=1)               # (1, p+k)
-            p = committed.shape[1]
-            pos = torch.arange(seq.shape[1], device=self.device).unsqueeze(0)
-            logits, _, full_hidden = self.runner.forward(
-                seq, DynamicCache(), pos,
+            anchor = committed[:, -1:]                                  # (1,1) — not yet cached
+            step_ids = torch.cat([anchor, drafts.view(1, -1)], dim=1)   # (1, 1+k): only the new tokens
+            past_len = cache.get_seq_length()                           # == committed.shape[1] - 1
+            span = torch.arange(past_len, past_len + step_ids.shape[1], device=self.device)
+            logits, cache, new_hidden = self.runner.forward(
+                step_ids, cache, span.unsqueeze(0), cache_position=span,
                 output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
             )
             rounds += 1
-            tgt = logits[0, p - 1:, :].argmax(-1)    # (k+1,) target greedy at the boundary positions
+            # step_ids[0,0] is the anchor, so logits[0,0] is already the post-anchor
+            # prediction — NO p-1 offset (the cache holds the prefix).
+            tgt = logits[0, :, :].argmax(-1)                            # (1+k,)
             acc = 0
             for i in range(k):
                 if int(drafts[i]) == int(tgt[i]):
                     acc += 1
                 else:
                     break
-            block_new = torch.cat([drafts[:acc], tgt[acc].view(1)])   # accepted drafts + 1 correction
+            correction = tgt[acc]
+            cache.crop(past_len + 1 + acc)        # keep prefix + anchor + accepted drafts; drop rejected KV
+            if new_hidden is not None:
+                # append [anchor | accepted drafts] hidden (the correction has none
+                # yet — it is the next anchor, fed via noise). Restores the invariant.
+                target_hidden = torch.cat([target_hidden, new_hidden[:, :1 + acc, :]], dim=1)
+            block_new = torch.cat([drafts[:acc], correction.view(1)])   # accepted + correction
             committed = torch.cat([committed, block_new.view(1, -1)], dim=1)
-            # Next-round context for the head = the new committed minus its last
-            # token (that token is the anchor, fed via noise_embedding[0]). The new
-            # committed is committed[:p] + accepted drafts[:acc]; those occupy seq
-            # positions [0 : p+acc] (accepted drafts == target greedy, so their
-            # verify-forward hidden is exactly right). The correction (next anchor)
-            # needs no hidden. Full context — not the anchor alone — is what lifts
-            # acceptance; a length-1 slice starves the head.
-            if full_hidden is not None:
-                target_hidden = full_hidden[:, :p + acc, :]
             for t in block_new.tolist():
                 new_ids.append(int(t))
                 if int(t) in self.eos_token_ids:

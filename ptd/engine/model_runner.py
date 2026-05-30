@@ -21,11 +21,16 @@ class ModelRunner:
         output_hidden_states: bool = False,
         target_layer_ids=None,
         attention_mask=None,
+        cache_position=None,
     ):
         """One target forward step. Returns (logits, past_key_values, target_hidden).
 
         `position_ids` is passed explicitly (not inferred) so the offline loop's
         positions are deterministic and match HF greedy generation exactly.
+
+        `cache_position` indexes the new tokens into a populated KV cache (the
+        KV-cache verify path forwards only the new drafts against the cache); left
+        `None` for full-recompute callers, where HF derives it from past length.
 
         `target_hidden` is the pre-extracted concatenated tapped-layer hidden
         states (1, T, len(target_layer_ids)*H) when `output_hidden_states` and
@@ -41,6 +46,7 @@ class ModelRunner:
             position_ids=position_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
+            cache_position=cache_position,
             use_cache=True,
             output_hidden_states=output_hidden_states,
         )
