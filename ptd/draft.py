@@ -19,8 +19,17 @@ import torch
 
 class Drafter(ABC):
     @abstractmethod
-    def propose(self, context_ids: torch.Tensor, k: int) -> torch.Tensor:
-        """Given context `(1, T)`, return a `(k,)` int tensor of proposed next tokens."""
+    def propose(
+        self,
+        context_ids: torch.Tensor,
+        k: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Given context `(1, T)`, return a `(k,)` int tensor of proposed next tokens.
+
+        `target_hidden` (1, T, dim_concat) is the tapped target hidden states the
+        real DraftHead conditions on; stubs ignore it (kept for one interface)."""
         ...
 
 
@@ -29,7 +38,13 @@ class RepeatDrafter(Drafter):
     verify/accept/rollback plumbing and losslessness; accept length is usually
     low (the point is correctness, not speedup)."""
 
-    def propose(self, context_ids: torch.Tensor, k: int) -> torch.Tensor:
+    def propose(
+        self,
+        context_ids: torch.Tensor,
+        k: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
         return context_ids[0, -1].repeat(k)
 
 
@@ -42,7 +57,13 @@ class TargetEchoDrafter(Drafter):
         self.model = model
 
     @torch.inference_mode()
-    def propose(self, context_ids: torch.Tensor, k: int) -> torch.Tensor:
+    def propose(
+        self,
+        context_ids: torch.Tensor,
+        k: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
         from transformers import DynamicCache
 
         ids = context_ids
@@ -71,7 +92,17 @@ class TreeDrafter(ABC):
     these from one forward; the stubs below validate the tree verify path."""
 
     @abstractmethod
-    def propose_logits(self, context_ids: torch.Tensor, depth: int) -> torch.Tensor:
+    def propose_logits(
+        self,
+        context_ids: torch.Tensor,
+        depth: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Return `(1, depth, vocab)` per-depth draft logits.
+
+        `target_hidden` (1, T, dim_concat) is the tapped target hidden states the
+        real DraftHead conditions on; stubs ignore it (kept for one interface)."""
         ...
 
 
@@ -81,7 +112,13 @@ class RandomTreeDrafter(TreeDrafter):
     def __init__(self, vocab_size: int):
         self.vocab_size = vocab_size
 
-    def propose_logits(self, context_ids: torch.Tensor, depth: int) -> torch.Tensor:
+    def propose_logits(
+        self,
+        context_ids: torch.Tensor,
+        depth: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
         return torch.randn(1, depth, self.vocab_size, device=context_ids.device)
 
 
@@ -95,7 +132,13 @@ class TargetEchoTreeDrafter(TreeDrafter):
         self.model = model
 
     @torch.inference_mode()
-    def propose_logits(self, context_ids: torch.Tensor, depth: int) -> torch.Tensor:
+    def propose_logits(
+        self,
+        context_ids: torch.Tensor,
+        depth: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
         from transformers import DynamicCache
 
         ids = context_ids

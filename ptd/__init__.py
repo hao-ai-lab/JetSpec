@@ -10,9 +10,12 @@ from ptd.draft import (
     Drafter, RepeatDrafter, TargetEchoDrafter,
     TreeDrafter, RandomTreeDrafter, TargetEchoTreeDrafter,
 )
+from ptd.draft_head_drafter import DraftHeadDrafter, DraftHeadTreeDrafter
+from ptd.models.draft_head import load_draft_head
 
 __all__ = [
     "LLM", "SamplingParams",
     "Drafter", "RepeatDrafter", "TargetEchoDrafter",
     "TreeDrafter", "RandomTreeDrafter", "TargetEchoTreeDrafter",
+    "DraftHeadDrafter", "DraftHeadTreeDrafter", "load_draft_head",
 ]

@@ -65,7 +65,7 @@ class LLM:
 
         # --- prefill: process the whole prompt once, sample the first token ---
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
-        logits, cache = self.runner.forward(input_ids, cache, pos)
+        logits, cache, _ = self.runner.forward(input_ids, cache, pos)
         next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
@@ -75,7 +75,7 @@ class LLM:
             if out_ids[-1] in self.eos_token_ids:
                 break
             pos = torch.tensor([[cur]], device=self.device)
-            logits, cache = self.runner.forward(next_tok, cache, pos)
+            logits, cache, _ = self.runner.forward(next_tok, cache, pos)
             next_tok = sample(logits[:, -1:, :], sp.temperature)
             out_ids.append(int(next_tok.item()))
             cur += 1
@@ -84,26 +84,53 @@ class LLM:
         return {"token_ids": out_ids, "text": text}
 
     @torch.inference_mode()
-    def generate_chain(self, prompt, drafter, block_size: int = 4, sampling_params: SamplingParams = None) -> dict:
+    def generate_chain(self, prompt, drafter, block_size: int = 4,
+                       target_layer_ids=None, sampling_params: SamplingParams = None) -> dict:
         """Chain (linear) speculative decode. Each round: the drafter proposes
         `block_size-1` tokens, the target verifies them in one forward, and we
         accept the longest prefix the target agrees with (greedy) plus one
         correction token. Lossless — the output equals plain greedy regardless of
         draft quality. Recompute-based (no KV reuse yet — this validates the accept
-        logic, not speed). Returns {token_ids, text, tpf}, tpf = new / forwards."""
+        logic, not speed). Returns {token_ids, text, tpf}, tpf = new / forwards.
+
+        `target_layer_ids` (the head's tapped layers): when set with block_size>1,
+        each verify forward also extracts `target_hidden`, threaded into the next
+        `drafter.propose(...)` (the real DraftHead conditions on it; stubs ignore
+        it). The anchor for the next draft is the last committed token's hidden."""
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
         k = max(1, block_size - 1)
+        need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
+        target_hidden = None
+
+        # --- prefill: seed the target cache and the first target_hidden anchor ---
+        pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
+        logits, _, full_hidden = self.runner.forward(
+            committed, DynamicCache(), pos,
+            output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+        )
+        if full_hidden is not None:
+            target_hidden = full_hidden          # full prompt context (next anchor = first_tok, fed via noise)
+        first_tok = sample(logits[:, -1:, :], sp.temperature)
+        new_ids.append(int(first_tok.item()))
+        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)
+        if int(first_tok.item()) in self.eos_token_ids:
+            new_ids = new_ids[: sp.max_new_tokens]
+            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+
         while len(new_ids) < sp.max_new_tokens:
-            drafts = drafter.propose(committed, k).to(self.device).view(-1)[:k]   # (k,)
+            drafts = drafter.propose(committed, k, target_hidden=target_hidden).to(self.device).view(-1)[:k]   # (k,)
             seq = torch.cat([committed, drafts.view(1, -1)], dim=1)               # (1, p+k)
             p = committed.shape[1]
             pos = torch.arange(seq.shape[1], device=self.device).unsqueeze(0)
-            logits = self.model(input_ids=seq, position_ids=pos, use_cache=False).logits
+            logits, _, full_hidden = self.runner.forward(
+                seq, DynamicCache(), pos,
+                output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+            )
             rounds += 1
             tgt = logits[0, p - 1:, :].argmax(-1)    # (k+1,) target greedy at the boundary positions
             acc = 0
@@ -114,6 +141,15 @@ class LLM:
                     break
             block_new = torch.cat([drafts[:acc], tgt[acc].view(1)])   # accepted drafts + 1 correction
             committed = torch.cat([committed, block_new.view(1, -1)], dim=1)
+            # Next-round context for the head = the new committed minus its last
+            # token (that token is the anchor, fed via noise_embedding[0]). The new
+            # committed is committed[:p] + accepted drafts[:acc]; those occupy seq
+            # positions [0 : p+acc] (accepted drafts == target greedy, so their
+            # verify-forward hidden is exactly right). The correction (next anchor)
+            # needs no hidden. Full context — not the anchor alone — is what lifts
+            # acceptance; a length-1 slice starves the head.
+            if full_hidden is not None:
+                target_hidden = full_hidden[:, :p + acc, :]
             for t in block_new.tolist():
                 new_ids.append(int(t))
                 if int(t) in self.eos_token_ids:
@@ -126,13 +162,19 @@ class LLM:
 
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
-                      budget: int = 15, algo: str = "crossproduct", sampling_params: SamplingParams = None) -> dict:
+                      budget: int = 15, algo: str = "crossproduct",
+                      target_layer_ids=None, sampling_params: SamplingParams = None) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes in one forward under a 4D ancestor mask, and tree_accept takes the
         longest greedy-agreeing root-to-leaf path + a correction. Lossless —
         output equals plain greedy. Recompute-based (validates the tree verify,
-        not speed). Returns {token_ids, text, tpf}."""
+        not speed). Returns {token_ids, text, tpf}.
+
+        `target_layer_ids` (the head's tapped layers): when set with block_size>1,
+        each verify forward extracts `target_hidden`, threaded into the next
+        `tree_drafter.propose_logits(...)`. The next anchor is the deepest accepted
+        node's hidden (the correction token has no hidden yet)."""
         from ptd.tree import get_algorithm
         from ptd.tree._core.ancestor import build_ancestor_matrix
         from ptd.tree._core.accept import tree_accept
@@ -146,9 +188,27 @@ class LLM:
         algo_obj = get_algorithm(algo)
         dtype = self.model.dtype
         neg = torch.finfo(dtype).min
+        need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
+        target_hidden = None
+
+        # --- prefill: seed the first target_hidden anchor + the first token ---
+        pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
+        logits, _, full_hidden = self.runner.forward(
+            committed, DynamicCache(), pos,
+            output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+        )
+        if full_hidden is not None:
+            target_hidden = full_hidden          # full prompt context (next anchor = first_tok, fed via noise)
+        first_tok = sample(logits[:, -1:, :], sp.temperature)
+        new_ids.append(int(first_tok.item()))
+        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)
+        if int(first_tok.item()) in self.eos_token_ids:
+            new_ids = new_ids[: sp.max_new_tokens]
+            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+
         while len(new_ids) < sp.max_new_tokens:
-            draft_logits = tree_drafter.propose_logits(committed, D).to(self.device)      # (1, D, V)
+            draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device)
             N = tree.num_nodes
             prefix = committed[:, :-1]              # tokens before the anchor (= tree root)
@@ -165,9 +225,21 @@ class LLM:
             allowed[P:, P:] = build_ancestor_matrix(tree).bool()
             mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
                                torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, T, T)
-            logits = self.model(input_ids=seq, position_ids=pos, attention_mask=mask, use_cache=False).logits
+            logits, _, full_hidden = self.runner.forward(
+                seq, DynamicCache(), pos, attention_mask=mask,
+                output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+            )
             target_logits = logits[:, P:, :]                                              # (1, N, V)
             accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+            # Next-round context for the head = the new committed minus its last
+            # token (the anchor = correction, fed via noise_embedding[0]). The new
+            # committed[:-1] is prefix + root + accepted nodes; gather their
+            # (non-contiguous, tree-ordered) positions in `seq`: prefix [0:P], root
+            # = node 0 at P, accepted nodes at P+accepted_path[1:]. Full context —
+            # not the deepest node alone — is what lifts acceptance.
+            if full_hidden is not None:
+                idx = list(range(P + 1)) + [P + j for j in accepted_path[1:]]
+                target_hidden = full_hidden[:, idx, :]
             accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
                 else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
             block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
