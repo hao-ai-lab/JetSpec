@@ -25,6 +25,15 @@ out = llm.generate("The three primary colors are", SamplingParams(temperature=0.
 print(out["text"])
 ```
 
+## Architecture
+
+Two layers with a strict one-way dependency, so they can be owned and evolved independently:
+
+- **`ptd/tree/` — the tree-drafting *method*** (engine-agnostic). Turns per-depth draft logits into a verification tree and selects the accepted path. Pure torch/numpy; imports nothing from the engine. Public contract: `get_algorithm(name).build(...) → DraftTree`, `build_ancestor_matrix(tree)`, `tree_accept(tree, target_logits, temperature)`.
+- **`ptd/engine/` — the decode *substrate*** (`LLM`, KV cache, verify forward). Consumes `ptd.tree` one-way (engine → tree); the tree never imports the engine.
+
+The tree is decoupled from the backend on purpose: the same `ptd.tree` plugs into this HF engine today and a serving-engine (vLLM / SGLang) integration later. Import the tree only through its public API (`ptd.tree`), never `ptd.tree._core`.
+
 ## Roadmap
 
 | stage | what | status |

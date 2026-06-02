@@ -187,9 +187,8 @@ class LLM:
         each verify forward extracts `target_hidden`, threaded into the next
         `tree_drafter.propose_logits(...)`. The next anchor is the deepest accepted
         node's hidden (the correction token has no hidden yet)."""
-        from ptd.tree import get_algorithm
-        from ptd.tree._core.ancestor import build_ancestor_matrix
-        from ptd.tree._core.accept import tree_accept
+        # tree contract (engine -> tree, one-way): import only the public ptd.tree API
+        from ptd.tree import get_algorithm, build_ancestor_matrix, tree_accept
 
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):
