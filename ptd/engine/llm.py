@@ -175,7 +175,8 @@ class LLM:
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
-                      target_layer_ids=None, sampling_params: SamplingParams = None) -> dict:
+                      target_layer_ids=None, sampling_params: SamplingParams = None,
+                      return_stats: bool = False) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes in one forward under a 4D ancestor mask, and tree_accept takes the
@@ -206,6 +207,7 @@ class LLM:
         neg = torch.finfo(dtype).min
         need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
+        accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         target_hidden = None
 
         # --- prefill: seed the first target_hidden anchor + the first token ---
@@ -261,6 +263,8 @@ class LLM:
             block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
             committed = torch.cat([committed, block.view(1, -1)], dim=1)
             rounds += 1
+            accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
+            tree_sizes.append(int(N))
             for t in block.tolist():
                 new_ids.append(int(t))
                 if int(t) in self.eos_token_ids:
@@ -269,4 +273,9 @@ class LLM:
                 break
         new_ids = new_ids[: sp.max_new_tokens]
         text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
-        return {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
+        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
+        if return_stats:
+            out["accept_lengths"] = accept_lengths   # per-round (acc+1)
+            out["tree_sizes"] = tree_sizes           # per-round node count
+            out["rounds"] = rounds
+        return out
