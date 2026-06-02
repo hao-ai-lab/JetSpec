@@ -174,7 +174,7 @@ class LLM:
 
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
-                      budget: int = 15, algo: str = "crossproduct",
+                      budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
@@ -182,6 +182,11 @@ class LLM:
         longest greedy-agreeing root-to-leaf path + a correction. Lossless —
         output equals plain greedy. Recompute-based (validates the tree verify,
         not speed). Returns {token_ids, text, tpf}.
+
+        `algo` selects a registered tree algorithm (see `ptd.tree.list_algorithms`);
+        `algo_kwargs` passes its constructor knobs (e.g. {"beta": 2.0} for
+        top2gap_fanout). All bundled algorithms recover crossproduct at their
+        identity knobs, so the choice is lossless regardless.
 
         `target_layer_ids` (the head's tapped layers): when set with block_size>1,
         each verify forward extracts `target_hidden`, threaded into the next
@@ -196,7 +201,7 @@ class LLM:
         else:
             committed = prompt.to(self.device)
         D = max(1, block_size - 1)
-        algo_obj = get_algorithm(algo)
+        algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.model.dtype
         neg = torch.finfo(dtype).min
         need_hidden = target_layer_ids is not None and block_size > 1
