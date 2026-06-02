@@ -33,7 +33,12 @@ BUDGETS = [int(b) for b in os.environ.get("PTD_SWEEP_BUDGETS", "15,63,127").spli
 WIDTH = int(os.environ.get("PTD_SWEEP_WIDTH", "7"))
 MAX_NEW = int(os.environ.get("PTD_SWEEP_MAXNEW", "128"))
 
-PROMPT = "What is 127 times 384? Reason step by step, then give the final number."
+# The drafter conditions on the target's hidden states in the *chat-formatted*
+# distribution it was trained on; a raw, untemplated prompt gives off-distribution
+# conditioning and halves accept-len. Always chat-template (see main()).
+QUESTION = ("Natalia sold clips to 48 of her friends in April, and then she sold "
+            "half as many clips in May. How many clips did Natalia sell altogether "
+            "in April and May?")
 
 # Active knob per algorithm — the setting that exercises its niche (not the
 # crossproduct-identity default). Losslessness holds for any knob; these make
@@ -53,8 +58,8 @@ ALGO_KWARGS = {
 }
 
 
-def _recompute_greedy(llm, n):
-    ids = llm.tokenizer(PROMPT, return_tensors="pt").input_ids.to(llm.device)
+def _recompute_greedy(llm, prompt, n):
+    ids = llm.tokenizer(prompt, return_tensors="pt").input_ids.to(llm.device)
     out, cur = [], ids
     for _ in range(n):
         pos = torch.arange(cur.shape[1], device=llm.device).unsqueeze(0)
@@ -81,7 +86,10 @@ def main():
     llm = LLM(MODEL)
     head = load_draft_head(DRAFT_HEAD)
     tli = head.target_layer_ids
-    ref = _recompute_greedy(llm, MAX_NEW)
+    prompt = llm.tokenizer.apply_chat_template(
+        [{"role": "user", "content": QUESTION}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    ref = _recompute_greedy(llm, prompt, MAX_NEW)
     sp = SamplingParams(0.0, MAX_NEW)
     tree_drafter = DraftHeadTreeDrafter(
         head, target=llm.model, block_size=head.block_size,
@@ -103,7 +111,7 @@ def main():
         cells = []
         for b in BUDGETS:
             out = llm.generate_tree(
-                PROMPT, tree_drafter, block_size=head.block_size, tree_width=WIDTH,
+                prompt, tree_drafter, block_size=head.block_size, tree_width=WIDTH,
                 budget=b, algo=algo, algo_kwargs=ALGO_KWARGS[algo],
                 target_layer_ids=tli, sampling_params=sp,
             )
