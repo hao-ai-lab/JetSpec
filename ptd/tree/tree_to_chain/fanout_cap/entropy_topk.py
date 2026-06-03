@@ -12,7 +12,10 @@ top-K-renorm logits. Pinning entropy to top-K-renorm makes τ_high / τ_low
 calibration bounded (max H̃_d = log K ≈ 1.95 for K=7), so a threshold above
 log K that silently never fires becomes impossible.
 
-Identity recovery: τ_high = log K, τ_low = -∞ → b_d = K → crossproduct.
+Identity recovery: τ_high = +∞ (any value > log K), τ_low = -∞ → no region fires
+→ b_d = K → crossproduct. (τ_high = log K does NOT recover identity: a uniform
+top-K has H̃ = log K exactly, and the ≥ high-region test would clamp it to a
+chain. The runtime default τ_high = math.inf is the safe identity knob.)
 
 Caveat: top-K renorm discards the tail. A flat-tail distribution (rank-1
 dominant + a long tail of near-equal tokens) reads as "decisive" under
