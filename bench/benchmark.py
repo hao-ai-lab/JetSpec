@@ -24,7 +24,7 @@ ARE the apples-to-apples parity metrics vs the reference.
       PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       PYTHONPATH=. python bench/benchmark.py --dataset gsm8k --samples 5 \
-        --algos crossproduct,top2gap_fanout,top2gap_budget_gated --width 7 --budget 255
+        --algos crossproduct,top2gap_fanout,task_router,reasoning_router,class_histogram --width 7 --budget 255
 """
 import argparse
 import os
@@ -113,7 +113,7 @@ def main():
     ap.add_argument("--draft-head", default=None)
     ap.add_argument("--dataset", default="gsm8k", choices=list(PROMPT_FMT))
     ap.add_argument("--samples", type=int, default=5)
-    ap.add_argument("--algos", default="crossproduct,top2gap_fanout,top2gap_budget_gated")
+    ap.add_argument("--algos", default="crossproduct,top2gap_fanout,task_router,reasoning_router,class_histogram")
     ap.add_argument("--width", type=int, default=7)
     ap.add_argument("--budget", type=int, default=255)
     ap.add_argument("--max-new", type=int, default=256)
