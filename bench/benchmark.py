@@ -50,15 +50,9 @@ PROMPT_FMT = {
 ALGO_KWARGS = {
     "crossproduct": {},
     "top2gap_fanout": {"beta": 2.0, "g_0": 1.0},
-    "top2gap_budget_gated": {"beta": 2.0, "g_0": 1.0, "B_0": 16.0},
-    "entropy_gate": {"tau_high": 1.5, "tau_low": 0.2},
-    "entropy_soft": {"alpha": 1.0},
-    "entropy_topk": {"tau_high": 1.5, "tau_low": 0.2},
-    "prob_mass": {"m_0": 0.5},
-    "entropy_score": {"lambda_": 0.5},
-    "budget_blend": {"B_0": 16.0, "lambda_max": 2.0},
-    "drift_brake": {"delta": 2.0},
-    "rank_decay": {"gamma": 0.5},
+    "task_router": {},          # prompt-adaptive; routes via fallback w/o prompt_info
+    "reasoning_router": {},
+    "class_histogram": {},
 }
 
 

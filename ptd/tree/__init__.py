@@ -16,17 +16,21 @@ Public contract (the only surface an engine should import — never `ptd.tree._c
     tree_accept(tree, target_logits, temperature)
         -> (accepted_path, acceptance_length, correction_token)
 
-Bundled algorithms: `baselines/` (crossproduct — the full-fanout baseline) and
-`tree_to_chain/` (single-pass, uncertainty-aware tree shaping that recovers
-crossproduct at its identity knobs). Importing this package registers all of
-them; `list_algorithms()` enumerates the registry.
+Bundled algorithms, by family:
+- `baselines/`      — crossproduct (the full-fanout baseline).
+- `tree_to_chain/`  — single-pass uncertainty-aware shaping (top2gap_fanout).
+- `semantic_aware/` — prompt-adaptive routing (task_router, reasoning_router,
+                      class_histogram).
+All recover crossproduct at their identity knob. Importing this package
+registers all of them; `list_algorithms()` enumerates the registry.
 """
 from ptd.tree._core.base import DraftTree, TreeAlgorithm
 from ptd.tree._core.registry import get_algorithm, register_tree_algo, list_algorithms
 from ptd.tree._core.ancestor import build_ancestor_matrix
 from ptd.tree._core.accept import tree_accept
-from ptd.tree import baselines       # noqa: F401  (import to register algorithms)
-from ptd.tree import tree_to_chain   # noqa: F401  (import to register algorithms)
+from ptd.tree import baselines        # noqa: F401  (import to register algorithms)
+from ptd.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
+from ptd.tree import semantic_aware   # noqa: F401  (import to register algorithms)
 
 __all__ = [
     "DraftTree", "TreeAlgorithm",

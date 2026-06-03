@@ -176,7 +176,7 @@ class LLM:
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
-                      return_stats: bool = False) -> dict:
+                      return_stats: bool = False, prompt_info: dict = None) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes in one forward under a 4D ancestor mask, and tree_accept takes the
@@ -186,8 +186,11 @@ class LLM:
 
         `algo` selects a registered tree algorithm (see `ptd.tree.list_algorithms`);
         `algo_kwargs` passes its constructor knobs (e.g. {"beta": 2.0} for
-        top2gap_fanout). All bundled algorithms recover crossproduct at their
-        identity knobs, so the choice is lossless regardless.
+        top2gap_fanout). `prompt_info` (optional dict: task label / reasoning mode
+        / decoded text) is forwarded to the algorithm's build() for the
+        prompt-adaptive (semantic_aware) algorithms; None → they use their
+        logit-fingerprint fallback. All bundled algorithms recover crossproduct at
+        their identity knobs, so the choice is lossless regardless.
 
         `target_layer_ids` (the head's tapped layers): when set with block_size>1,
         each verify forward extracts `target_hidden`, threaded into the next
@@ -227,7 +230,8 @@ class LLM:
 
         while len(new_ids) < sp.max_new_tokens:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
-            tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device)
+            tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
+                                  prompt_info=prompt_info)
             N = tree.num_nodes
             prefix = committed[:, :-1]              # tokens before the anchor (= tree root)
             P = prefix.shape[1]
