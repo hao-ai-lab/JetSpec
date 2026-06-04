@@ -117,6 +117,8 @@ def main():
     ap.add_argument("--width", type=int, default=7)
     ap.add_argument("--budget", type=int, default=255)
     ap.add_argument("--max-new", type=int, default=256)
+    ap.add_argument("--kv-cache-verify", action="store_true",
+                    help="persistent-cache tree verify (real wall-clock) instead of recompute")
     args = ap.parse_args()
     head_path = args.draft_head or os.environ.get("PTD_DRAFT_HEAD")
     if not head_path:
@@ -159,7 +161,7 @@ def main():
             out, dt = _timed(lambda: llm.generate_tree(
                 p, drafter, block_size=bs, tree_width=args.width, budget=args.budget,
                 algo=algo, algo_kwargs=ALGO_KWARGS[algo], target_layer_ids=tli,
-                sampling_params=sp, return_stats=True))
+                sampling_params=sp, return_stats=True, kv_cache_verify=args.kv_cache_verify))
             all_acc += out["accept_lengths"]; all_tree += out["tree_sizes"]
             spec_ntok += len(out["token_ids"]); spec_time += dt
             ep = _exact_prefix(rg, out["token_ids"])
@@ -172,10 +174,12 @@ def main():
         lossless = sum(loss_fracs) / len(loss_fracs)
         print(f"{algo:<22}{tau:>11.2f}" + "".join(f"{r:>7.2f}" for r in per_pos) +
               f"{tree_avg:>7.0f}{spec_tps:>10.1f}{speedup:>9.2f}{lossless:>10.3f}")
+    verify_note = ("persistent KV-cache verify (real wall-clock)" if args.kv_cache_verify
+                   else "recompute verify -> spec_tps/speedup UNDERSTATE; pass --kv-cache-verify for real wall-clock")
     print("\naccept_len = tokens/forward (= reference Average Acceptance length). "
           "d_k = per-position accept rate. lossless = mean exact-prefix fraction vs "
           "recompute-greedy (matching numerics; <1.0 = a late bf16 reduction-order flip, "
-          "not a spec error). spec_tps/speedup UNDERSTATE (recompute verify; KV-cache pending).")
+          f"not a spec error). verify mode: {verify_note}.")
 
 
 if __name__ == "__main__":
