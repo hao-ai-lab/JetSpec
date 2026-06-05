@@ -314,14 +314,19 @@ class PagedKVCache(Cache):
         idx = positions.to(self.device).long()
         keep = idx.numel()
         new_block_count = (keep + self._block_size - 1) // self._block_size
+        # Layer-invariant index math as tensors — the old per-element `int(p)` loop
+        # issued a DtoH sync per kept position per layer (~keep×num_layers/round = the
+        # dominant DtoH storm after the append fix). blk_pos/off computed once; per
+        # layer the physical block ids come from a tensor index into the block table.
+        blk_pos = idx // self._block_size
+        off = idx % self._block_size
         tables = self._seq_block_tables.get(seq_id, {})
         for layer_idx in list(tables.keys()):
             table = tables[layer_idx]
             old_blocks = list(table)
-            src_blk = torch.tensor([table[int(p) // self._block_size] for p in idx], device=self.device)
-            src_off = torch.tensor([int(p) % self._block_size for p in idx], device=self.device)
-            gathered_k = self._kpool[layer_idx][src_blk, src_off]      # (keep, H, D)
-            gathered_v = self._vpool[layer_idx][src_blk, src_off]
+            src_blk = torch.tensor(table, device=self.device, dtype=torch.long)[blk_pos]
+            gathered_k = self._kpool[layer_idx][src_blk, off]          # (keep, H, D)
+            gathered_v = self._vpool[layer_idx][src_blk, off]
             # Decref old blocks BEFORE allocating new ones so freed slots are
             # reusable in-place (the fixed N2a pool may need them for the compaction).
             for b in old_blocks:
