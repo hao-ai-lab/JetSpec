@@ -1,20 +1,30 @@
-"""Lossless gate for the DFlash head's opt-in context K/V scratch (`use_context_cache`).
+"""ENGINE-OUTPUT-LOSSLESS gate for the DFlash head's opt-in INCREMENTAL context K/V
+cache (`use_context_cache`).
 
-The cache removes the per-round `torch.cat([k_ctx, k_noise])` (the measured #1 GPU
-self-time bottleneck, `CatArrayBatched`) by writing the projected context + block
-K/V into a reused per-layer buffer instead of concatenating. It is lossless BY
-CONSTRUCTION: only the concatenation copy is replaced — the head still projects the
-FULL context each round (same `k_proj(target_hidden)` GEMM shape as the recompute
-path) and applies k_norm / RoPE per-row, so no arithmetic changes. (Reusing the
-projected *values* across rounds was rejected: a smaller `k_proj(new_rows)` GEMM
-reduces in a different order than the full projection and diverges at fp32 epsilon.)
+The cache removes BOTH the per-round `torch.cat([k_ctx, k_noise])` (the measured #1
+GPU self-time bottleneck, `CatArrayBatched`) AND the per-round FULL context
+re-projection. The engine only ever APPENDS to `target_hidden`, so the head projects
++ RoPEs ONLY the NEW context rows each round and appends their post-RoPE K/V to a
+persistent per-layer buffer (the cached prefix is reused unchanged); the transient
+block K/V is recomputed and placed after.
+
+This is NOT head-logit bit-identical: projecting only-new-rows reduces in a different
+order than the full `k_proj(target_hidden)`, so the head's PROPOSED logits drift at
+fp32 epsilon (~1e-7). That is EXPECTED and ACCEPTABLE — the draft head only proposes
+the tree; the target verify is the source of truth, so engine OUTPUT tokens stay
+lossless. So we gate on TOKEN-identity to greedy, NOT head-logit bit-identity:
+
+  - `generate_tree(cache drafter).token_ids == generate()` (the lossless gate), AND
+  - `generate_tree(cache drafter).token_ids == generate_tree(recompute drafter)`
+    (both lossless -> both == greedy -> equal each other).
+
+`accept_len`/`tpf` MAY differ slightly (the tree differs microscopically — that's the
+point); only TOKENS must match. fp32 on CPU makes greedy exact.
 
 These run on CPU in fp32 — no GPU/checkpoint needed. We build a tiny DFlash head +
-tiny Qwen3 target (mirroring `tests/test_nano_kernel_e2e.py`'s tiny model) and assert
-the head's draft logits with `use_context_cache=True` are BIT-IDENTICAL (torch.equal)
-to `use_context_cache=False` across several rounds of a growing `target_hidden` (rows
-appended between rounds, exactly as `engine.generate_tree` does), and that the full
-`generate_tree` token stream is identical.
+tiny Qwen3 target (mirroring `tests/test_nano_kernel_e2e.py`'s tiny model). A separate
+test asserts the head-logit drift across a growing `target_hidden` is small (≤1e-4) and
+NON-zero (confirming the projection is genuinely incremental, not the old re-projection).
 """
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
@@ -76,9 +86,17 @@ def _drafters():
     return recompute, cache, head
 
 
-def test_context_cache_head_logits_bit_identical_growing_context():
-    """The #1 gate: cache-mode head logits == recompute head logits, bit-for-bit
-    (atol=0), across rounds of a growing target_hidden (rows appended each round)."""
+def test_context_cache_head_logits_drift_is_small_and_nonzero():
+    """The incremental cache drifts from the recompute head logits ONLY at fp32
+    epsilon (the only-new-rows projection reduces in a different order than the full
+    `k_proj(target_hidden)`). Across rounds of a growing target_hidden (rows appended
+    each round, exactly as engine.generate_tree does) the per-round max|diff| must be:
+      - SMALL (≤1e-4) — RoPE/position/buffer correctness; a real bug blows up here, and
+      - NON-zero on at least one round — confirming the projection is genuinely
+        incremental (the cached prefix is reused, not re-projected; a zero everywhere
+        would mean we silently fell back to the old full re-projection no-op).
+    The engine TOKEN-identity gate (below) is the lossless gate; this only bounds drift.
+    """
     recompute, cache, head = _drafters()
     dim_concat = head.fc.in_features
     depth = head.block_size - 1
@@ -89,16 +107,23 @@ def test_context_cache_head_logits_bit_identical_growing_context():
 
     recompute.reset_context_cache()
     cache.reset_context_cache()
+    max_drift = 0.0
     for r in range(6):
         lr = recompute.propose_logits(ctx_ids, depth, target_hidden=ctx)
         lc = cache.propose_logits(ctx_ids, depth, target_hidden=ctx)
-        assert torch.equal(lr, lc), (
-            f"round {r} (ctx_len={ctx.shape[1]}): cache logits diverged from recompute "
-            f"(max|diff|={(lr - lc).abs().max().item():.3e}) — RoPE/position/buffer bug"
+        drift = (lr - lc).abs().max().item()
+        max_drift = max(max_drift, drift)
+        assert drift <= 1e-4, (
+            f"round {r} (ctx_len={ctx.shape[1]}): cache logits drifted {drift:.3e} from "
+            f"recompute (> 1e-4) — RoPE/position/buffer bug, not fp32 epsilon"
         )
         # Append rows the way engine.generate_tree does (accepted path: root+nodes).
         ctx = torch.cat([ctx, torch.randn(1, 2, dim_concat, device=DEVICE)], dim=1)
         ctx_ids = torch.cat([ctx_ids, torch.randint(0, 128, (1, 2), device=DEVICE)], dim=1)
+    assert max_drift > 0.0, (
+        "cache logits never drifted from recompute across 6 growing-context rounds — "
+        "the projection is NOT incremental (silent fallback to full re-projection?)"
+    )
 
 
 def test_context_cache_reset_independent_streams():
@@ -138,16 +163,22 @@ def _tiny_engine(target) -> NanoEngine:
     return eng
 
 
-def test_context_cache_generate_tree_token_identical():
-    """End-to-end: generate_tree with the cache drafter is token-identical (and
-    tpf-identical) to the recompute drafter — the engine's reset + growing
-    target_hidden path is exercised."""
+def test_context_cache_generate_tree_token_lossless():
+    """The lossless gate. End-to-end, the cache drafter's generate_tree token stream
+    must equal BOTH:
+      - plain greedy generate() (the source-of-truth lossless gate — the target verify
+        commits its own greedy along the accepted path), AND
+      - the recompute drafter's generate_tree (both lossless -> both == greedy).
+    fp32 on CPU makes greedy exact. tpf MAY differ between the two drafters (the
+    proposed tree drifts at fp32 epsilon -> a microscopically different tree), so we
+    do NOT assert tpf-identity; only TOKENS must match."""
     recompute, cache, head = _drafters()
     target = recompute.target
     tli = head.target_layer_ids
     prompt = torch.tensor([[3, 14, 15, 92, 65, 35, 89, 7]])
     sp = SamplingParams(0.0, 24)
 
+    greedy = _tiny_engine(target).generate(prompt, sampling_params=sp)
     out_rec = _tiny_engine(target).generate_tree(
         prompt, recompute, block_size=BLOCK_SIZE, tree_width=2, budget=15,
         target_layer_ids=tli, sampling_params=sp,
@@ -156,8 +187,9 @@ def test_context_cache_generate_tree_token_identical():
         prompt, cache, block_size=BLOCK_SIZE, tree_width=2, budget=15,
         target_layer_ids=tli, sampling_params=sp,
     )
-    assert out_cache["token_ids"] == out_rec["token_ids"], "cache-mode tokens diverged"
-    assert out_cache["tpf"] == out_rec["tpf"], "cache-mode tpf diverged"
+    assert out_rec["token_ids"] == greedy["token_ids"], "recompute drafter not lossless vs greedy"
+    assert out_cache["token_ids"] == greedy["token_ids"], "cache-mode tokens diverged from greedy"
+    assert out_cache["token_ids"] == out_rec["token_ids"], "cache-mode tokens diverged from recompute"
 
 
 def test_context_cache_default_off():

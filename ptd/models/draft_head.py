@@ -100,58 +100,92 @@ def _apply_rope_q(q, cos, sin, q_len, unsqueeze_dim=1):
 
 class _LayerKVScratch:
     """Per-layer capacity-backed [context ; block] K/V buffer for one attention
-    layer — replaces the per-round `torch.cat([k_ctx, k_noise])` with in-place
-    writes into a reused buffer (the `CatArrayBatched` bottleneck, measured #1 GPU
-    self-time). Holds (bsz, heads, capacity, head_dim) buffers, grown (doubling)
-    only when a round needs more rows; `combine()` writes the context + block rows
-    and returns the contiguous `[:total]` slice.
+    layer — replaces both the per-round `torch.cat([k_ctx, k_noise])` (the
+    `CatArrayBatched` bottleneck, measured #1 GPU self-time) AND the per-round
+    FULL context re-projection. Holds (bsz, heads, capacity, head_dim) buffers,
+    grown (doubling) only when a round needs more rows.
 
-    LOSSLESS note: the context K/V handed in each round is the FULL fresh
-    projection (same GEMM shape as the recompute path's `k_proj(target_hidden)`),
-    so reusing the BUFFER (not the projected values) keeps the result bit-identical
-    to the cat path — only the concatenation copy is replaced, never the arithmetic.
+    INCREMENTAL context: the engine only ever APPENDS to `target_hidden` (its
+    prefix is byte-stable across rounds — see `engine.generate_tree`), and each
+    context row at absolute position `p` gets the SAME post-RoPE K/V every round
+    (position p is stable). So the post-RoPE context K/V for rows `[0:cached_len)`
+    is written into the buffer ONCE and reused unchanged; only the NEW context rows
+    `[cached_len:ctx_len)` are projected + RoPE'd and appended. The transient block
+    K/V (block_size rows) is recomputed every round and written after the context.
+
+    LOSSLESS note: skipping the re-projection of the cached context rows changes the
+    GEMM reduction *order* relative to the full `k_proj(target_hidden)`, so the head's
+    proposed logits drift at fp32 epsilon (~1e-7). That is ACCEPTABLE — the draft head
+    only PROPOSES the tree; the target verify is the source of truth, so engine OUTPUT
+    tokens stay lossless. The engine gate (tests/test_draft_head_kv_cache.py) asserts
+    token-identity to greedy, not head-logit bit-identity.
     """
 
     def __init__(self) -> None:
         self.k_buf: Optional[torch.Tensor] = None
         self.v_buf: Optional[torch.Tensor] = None
+        self.cached_ctx_len: int = 0   # context rows already projected into the buffer
 
     def _ensure(self, ref: torch.Tensor, total: int) -> None:
         # ref: (bsz, heads, n, head_dim); buffers share its bsz/heads/head_dim.
+        # On growth we MUST preserve the already-cached context rows (they are not
+        # re-projected), so copy the live prefix into the larger buffer.
         if self.k_buf is not None and self.k_buf.shape[-2] >= total:
             return
         cap = 1 if self.k_buf is None else self.k_buf.shape[-2]
         while cap < total:
             cap *= 2
         shape = (ref.shape[0], ref.shape[1], cap, ref.shape[-1])
-        self.k_buf = ref.new_empty(shape)
-        self.v_buf = ref.new_empty(shape)
+        new_k = ref.new_empty(shape)
+        new_v = ref.new_empty(shape)
+        if self.cached_ctx_len > 0:
+            new_k[..., : self.cached_ctx_len, :] = self.k_buf[..., : self.cached_ctx_len, :]
+            new_v[..., : self.cached_ctx_len, :] = self.v_buf[..., : self.cached_ctx_len, :]
+        self.k_buf = new_k
+        self.v_buf = new_v
 
-    def combine(self, k_ctx, v_ctx, k_block, v_block) -> tuple[torch.Tensor, torch.Tensor]:
-        ctx_len = k_ctx.shape[-2]
+    def append_context(self, k_new, v_new) -> None:
+        """Project-and-RoPE'd NEW context rows (bsz, heads, n_new, head_dim) are
+        appended after the already-cached context prefix; `cached_ctx_len` advances."""
+        n_new = k_new.shape[-2]
+        if n_new == 0:
+            return
+        start = self.cached_ctx_len
+        end = start + n_new
+        self._ensure(k_new, end)   # block rows are written past `end` by `combine`
+        self.k_buf[..., start:end, :] = k_new
+        self.v_buf[..., start:end, :] = v_new
+        self.cached_ctx_len = end
+
+    def combine(self, k_block, v_block) -> tuple[torch.Tensor, torch.Tensor]:
+        """Write the transient block K/V after the cached context and return the
+        contiguous `[context ; block]` slice (context = `[:cached_ctx_len]`, reused
+        unchanged from prior rounds)."""
+        ctx_len = self.cached_ctx_len
         total = ctx_len + k_block.shape[-2]
-        self._ensure(k_ctx, total)
-        self.k_buf[..., :ctx_len, :] = k_ctx
+        self._ensure(k_block, total)
         self.k_buf[..., ctx_len:total, :] = k_block
-        self.v_buf[..., :ctx_len, :] = v_ctx
         self.v_buf[..., ctx_len:total, :] = v_block
         return self.k_buf[..., :total, :], self.v_buf[..., :total, :]
 
 
 class DFlashContextCache:
-    """Opt-in per-layer [context ; block] K/V scratch, scoped to ONE generate_tree
-    call. Each round the attention layer projects the FULL context + the block (same
-    GEMMs as the recompute path), then writes both into this layer's reused buffer
-    instead of `torch.cat`-ing them — removing the `CatArrayBatched` copy (the
-    measured #1 GPU bottleneck) while staying BIT-IDENTICAL (only the join is
-    replaced, never the projection/RoPE arithmetic).
+    """Opt-in per-layer INCREMENTAL [context ; block] K/V cache, scoped to ONE
+    generate_tree call. Each round the attention layer projects + RoPEs ONLY the
+    NEW context rows (the engine appends to `target_hidden`; its prefix is
+    byte-stable) and appends them to this layer's persistent buffer, reusing the
+    cached post-RoPE context prefix unchanged. The transient block K/V is recomputed
+    and placed after the context. This removes BOTH the `CatArrayBatched` copy AND
+    the full-context projection GEMM (the dominant GPU cost), so attention runs over
+    `[cached_context_KV ; block_KV]` with no full re-projection and no full re-copy.
 
-    Reusing the projected *values* across rounds (project only new rows) was rejected
-    on purpose: a smaller-shaped `k_proj(new_rows)` GEMM does not reduce in the same
-    order as the recompute path's full `k_proj(target_hidden)`, so it diverges at
-    fp32 epsilon (~1e-7) — failing the lossless gate. The buffer-only design keeps
-    losslessness exact. Default path (DynamicCache / recompute) never touches this
-    class, so it stays byte-unchanged."""
+    LOSSLESS scope: the head's proposed logits drift at fp32 epsilon (~1e-7) because
+    the only-new-rows projection reduces in a different order than the full
+    `k_proj(target_hidden)`. The head only PROPOSES the tree — the target verify is
+    the source of truth — so engine OUTPUT tokens stay lossless. The gate is
+    token-identity to greedy (tests/test_draft_head_kv_cache.py), NOT head-logit
+    bit-identity. Default path (DynamicCache / recompute) never touches this class,
+    so it stays byte-unchanged."""
 
     def __init__(self) -> None:
         self._layers: dict[int, _LayerKVScratch] = {}
@@ -159,14 +193,26 @@ class DFlashContextCache:
     def reset(self) -> None:
         self._layers.clear()
 
-    def combine(self, layer_idx: int, k_ctx, v_ctx, k_block, v_block) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return the contiguous (context ++ block) K/V for `layer_idx`, written into
-        the layer's reused buffer (no per-round cat)."""
+    def _scratch(self, layer_idx: int) -> _LayerKVScratch:
         scratch = self._layers.get(layer_idx)
         if scratch is None:
             scratch = _LayerKVScratch()
             self._layers[layer_idx] = scratch
-        return scratch.combine(k_ctx, v_ctx, k_block, v_block)
+        return scratch
+
+    def cached_ctx_len(self, layer_idx: int) -> int:
+        """Number of context rows already projected into `layer_idx`'s buffer."""
+        scratch = self._layers.get(layer_idx)
+        return scratch.cached_ctx_len if scratch is not None else 0
+
+    def append_context(self, layer_idx: int, k_new, v_new) -> None:
+        """Append the post-RoPE NEW context rows for `layer_idx` to its buffer."""
+        self._scratch(layer_idx).append_context(k_new, v_new)
+
+    def combine(self, layer_idx: int, k_block, v_block) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the contiguous (cached context ++ block) K/V for `layer_idx`; the
+        block is written into the reused buffer after the cached context prefix."""
+        return self._scratch(layer_idx).combine(k_block, v_block)
 
 
 def _to_additive_attention_mask(
@@ -269,19 +315,29 @@ class Qwen3DFlashAttention(nn.Module):
         q = self.q_norm(q).transpose(1, 2)
         cos, sin = position_embeddings
         if context_cache is not None:
-            # No-cat path: project the FULL context + the block (same GEMMs the
-            # recompute branch runs — k_proj(target_hidden) and k_proj(hidden_states)),
-            # norm + RoPE each region (per-row, so identical to the cat path), then
-            # write both into the layer's reused buffer instead of torch.cat — removing
-            # the CatArrayBatched copy. Bit-identical to the recompute path: only the
-            # concatenation is replaced, never the projection/RoPE arithmetic. RoPE uses
-            # the context rows' absolute positions (0..ctx_len-1) and the block's
-            # (ctx_len..ctx_len+q_len-1), matching apply_rotary_pos_emb over the join.
-            k_ctx = self._proj_norm_rope_k(target_hidden, cos[:, :ctx_len], sin[:, :ctx_len])
-            v_ctx = self._proj_v(target_hidden)
+            # Incremental-context path: the engine only ever APPENDS to target_hidden
+            # (its prefix is byte-stable across rounds), and each context row at absolute
+            # position p gets the SAME post-RoPE K/V every round (position p is stable).
+            # So project + norm + RoPE ONLY the NEW context rows [cached:ctx_len) and
+            # append them to the layer's persistent buffer (the cached prefix is reused
+            # unchanged), then recompute the transient block and place it after. This
+            # removes BOTH the CatArrayBatched copy AND the full-context projection GEMM.
+            #
+            # RoPE positions match the recompute path's arange(ctx_len + q_len): new
+            # context row i (absolute position i) -> cos[:, i]; the block occupies the
+            # trailing positions ctx_len..ctx_len+q_len-1. NOT bit-identical to the cat
+            # path (only-new-rows projection reduces in a different order -> ~1e-7 drift
+            # in the PROPOSED logits); engine OUTPUT tokens stay lossless (target verify
+            # is the oracle). See DFlashContextCache.
+            cached = context_cache.cached_ctx_len(self.layer_idx)
+            if cached < ctx_len:
+                new_rows = target_hidden[:, cached:ctx_len, :]
+                k_new = self._proj_norm_rope_k(new_rows, cos[:, cached:ctx_len], sin[:, cached:ctx_len])
+                v_new = self._proj_v(new_rows)
+                context_cache.append_context(self.layer_idx, k_new, v_new)
             k_block = self._proj_norm_rope_k(hidden_states, cos[:, ctx_len:ctx_len + q_len], sin[:, ctx_len:ctx_len + q_len])
             v_block = self._proj_v(hidden_states)
-            k, v = context_cache.combine(self.layer_idx, k_ctx, v_ctx, k_block, v_block)
+            k, v = context_cache.combine(self.layer_idx, k_block, v_block)
             q = _apply_rope_q(q, cos, sin, q_len)
         else:
             k_ctx = self.k_proj(target_hidden)
