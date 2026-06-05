@@ -69,7 +69,7 @@ class DepthRankHistogram(TreeAlgorithm):
         topk_tokens_cpu = topk_tok_t.tolist()
         topk_logprobs_cpu = topk_lp_t.tolist()
 
-        b_per_depth = self._caps_from_profile(profile_table, D_expected, K)
+        b_per_depth = self.caps_from_topk(topk_logprobs_cpu, K, profile_table=profile_table)
 
         return build_with_per_depth_cap(
             root_token=int(root_token),
@@ -79,6 +79,13 @@ class DepthRankHistogram(TreeAlgorithm):
             budget=int(budget),
             device=device,
         )
+
+    def caps_from_topk(self, topk_logprobs_cpu, tree_width, profile_table=None, **kwargs) -> list[int]:
+        """Per-depth cap from the offline profile (engine build_from_topk path;
+        build() routes here too). Depends on the profile + #depths, not the logprob
+        values — so the dense and topk paths give identical caps."""
+        K = len(topk_logprobs_cpu[0]) if topk_logprobs_cpu else max(tree_width, 1)
+        return self._caps_from_profile(profile_table, len(topk_logprobs_cpu), K)
 
     def _caps_from_profile(self, profile_table, D: int, K: int) -> list[int]:
         """Per-depth cap = #ranks whose profiled acceptance >= tau, clamped [1, K].

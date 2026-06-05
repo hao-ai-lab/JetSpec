@@ -76,12 +76,7 @@ class Top2GapFanout(TreeAlgorithm):
         topk_lp_t, topk_tok_t = torch.topk(log_probs, tree_width, dim=-1)
         topk_tokens_cpu = topk_tok_t.tolist()
         topk_logprobs_cpu = topk_lp_t.tolist()
-
-        # Per-depth top-2 gap g_d = log q^(1) - log q^(2). Sigmoid schedule.
-        gaps = (topk_lp_t[:, 0] - topk_lp_t[:, 1]).tolist()  # (D,)
-        b_per_depth = [
-            _sigmoid_cap(g_d, tree_width, self.beta, self.g_0) for g_d in gaps
-        ]
+        b_per_depth = self.caps_from_topk(topk_logprobs_cpu, tree_width)
 
         return build_with_per_depth_cap(
             root_token=int(root_token),
@@ -91,6 +86,16 @@ class Top2GapFanout(TreeAlgorithm):
             budget=int(budget),
             device=device,
         )
+
+    def caps_from_topk(self, topk_logprobs_cpu, tree_width, **kwargs) -> list[int]:
+        """Per-depth fanout cap from the top-2 gap g_d = log q^(1) - log q^(2) via
+        the sigmoid schedule (the engine build_from_topk path; build() routes here
+        too). K<2 -> chain ([1]*D), matching the tree_width<2 branch above."""
+        K = len(topk_logprobs_cpu[0]) if topk_logprobs_cpu else 0
+        if K < 2:
+            return [1] * len(topk_logprobs_cpu)
+        gaps = [lp[0] - lp[1] for lp in topk_logprobs_cpu]
+        return [_sigmoid_cap(g_d, K, self.beta, self.g_0) for g_d in gaps]
 
 
 def _sigmoid_cap(g_d: float, K: int, beta: float, g_0: float) -> int:

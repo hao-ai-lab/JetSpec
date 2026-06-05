@@ -66,6 +66,13 @@ class CrossProduct(TreeAlgorithm):
             device=device,
         )
 
+    def caps_from_topk(self, topk_logprobs_cpu, tree_width, **kwargs) -> list[int]:
+        """Per-depth fanout cap for the engine `build_from_topk` path: full fanout
+        (K at every depth). With cap=[K]*D, build_with_per_depth_cap matches this
+        class's own `_build_from_topk` heap (children_to_add = min(K, budget-n))."""
+        K = len(topk_logprobs_cpu[0]) if topk_logprobs_cpu else max(tree_width, 1)
+        return [K] * len(topk_logprobs_cpu)
+
 
 def _build_from_topk(
     root_token: int,

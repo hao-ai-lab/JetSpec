@@ -11,6 +11,9 @@ Public contract (the only surface an engine should import — never `ptd.tree._c
 
     get_algorithm(name).build(draft_logits, block_size, tree_width, budget, device)
         -> DraftTree                                  # construct the speculative tree
+    build_from_topk(name, root_token, topk_tokens, topk_logprobs, budget, device, ...)
+        -> DraftTree                                  # same, from pre-extracted per-depth
+                                                      #   top-k (engines that already have it)
     build_ancestor_matrix(tree) -> (N, N) bool        # ancestor mask the engine folds
                                                       #   into its 4D attention mask
     tree_accept(tree, target_logits, temperature)
@@ -29,6 +32,7 @@ from ptd.tree._core.base import DraftTree, TreeAlgorithm
 from ptd.tree._core.registry import get_algorithm, register_tree_algo, list_algorithms
 from ptd.tree._core.ancestor import build_ancestor_matrix
 from ptd.tree._core.accept import tree_accept
+from ptd.tree._core.topk_build import build_from_topk
 from ptd.tree import baselines        # noqa: F401  (import to register algorithms)
 from ptd.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
 from ptd.tree import semantic_aware   # noqa: F401  (import to register algorithms)
@@ -37,5 +41,5 @@ from ptd.tree import profile_guided   # noqa: F401  (import to register algorith
 __all__ = [
     "DraftTree", "TreeAlgorithm",
     "get_algorithm", "register_tree_algo", "list_algorithms",
-    "build_ancestor_matrix", "tree_accept",
+    "build_ancestor_matrix", "tree_accept", "build_from_topk",
 ]
