@@ -37,6 +37,7 @@ class NanoEngine:
         dtype: torch.dtype = torch.bfloat16,
         block_size: int = 16,
         attn_implementation: str = "sdpa",
+        attn_backend: str = "sdpa",
     ):
         self.model, self.tokenizer = load_target(
             model_name_or_path, device, dtype, attn_implementation
@@ -46,6 +47,17 @@ class NanoEngine:
         self.dtype = dtype
         self.block_size = block_size
         self.eos_token_ids = self._resolve_eos()
+        # N3 attention backend (opt-in). "sdpa" (default) is byte-identical to the
+        # pre-N3 engine. "triton_paged_tree" swaps the RUNTIME attention interface
+        # for the paged tree-attention kernel (the model still loads with sdpa
+        # weights/format; only the interface HF dispatches to is replaced). Affects
+        # N0/N1/N2a; N2b stays on SDPA regardless (see generate_tree_batch).
+        self.attn_backend = attn_backend
+        if attn_backend == "triton_paged_tree":
+            from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
+
+            register_ptd_paged_tree()
+            self.model.config._attn_implementation = "ptd_paged_tree"
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -77,8 +89,19 @@ class NanoEngine:
         cache = PagedKVCache(
             block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
         )
+        # N3 kernel path: route the single seq (id 0) through the paged tree-attn
+        # kernel. Prefill runs on the kernel too (qq_bias=None -> pure causal, since
+        # context_len = seq_len - S = 0). attention_mask=None: the kernel masks.
+        # getattr default keeps object.__new__-built engines (test fixtures) on SDPA.
+        kernel = getattr(self, "attn_backend", "sdpa") == "triton_paged_tree"
+        if kernel:
+            cache._paged_handoff = True
+            cache._handoff_seq_ids = [0]
+            cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": None}
 
         # --- prefill: process the whole prompt once, sample the first token ---
+        # (attention_mask stays None for both paths: SDPA builds its own causal
+        # mask from cache_position; the kernel masks internally.)
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
         logits, cache, _ = self.runner.forward(input_ids, cache, pos)
         next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
@@ -140,10 +163,18 @@ class NanoEngine:
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         target_hidden = None
 
+        kernel = getattr(self, "attn_backend", "sdpa") == "triton_paged_tree"
+
         # --- prefill: populate the persistent paged cache with the prompt's KV ---
         cache = PagedKVCache(
             block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
         )
+        if kernel:
+            # Prefill runs on the kernel too (single seq 0, qq_bias=None -> pure
+            # causal over the prompt: context_len = seq_len - S = 0).
+            cache._paged_handoff = True
+            cache._handoff_seq_ids = [0]
+            cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": None}
         pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
         logits, cache, full_hidden = self.runner.forward(
             committed, cache, pos,
@@ -172,17 +203,33 @@ class NanoEngine:
             depths = tree.depth.tolist()
             posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
             cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
-            # 4D additive mask: queries = N nodes; keys = past_len cached prefix
-            # (all visible) + N nodes (ancestor mask, incl self).
-            allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-            allowed[:, :past_len] = True
-            allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
-            mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
-                               torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
-            logits, cache, new_hidden = self.runner.forward(
-                seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
-                output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
-            )
+            if kernel:
+                # Kernel path: prefix [0, past_len) is always-visible (handled by the
+                # kernel); the N tree nodes attend per the ancestor mask folded in as
+                # the fp32 (0/-inf) qq_bias. No dense 4D mask — attention_mask=None.
+                anc = build_ancestor_matrix(tree).to(device=self.device, dtype=torch.bool)
+                qq_bias = torch.where(
+                    anc, torch.zeros((), dtype=torch.float32, device=self.device),
+                    torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
+                )
+                cache._handoff_seq_ids = [0]
+                cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": qq_bias}
+                logits, cache, new_hidden = self.runner.forward(
+                    seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
+                    output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                )
+            else:
+                # 4D additive mask: queries = N nodes; keys = past_len cached prefix
+                # (all visible) + N nodes (ancestor mask, incl self).
+                allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
+                allowed[:, :past_len] = True
+                allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
+                mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
+                                   torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+                logits, cache, new_hidden = self.runner.forward(
+                    seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
+                    output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                )
             target_logits = logits                                    # (1, N, V) — every row is a tree node
             accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
             # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
@@ -331,8 +378,15 @@ class NanoEngine:
         cached length, builds a 4D additive mask that exposes each sequence's real
         prefix + its own new token (padded KV masked out), forwards once, then
         appends the new token's KV back into the pool per `seq_id`. Returns the
-        batched logits `(B, 1, V)`."""
+        batched logits `(B, 1, V)`.
+
+        On the N3 kernel path (`attn_backend == "triton_paged_tree"`) there is no
+        pad+mask+copy-back: `update` appends each row's new-token KV to its own seq
+        and the kernel reads `[0, past_i + 1)` straight from the pool (each seq is a
+        pure decode -> qq_bias=None). Returns the same `(B, 1, V)` logits."""
         B = len(seq_ids)
+        if getattr(self, "attn_backend", "sdpa") == "triton_paged_tree":
+            return self._batched_decode_forward_kernel(cache, seq_ids, tokens)
         seq_lens = [cache.get_seq_length(0, seq_id=s) for s in seq_ids]
         max_len = max(seq_lens)
         neg = torch.finfo(self.dtype).min
@@ -376,6 +430,26 @@ class NanoEngine:
                 cache.append(k_new, v_new, layer_idx, seq_id=s)
         return logits
 
+    def _batched_decode_forward_kernel(self, cache: PagedKVCache, seq_ids: list,
+                                       tokens: list):
+        """N3 kernel decode step: forward the REAL pooled cache, no pad/mask/copy-back.
+
+        Each seq is a pure decode (one query row): `update` routes each batch row's
+        new-token KV to its own `seq_id` (per `_handoff_seq_ids`) and the kernel
+        reads `[0, past_i + 1)` from the pool with qq_bias=None (causal decode).
+        position_ids = per-seq past length; cache_position is irrelevant on this
+        path (the cache appends by seq order, not cache_position). Returns `(B, 1, V)`."""
+        seq_lens = [cache.get_seq_length(0, seq_id=s) for s in seq_ids]
+        cache._paged_handoff = True
+        cache._handoff_seq_ids = list(seq_ids)
+        cache._ptd_attn_meta = {"seq_ids": list(seq_ids), "qq_bias": None}
+        input_ids = torch.tensor([[t] for t in tokens], device=self.device)
+        position_ids = torch.tensor([[s] for s in seq_lens], device=self.device)
+        logits, _, _ = self.runner.forward(
+            input_ids, cache, position_ids, attention_mask=None,
+        )
+        return logits
+
     @torch.inference_mode()
     def generate_tree_batch(self, prompts: list, tree_drafter, block_size: int = 4,
                             tree_width: int = 2, budget: int = 15, algo: str = "crossproduct",
@@ -384,6 +458,12 @@ class NanoEngine:
         cache (nano_vllm N2b). Returns a list of `{token_ids, text, tpf}` aligned to
         `prompts`, each token-identical to single-stream `generate_tree(prompt)` run
         alone — the N2b lossless gate.
+
+        Always uses the SDPA path regardless of `self.attn_backend`: the N3 kernel
+        path is a follow-on for N2b. It pads queries to `S = max_N`, so `total_q =
+        B*max_N` no longer matches Unit-2's ragged `qq_bias` (sum N_i) and padding-
+        node KV would pollute the per-seq pool; that needs a padded `qq_bias` or
+        query compaction (out of scope here).
 
         This is the tree-spec analogue of `generate_batch` (N2a) and the batched
         analogue of `generate_tree` (N1). Each round, every live sequence builds its

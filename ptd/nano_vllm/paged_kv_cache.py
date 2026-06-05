@@ -47,6 +47,40 @@ class EvictionFailed(Exception):
     is the only running sequence, so evicting it cannot free anyone else's room)."""
 
 
+class PagedHandle:
+    """Opaque K/V handle returned by `update` in paged-handoff mode (N3 kernel path).
+
+    The triton tree-attention kernel reads K/V straight from the block pool, so on
+    the kernel path `update` does NOT reconstruct the dense `(1, H, S, D)` view —
+    it appends the new KV and returns one of these per K/V. The handle carries
+    `(cache, layer_idx, which)` so the registered attention fn can pull the pool +
+    block tables back out (Qwen3Attention forwards `update`'s return straight into
+    the attention interface, touching nothing in between — verified, transformers
+    4.57). `shape`/`dtype`/`device` are cheap logical-view properties only as a
+    safety net in case any HF code path inspects them; the kernel never uses them."""
+
+    __slots__ = ("cache", "layer_idx", "which")
+
+    def __init__(self, cache: "PagedKVCache", layer_idx: int, which: str) -> None:
+        self.cache = cache
+        self.layer_idx = layer_idx
+        self.which = which            # "k" or "v"
+
+    @property
+    def shape(self) -> torch.Size:
+        sid = self.cache._handoff_seq_ids[0]
+        seq_len = self.cache.get_seq_length(self.layer_idx, seq_id=sid)
+        return torch.Size((1, self.cache._num_heads, seq_len, self.cache._head_dim))
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return self.cache.dtype
+
+    @property
+    def device(self) -> torch.device:
+        return self.cache.device
+
+
 class PagedKVCache(Cache):
     """Block-paged KV store conforming to the HF `Cache` interface.
 
@@ -98,6 +132,14 @@ class PagedKVCache(Cache):
         self._clock: int = 0
         # Per-sequence metadata (telemetry: prompt_len, computed_len, priority, …).
         self._seq_metadata: dict[int, dict] = {}
+        # N3 paged-handoff mode (opt-in; default off keeps the dense SDPA path
+        # byte-identical). When on, `update` appends the new KV (per-row routed by
+        # `_handoff_seq_ids`) and returns `PagedHandle`s instead of the dense view;
+        # the registered attention fn reads `_ptd_attn_meta` (seq order + qq_bias)
+        # and pulls K/V straight from the pool. Set by the engine seam, never by HF.
+        self._paged_handoff = False
+        self._handoff_seq_ids: Optional[list[int]] = None
+        self._ptd_attn_meta: Optional[dict] = None
         if self._is_single_seq:
             # N0/N1: pool grows on demand once dims are known.
             self._free_blocks: list[int] = []
@@ -439,7 +481,23 @@ class PagedKVCache(Cache):
         contiguous `(1, num_heads, seq, head_dim)` view SDPA attends over.
 
         `cache_kwargs["seq_id"]` selects the sequence (N2a batched forward); absent
-        (N0/N1), it defaults to seq 0. Sliding-window metadata etc. is ignored."""
+        (N0/N1), it defaults to seq 0. Sliding-window metadata etc. is ignored.
+
+        In paged-handoff mode (N3 kernel path) the new KV is appended (per-row
+        routed by `_handoff_seq_ids`) and `PagedHandle`s are returned instead of
+        the dense view — the registered attention fn reads straight from the pool,
+        so no `_logical_kv` reconstruction happens. The dense path below is the
+        unchanged default."""
+        if self._paged_handoff:
+            seq_ids = self._handoff_seq_ids
+            if seq_ids is not None and len(seq_ids) > 1:
+                # Batched (N2a): route each batch row to its own seq_id.
+                for i, sid in enumerate(seq_ids):
+                    self.append(key_states[i:i + 1], value_states[i:i + 1], layer_idx, seq_id=sid)
+            else:
+                sid = seq_ids[0] if seq_ids else None
+                self.append(key_states, value_states, layer_idx, seq_id=sid)
+            return PagedHandle(self, layer_idx, "k"), PagedHandle(self, layer_idx, "v")
         seq_id = cache_kwargs.get("seq_id") if cache_kwargs else None
         self.append(key_states, value_states, layer_idx, seq_id=seq_id)
         return self._logical_kv(layer_idx, seq_id=seq_id)
@@ -558,6 +616,38 @@ class PagedKVCache(Cache):
     def block_tables(self, seq_id: int) -> dict[int, list[int]]:
         """Per-layer block allocation for `seq_id`: `block_table[layer_idx] = [block_id, ...]`."""
         return self._seq_block_tables.get(seq_id, {})
+
+    # --- N3 kernel accessors (paged tree-attention) -------------------------
+
+    def kernel_block_table(self, seq_ids, layer_idx: int, device=None) -> torch.Tensor:
+        """`(num_seqs, max_blocks)` int32 block table for the kernel (PER-LAYER).
+
+        Row s is `_seq_block_tables[seq_ids[s]][layer_idx]` in logical order,
+        right-padded to the batch-max block count (pad 0 — the kernel never reads
+        past `seq_lens_k[s]`). Block tables are per-layer, so this is built fresh
+        per layer (unlike Unit-2's pure-compute builder, which packs one layer). The
+        padded grid is filled on CPU and moved to `device` in ONE transfer (this is
+        a per-layer per-step hot path; per-row device scatters dominated otherwise)."""
+        dev = self.device if device is None else torch.device(device)
+        rows = [self._seq_block_tables.get(s, {}).get(layer_idx, []) for s in seq_ids]
+        max_blocks = max((len(r) for r in rows), default=0)
+        table = torch.zeros((len(rows), max_blocks), dtype=torch.int32)   # CPU
+        for s, r in enumerate(rows):
+            if r:
+                table[s, : len(r)] = torch.tensor(r, dtype=torch.int32)
+        return table.to(dev)
+
+    def kernel_seq_lens(self, seq_ids, layer_idx: int, device=None) -> torch.Tensor:
+        """`(num_seqs,)` int32 total key length per seq = `get_seq_length` each."""
+        dev = self.device if device is None else torch.device(device)
+        return torch.tensor(
+            [self.get_seq_length(layer_idx, seq_id=s) for s in seq_ids],
+            dtype=torch.int32, device=dev,
+        )
+
+    def pool(self, layer_idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """`(k_pool, v_pool)` `(num_blocks, block_size, H, D)` for `layer_idx`."""
+        return self._kpool[layer_idx], self._vpool[layer_idx]
 
     def refcount(self, block_id: int) -> int:
         """Current refcount of `block_id` (0 if free / untracked)."""
