@@ -286,13 +286,17 @@ class PagedKVCache(Cache):
         table.extend(new_blocks)
 
         # Write keys+values to the same slots: the last `seq_new` positions.
+        # Vectorized scatter (ONE kernel per pool) — the old per-token loop issued a
+        # single-element DtoD memcpy per (token, layer), which profiled as ~40% of
+        # tree-verify GPU time (228k DtoD copies/run). blk/off are computed by a
+        # tensor gather over the (small) block table; the writes are identical.
         kpool, vpool = self._kpool[layer_idx], self._vpool[layer_idx]
-        for i in range(seq_new):
-            pos = start + i
-            blk = table[pos // self._block_size]
-            off = pos % self._block_size
-            kpool[blk, off] = keys[i]
-            vpool[blk, off] = values[i]
+        pos_t = start + torch.arange(seq_new, device=self.device)
+        table_t = torch.tensor(table, device=self.device, dtype=torch.long)
+        blk = table_t[pos_t // self._block_size]
+        off = pos_t % self._block_size
+        kpool[blk, off] = keys
+        vpool[blk, off] = values
         self._seq_filled[seq_id][layer_idx] = ((start + seq_new - 1) % self._block_size) + 1
         self._touch(seq_id)
         return self.get_seq_length(layer_idx, seq_id=seq_id)
