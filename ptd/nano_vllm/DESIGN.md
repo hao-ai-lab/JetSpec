@@ -57,6 +57,60 @@ substrate that aims at that ceiling with no external serving dependency.
   kernel (the fork uses a triton tree kernel; ours can start from that shape).
   Gate: decode_cuda_speedup approaching the fork's ~7.8×.
 
+**Status: N0, N1, N2a, N2b all DONE + committed + validated** (`9fc9123` / `498ebd0`
+/ `bce70c5` / `8e00dc0`, merged to `master`). nano does paged, continuous-batched,
+lossless AR + tree-spec decode; b200 **3.91× batched throughput** (B=8, AR). The
+3.91× is concurrency-only — nano still reconstructs dense KV per step + SDPA 4D
+mask. **N3 (the kernel) is the next step.**
+
+## N3 — implementation plan (resumption)
+
+**Goal:** replace the per-step dense-KV-reconstruct + SDPA 4D mask (in
+`engine._batched_decode_forward` / `_batched_tree_verify_forward`) with a **paged
+tree-attention kernel** that reads K/V straight from the block pool (via block
+table / slot mapping) and applies the per-node ancestor mask + fused softmax — so
+no padding waste, no dense copy. This is the lever from 3.91× (concurrency) toward
+the fork's **~7.8× decode**.
+
+**Why it's tractable despite being a custom kernel:**
+1. **Correctness oracle, for free.** The SDPA path (N2) is already lossless-validated.
+   The kernel must produce the *same* attention output → unit-test `kernel(q,k,v,
+   block_table, ancestor_mask)` vs the SDPA result on small random tensors on b200,
+   iterate until bitwise-close (fp32) / within-tolerance (bf16), THEN wire it in. No
+   guessing — every iteration has a ground-truth check.
+2. **Reference implementation.** The fork's working triton tree kernel —
+   `refs`/b200 `/raid/zhf004/vllm-ptd/vllm/v1/attention/backends/tree_attn.py` +
+   `vllm/v1/attention/ops/triton_unified_attention.py` — is the shape to adapt &
+   simplify (drop CUDA-graph capture / debug instrumentation), not invent.
+3. **Cheap failure.** Work is pushed + on `master`; failed kernel attempts cost
+   nothing — iterate/reset freely. (This is exactly why we shipped N2 first.)
+
+**Approach (scout → implement → verify):**
+- Component 1: a paged tree-attn kernel (triton) — signature ~`(q[B,Hq,N,D],
+  paged_k, paged_v, block_table, ancestor_mask[B,N,N], past_lens) -> out[B,Hq,N,D]`.
+- Component 2: a metadata builder (per-seq block table + slot mapping + packed
+  ancestor matrix → kernel inputs) — pure compute, CPU-testable.
+- Component 3: an attention backend hook so `ModelRunner.forward` routes to the
+  kernel instead of SDPA when enabled (opt-in flag; SDPA path stays the default +
+  the oracle).
+
+**Gates:**
+1. **Kernel == SDPA** on random inputs (b200) — the correctness gate. Then the full
+   nano suite (`test_nano_*`) must stay green with the kernel enabled (reuses the
+   existing per-seq lossless gates as end-to-end correctness).
+2. **b200 throughput** — `decode_cuda_speedup` / tok/s vs the SDPA path and vs the
+   fork's 7.8×, at matched batch + budget.
+
+**Caveats / constraints:**
+- **GPU-bound.** Triton kernels can't be CPU-validated like the rest of nano — N3
+  needs b200 (GPU 5) + the ControlMaster tunnel; iteration is GPU-round-trip-paced.
+  (Triton's interpret mode helps for small debugging only.)
+- **Hardest piece so far** — budget a focused multi-attempt session; correctness
+  first (match SDPA), perf tuning (block sizes, memory coalescing) second.
+- Keep it **opt-in** (a flag on the engine) so the validated SDPA path remains the
+  default + the correctness oracle; flip the default to the kernel only once it
+  matches SDPA + beats it on throughput.
+
 ## Module layout (to be created at N0)
 
 ```
@@ -77,5 +131,5 @@ ptd/nano_vllm/
    then copy the accepted path into the sequence's blocks (mirrors `_select_kv_cache`
    but block-granular). Confirm against N1's lossless gate.
 
-Status: design fixed; **N0 is the next implementation step** (greenfield, in-repo,
-CPU-testable first). Not yet implemented.
+Status: **N0→N2 shipped + merged to `master`** (see the milestone ladder + N3 plan
+above). N3 (the paged tree-attn kernel) is the remaining, GPU-bound step.
