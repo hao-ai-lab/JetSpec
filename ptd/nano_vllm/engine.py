@@ -88,3 +88,125 @@ class NanoEngine:
 
         text = self.tokenizer.decode(out_ids, skip_special_tokens=True)
         return {"token_ids": out_ids, "text": text}
+
+    @torch.inference_mode()
+    def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
+                      budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
+                      target_layer_ids=None, sampling_params: SamplingParams = None,
+                      return_stats: bool = False, prompt_info: dict = None,
+                      profile_table: dict = None) -> dict:
+        """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
+
+        The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
+        each round the tree drafter emits per-depth logits, the tree algorithm builds
+        a DraftTree, the target verifies all nodes in ONE forward under a 4D ancestor
+        mask (appending only the tree nodes against the cached prefix — no prefix
+        recompute), `tree_accept` takes the longest greedy-agreeing root-to-leaf path
+        plus a correction, and the accepted path's KV is GATHERED back into a linear
+        prefix (dropping the rejected branches). The only difference from the
+        `DynamicCache` reference is the cache class: `PagedKVCache.gather` replaces
+        `_select_kv_cache`. Lossless by construction (commits the verify forward's own
+        greedy along the accepted path) — token-identical to `LLM._generate_tree_kv_cached`
+        and to plain greedy `generate()` in fp32 (the N1 gate); bf16 may flip a
+        borderline argmax after ~tens of exact tokens (cached prefix KV vs a fresh
+        recompute differ in SDPA reduction order). Returns {token_ids, text, tpf}.
+
+        `algo` / `algo_kwargs` / `prompt_info` / `profile_table` / `target_layer_ids`
+        mirror `LLM.generate_tree`; all bundled algorithms recover crossproduct at
+        their identity knobs, so the choice is lossless regardless."""
+        # tree contract (engine -> tree, one-way): import only the public ptd.tree API
+        from ptd.tree import get_algorithm, build_ancestor_matrix, tree_accept
+
+        sp = sampling_params or SamplingParams()
+        if isinstance(prompt, str):
+            committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+        else:
+            committed = prompt.to(self.device)
+        D = max(1, block_size - 1)
+        algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
+        dtype = self.dtype
+        neg = torch.finfo(dtype).min
+        need_hidden = target_layer_ids is not None and block_size > 1
+        new_ids, rounds = [], 0
+        accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
+        target_hidden = None
+
+        # --- prefill: populate the persistent paged cache with the prompt's KV ---
+        cache = PagedKVCache(
+            block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
+        )
+        pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
+        logits, cache, full_hidden = self.runner.forward(
+            committed, cache, pos,
+            output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+        )
+        if full_hidden is not None:
+            target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
+        first_tok = sample(logits[:, -1:, :], sp.temperature)
+        new_ids.append(int(first_tok.item()))
+        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
+        if int(first_tok.item()) in self.eos_token_ids:
+            new_ids = new_ids[: sp.max_new_tokens]
+            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+
+        # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
+        # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
+        # the anchor (= tree root), which enters the cache via the verify forward.
+        while len(new_ids) < sp.max_new_tokens:
+            draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
+            tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
+                                  prompt_info=prompt_info, profile_table=profile_table)
+            N = tree.num_nodes
+            past_len = cache.get_seq_length()                          # == committed.shape[1] - 1
+            # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.
+            seq_step = tree.token_ids.view(1, -1)                      # (1, N)
+            depths = tree.depth.tolist()
+            posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
+            cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
+            # 4D additive mask: queries = N nodes; keys = past_len cached prefix
+            # (all visible) + N nodes (ancestor mask, incl self).
+            allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
+            allowed[:, :past_len] = True
+            allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
+            mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
+                               torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+            logits, cache, new_hidden = self.runner.forward(
+                seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
+                output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+            )
+            target_logits = logits                                    # (1, N, V) — every row is a tree node
+            accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+            # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
+            # rejected branches' KV. accepted_path = [0(root), …acc nodes], tree-ordered;
+            # their cache slots are past_len + path -> contiguous positions after gather.
+            keep = torch.cat([
+                torch.arange(past_len, device=self.device),
+                past_len + torch.tensor(accepted_path, device=self.device),
+            ])
+            cache.gather(keep)                    # cache length -> past_len + (acc + 1)
+            if new_hidden is not None:
+                # append [root | accepted nodes] hidden (the correction has none yet —
+                # it is the next anchor, fed via noise). Restores the invariant.
+                sel = torch.tensor(accepted_path, device=self.device)
+                target_hidden = torch.cat([target_hidden, new_hidden[:, sel, :]], dim=1)
+            accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
+                else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
+            block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
+            committed = torch.cat([committed, block.view(1, -1)], dim=1)
+            rounds += 1
+            accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
+            tree_sizes.append(int(N))
+            for t in block.tolist():
+                new_ids.append(int(t))
+                if int(t) in self.eos_token_ids:
+                    break
+            if new_ids and new_ids[-1] in self.eos_token_ids:
+                break
+        new_ids = new_ids[: sp.max_new_tokens]
+        text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
+        if return_stats:
+            out["accept_lengths"] = accept_lengths   # per-round (acc+1)
+            out["tree_sizes"] = tree_sizes           # per-round node count
+            out["rounds"] = rounds
+        return out
