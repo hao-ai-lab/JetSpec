@@ -57,11 +57,26 @@ substrate that aims at that ceiling with no external serving dependency.
   kernel (the fork uses a triton tree kernel; ours can start from that shape).
   Gate: decode_cuda_speedup approaching the fork's ~7.8×.
 
-**Status: N0, N1, N2a, N2b all DONE + committed + validated** (`9fc9123` / `498ebd0`
-/ `bce70c5` / `8e00dc0`, merged to `master`). nano does paged, continuous-batched,
-lossless AR + tree-spec decode; b200 **3.91× batched throughput** (B=8, AR). The
-3.91× is concurrency-only — nano still reconstructs dense KV per step + SDPA 4D
-mask. **N3 (the kernel) is the next step.**
+**Status: N0–N2b shipped + merged to `master`** (`9fc9123` / `498ebd0` / `bce70c5`
+/ `8e00dc0`); **N3 kernel shipped on `feat/draft-head`** (`457df8e` metadata builder
+· `b6158d5` triton kernel · `bdc665e` engine integration). nano does paged,
+continuous-batched, lossless AR + tree-spec; b200 **3.91× batched throughput** (B=8,
+AR, SDPA path = concurrency-only).
+
+**N3 result (opt-in `attn_backend="triton_paged_tree"`; N0/N1/N2a):** the paged
+tree-attn kernel is **correct + lossless** — `kernel == SDPA` on a random pool (30/30,
+fp32 2e-6 / bf16 8e-3) and token-identical end-to-end (`test_nano_kernel_e2e.py`,
+13/13 b200) for N0/N1/N2a. **Throughput is a batch-scaling crossover, not a blanket
+win** (Qwen3-8B AR decode, b200): kernel/SDPA = **0.59× @ B8 · 0.80× @ B16 · 1.04× @
+B32**. The kernel's per-step cost is near-flat while SDPA's dense-reconstruct + pad
+grows with batch, so it crosses over ~B=32; at small batch it is overhead-limited
+(per-layer block-table rebuild + H2D transfer ×num_layers/step + many small triton
+launches). It does **not** approach the fork's ~7.8× (a different, far-more-optimized
+tree-decode regime). **Follow-on (task #71):** cut the per-step host overhead (hoist
+layer-invariant `seq_lens_k`; keep block tables on GPU), add the **N2b** batched-tree
+kernel path (deferred — rectangular `S=max_N` padding makes `total_q=B·max_N` ≠ the
+ragged `qq_bias`), and re-measure at larger batch / longer context. SDPA stays the
+default + the correctness oracle.
 
 ## N3 — implementation plan (resumption)
 
@@ -131,5 +146,7 @@ ptd/nano_vllm/
    then copy the accepted path into the sequence's blocks (mirrors `_select_kv_cache`
    but block-granular). Confirm against N1's lossless gate.
 
-Status: **N0→N2 shipped + merged to `master`** (see the milestone ladder + N3 plan
-above). N3 (the paged tree-attn kernel) is the remaining, GPU-bound step.
+Status: **N0→N2 merged to `master`; N3 kernel shipped on `feat/draft-head`** (opt-in,
+N0/N1/N2a; correct + lossless; throughput crosses over ~B=32). See the milestone-ladder
+status + N3 result above. Remaining: the throughput-gap optimization + N2b kernel path
+(task #71).
