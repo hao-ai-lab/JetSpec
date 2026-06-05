@@ -10,14 +10,19 @@ documented SDPA-reduction-order borderline flips).
 
 N0 is vanilla AR (no tree). N1 layers tree spec on the same paged cache, using
 `PagedKVCache.gather` for the accepted-path KV (the paged `_select_kv_cache`).
+N2a adds `generate_batch`: continuous-batched AR over the *multi-sequence* paged
+pool (one shared cache, per-`seq_id` block tables), token-identical to running
+`generate` on each prompt alone (the N2a lossless gate).
 """
 import torch
+from transformers import DynamicCache
 
 from ptd.models.qwen3 import load_target
 from ptd.engine.llm import SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.engine.sampler import sample
 from ptd.nano_vllm.paged_kv_cache import PagedKVCache
+from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
 
 
 class NanoEngine:
@@ -210,3 +215,159 @@ class NanoEngine:
             out["tree_sizes"] = tree_sizes           # per-round node count
             out["rounds"] = rounds
         return out
+
+    @torch.inference_mode()
+    def generate_batch(self, prompts: list, sampling_params: SamplingParams = None) -> list:
+        """Continuous-batched greedy/temperature AR over the shared multi-seq paged
+        cache (nano_vllm N2a). Returns a list of `{token_ids, text}` aligned to
+        `prompts`, each token-identical to `generate(prompt)` run alone — the N2a
+        lossless gate.
+
+        Each `prompts[i]` is a str (tokenized raw) or a tokenized `(1, T)` tensor.
+        The `Scheduler` admits every prompt into one fixed `PagedKVCache` pool
+        (per-`seq_id` block tables); a `SequenceRequest` carries each sequence's
+        state. The loop is the pad-to-max batched forward of the N2a design: prefill
+        each admitted prompt (its prefix KV lands in the pool under its `seq_id`),
+        then each decode step reconstructs every live sequence's dense KV from the
+        pool, pads to the batch max length, runs ONE forward under a 4D padding mask
+        (so attention only sees each sequence's real positions — padded KV is masked,
+        not attended), appends the new token's KV back into the pool per `seq_id`,
+        and samples each sequence's next token. A sequence drops out of the batch on
+        EOS or once it hits its token budget; the survivors keep decoding.
+
+        Lossless because each sequence sees exactly the KV / RoPE positions / causal
+        visibility it would see decoding alone — the only difference is the pooled
+        storage and the per-step pad+mask, both of which are masked-out no-ops for
+        attention. fp32 bitwise-equal on CPU; bf16 carries the same SDPA
+        reduction-order caveat as N0/N1."""
+        sp = sampling_params or SamplingParams()
+        # Tokenize / normalize prompts to input_id lists.
+        prompt_ids = []
+        for p in prompts:
+            if isinstance(p, str):
+                ids = self.tokenizer(p, return_tensors="pt").input_ids[0].tolist()
+            else:
+                ids = p.to(self.device).view(-1).tolist()
+            prompt_ids.append([int(t) for t in ids])
+
+        cache = PagedKVCache(
+            block_size=self.block_size, max_batch_size=max(2, len(prompt_ids)),
+            device=torch.device(self.device), dtype=self.dtype,
+        )
+        scheduler = Scheduler(cache, max_batch_size=max(2, len(prompt_ids)))
+        for seq_id, ids in enumerate(prompt_ids):
+            scheduler.admit_request(SequenceRequest(
+                seq_id=seq_id, input_ids=list(ids),
+                max_new_tokens=sp.max_new_tokens, temperature=sp.temperature,
+            ))
+        scheduler.step()                              # FCFS admit all into the pool
+
+        num_layers = self.model.config.num_hidden_layers
+        results = {sid: {"token_ids": []} for sid in range(len(prompt_ids))}
+
+        # --- prefill: each admitted prompt forwards once (batch=1) into the pool
+        # under its seq_id; sample its first token. (Prefills are independent, so a
+        # per-seq forward is simplest and identical to the single-stream prefill.)
+        for sid, ids in enumerate(prompt_ids):
+            input_ids = torch.tensor([ids], device=self.device)
+            self._prefill_into_pool(cache, sid, input_ids, num_layers)
+            logits = self._last_prefill_logits
+            next_tok = int(sample(logits[:, -1:, :], sp.temperature).item())
+            results[sid]["token_ids"].append(next_tok)
+            scheduler.mark_decode_step(sid, next_tok, logits[:, -1:, :])
+
+        # Active = sequences still decoding (not finished). Drop on EOS or budget.
+        active = [sid for sid in range(len(prompt_ids))
+                  if not self._is_finished(results[sid]["token_ids"], sp)]
+
+        # --- decode: batched single-token steps over the live sequences ---------
+        while active:
+            toks = [results[sid]["token_ids"][-1] for sid in active]
+            logits = self._batched_decode_forward(cache, active, toks, num_layers, sp.temperature)
+            for i, sid in enumerate(active):
+                next_tok = int(sample(logits[i:i + 1, -1:, :], sp.temperature).item())
+                results[sid]["token_ids"].append(next_tok)
+                scheduler.mark_decode_step(sid, next_tok, logits[i:i + 1, -1:, :])
+            active = [sid for sid in active
+                      if not self._is_finished(results[sid]["token_ids"], sp)]
+
+        out = []
+        for sid in range(len(prompt_ids)):
+            ids = results[sid]["token_ids"][: sp.max_new_tokens]
+            out.append({"token_ids": ids,
+                        "text": self.tokenizer.decode(ids, skip_special_tokens=True)})
+        return out
+
+    def _is_finished(self, token_ids: list, sp: SamplingParams) -> bool:
+        """A sequence is done once it hit EOS or its `max_new_tokens` budget."""
+        return (len(token_ids) >= sp.max_new_tokens
+                or (token_ids and token_ids[-1] in self.eos_token_ids))
+
+    def _prefill_into_pool(self, cache: PagedKVCache, seq_id: int,
+                           input_ids: torch.Tensor, num_layers: int) -> None:
+        """Forward a prompt once (batch=1) and transfer its prefix KV into the
+        shared pool under `seq_id`. HF's `update` can't route a per-row `seq_id`
+        through a batched forward, so we prefill into a throwaway `DynamicCache`
+        and copy each layer's KV into the pool via `append(..., seq_id=seq_id)`.
+        Stashes the prompt's logits for the caller to sample the first token."""
+        pos = torch.arange(input_ids.shape[1], device=self.device).unsqueeze(0)
+        scratch = DynamicCache()
+        logits, scratch, _ = self.runner.forward(input_ids, scratch, pos)
+        for layer_idx in range(num_layers):
+            keys = scratch.layers[layer_idx].keys        # (1, H, T, D)
+            values = scratch.layers[layer_idx].values
+            cache.append(keys, values, layer_idx, seq_id=seq_id)
+        self._last_prefill_logits = logits
+
+    def _batched_decode_forward(self, cache: PagedKVCache, seq_ids: list,
+                                tokens: list, num_layers: int, temperature: float):
+        """One pad-to-max batched decode step over `seq_ids` (the N2a forward).
+
+        Reconstructs every sequence's dense KV from the pool, pads to the batch max
+        cached length, builds a 4D additive mask that exposes each sequence's real
+        prefix + its own new token (padded KV masked out), forwards once, then
+        appends the new token's KV back into the pool per `seq_id`. Returns the
+        batched logits `(B, 1, V)`."""
+        B = len(seq_ids)
+        seq_lens = [cache.get_seq_length(0, seq_id=s) for s in seq_ids]
+        max_len = max(seq_lens)
+        neg = torch.finfo(self.dtype).min
+
+        # Build a padded DynamicCache from each seq's logical KV (right-padded with
+        # zeros to max_len; the padding columns are masked out below).
+        batched = DynamicCache()
+        for layer_idx in range(num_layers):
+            k_pad = torch.zeros((B, cache._num_heads, max_len, cache._head_dim),
+                                dtype=self.dtype, device=self.device)
+            v_pad = torch.zeros_like(k_pad)
+            for i, s in enumerate(seq_ids):
+                gk, gv = cache._logical_kv(layer_idx, seq_id=s)   # (1, H, S_i, D)
+                S_i = gk.shape[2]
+                k_pad[i, :, :S_i, :] = gk[0]
+                v_pad[i, :, :S_i, :] = gv[0]
+            batched.update(k_pad, v_pad, layer_idx)
+
+        # New token per seq + its RoPE position (= the seq's cached length).
+        input_ids = torch.tensor([[t] for t in tokens], device=self.device)
+        position_ids = torch.tensor([[s] for s in seq_lens], device=self.device)
+        # 4D additive mask (B, 1, Q=1, KV=max_len+1): real prefix cols [0, S_i)
+        # allowed, padded cols [S_i, max_len) masked, the new-token col (max_len)
+        # is self-visible. cache_position=max_len places the new KV uniformly.
+        mask = torch.full((B, 1, 1, max_len + 1), neg, dtype=self.dtype, device=self.device)
+        for i, S_i in enumerate(seq_lens):
+            mask[i, 0, 0, :S_i] = 0.0
+            mask[i, 0, 0, max_len] = 0.0
+        cache_position = torch.tensor([max_len], device=self.device)
+        logits, batched, _ = self.runner.forward(
+            input_ids, batched, position_ids,
+            attention_mask=mask, cache_position=cache_position,
+        )
+        # Append each seq's new-token KV (col max_len) back into the pool.
+        for layer_idx in range(num_layers):
+            keys = batched.layers[layer_idx].keys        # (B, H, max_len+1, D)
+            values = batched.layers[layer_idx].values
+            for i, s in enumerate(seq_ids):
+                k_new = keys[i:i + 1, :, max_len:max_len + 1, :]
+                v_new = values[i:i + 1, :, max_len:max_len + 1, :]
+                cache.append(k_new, v_new, layer_idx, seq_id=s)
+        return logits
