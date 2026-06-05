@@ -1,35 +1,100 @@
-"""depth_rank_histogram — per-(depth, rank) acceptance histogram → fanout cap.
+"""depth_rank_histogram — per-(depth, rank) acceptance histogram -> fanout cap.
 
-STATUS: PLANNED (placeholder, not registered). Lineage: design id B2.
+Lineage: design id B2. Like top2gap_fanout it sets a per-depth fanout cap and
+feeds the shared heap builder, but it reads the cap from an OFFLINE-collected
+acceptance histogram resolved per (depth, rank) rather than from the live top-2
+gap. It can express "at depth 3 keep rank-1 and rank-2 but drop rank-3+", which
+a single live gap value cannot.
 
-Mechanism: like top2gap_fanout it sets a per-depth fanout cap, but it reads the
-cap from an offline-collected acceptance histogram resolved per (depth, rank)
-rather than from the live top-2 gap. It can express "at depth 3 keep rank-1 and
-rank-2 but drop rank-3+", which a single live gap value can't.
+This is the budget-aware generalization the low-budget winners lack: top2gap and
+the semantic_aware templates saturate well below a large budget (they leave it on
+the table), whereas this keeps every rank whose PROFILED acceptance clears a
+threshold, so it spends extra budget exactly where acceptance data says it pays —
+expanding with the budget instead of capping at a fixed template size.
 
-Potential: the single most promising non-shipped variant — the only one whose
-finer-than-per-depth granularity could legitimately beat top2gap_fanout, IF
-offline acceptance carries rank structure the live gap misses (open question).
-Same win regime as top2gap (middle budget, decisive drafter).
+profile_table schema (produced by bench/collect_profile.py):
 
-Needs: an offline profiler that runs crossproduct over N calibration prompts and
-dumps per-(depth, rank) acceptance counts (a `profile_table`). The profiler is
-HF-collectable — this does NOT strictly require vLLM. It also lights up
-`class_histogram`'s real (vs template) histogram, so the profiler amortizes.
-"""
+    {"depth_rank_accept": [[a_00, a_01, ...],   # depth 0: P(accepted child = rank r)
+                           [a_10, a_11, ...],   # depth 1
+                           ...],                # one row per drafter depth
+     "meta": {...}}                             # model / dataset / n (informational)
+
+Cap rule: b_per_depth[d] = #{r : depth_rank_accept[d][r] >= tau}, clamped to
+[1, tree_width]. Ranks almost never accepted are dropped (budget saved); the
+heap + budget bound then truncate to the most-probable productive paths.
+
+Identity recovery: with no profile_table (None), or tau <= 0, b_per_depth = K at
+every depth -> build_with_per_depth_cap returns byte-identical crossproduct.
+Lossless for any tree regardless (the verifier only commits its own greedy)."""
 from __future__ import annotations
 
 import torch
 
 from ptd.tree._core.base import DraftTree, TreeAlgorithm
+from ptd.tree._core.fanout_cap_builder import build_with_per_depth_cap
+from ptd.tree._core.registry import register_tree_algo
 
 
+@register_tree_algo("depth_rank_histogram")
 class DepthRankHistogram(TreeAlgorithm):
-    """PLANNED — per-(depth, rank) histogram-driven fanout cap. Not implemented."""
+    """Per-depth fanout cap from an offline per-(depth, rank) acceptance table."""
 
-    def build(self, root_token: int, draft_logits: torch.Tensor, block_size: int,
-              tree_width: int, budget: int, device: torch.device, **kwargs) -> DraftTree:
-        raise NotImplementedError(
-            "depth_rank_histogram (B2) is planned. Needs an offline profile_table of "
-            "per-(depth, rank) acceptance counts; see ptd/tree/ROADMAP.md."
+    def __init__(self, tau: float = 0.02):
+        self.tau = float(tau)
+
+    def build(
+        self,
+        root_token: int,
+        draft_logits: torch.Tensor,  # (1, D, V)
+        block_size: int,
+        tree_width: int,
+        budget: int,
+        device: torch.device,
+        profile_table: dict | None = None,
+        **kwargs,
+    ) -> DraftTree:
+        D_expected = block_size - 1
+        if draft_logits.dim() != 3 or draft_logits.shape[0] != 1:
+            raise ValueError(
+                f"draft_logits must be (1, D, V); got {tuple(draft_logits.shape)}"
+            )
+        if draft_logits.shape[1] != D_expected:
+            raise ValueError(
+                f"draft_logits depth {draft_logits.shape[1]} != block_size-1 ({D_expected})"
+            )
+
+        K = max(tree_width, 1)
+        log_probs = torch.log_softmax(draft_logits.squeeze(0), dim=-1)  # (D, V)
+        topk_lp_t, topk_tok_t = torch.topk(log_probs, K, dim=-1)
+        topk_tokens_cpu = topk_tok_t.tolist()
+        topk_logprobs_cpu = topk_lp_t.tolist()
+
+        b_per_depth = self._caps_from_profile(profile_table, D_expected, K)
+
+        return build_with_per_depth_cap(
+            root_token=int(root_token),
+            topk_tokens_cpu=topk_tokens_cpu,
+            topk_logprobs_cpu=topk_logprobs_cpu,
+            b_per_depth=b_per_depth,
+            budget=int(budget),
+            device=device,
         )
+
+    def _caps_from_profile(self, profile_table, D: int, K: int) -> list[int]:
+        """Per-depth cap = #ranks whose profiled acceptance >= tau, clamped [1, K].
+        No usable profile (or tau <= 0) -> K everywhere (recovers crossproduct)."""
+        rows = None
+        if profile_table is not None and self.tau > 0.0:
+            rows = profile_table.get("depth_rank_accept")
+        if not rows:
+            return [K] * D
+        caps = []
+        for d in range(D):
+            # missing deep rows -> full fanout (no data to prune on)
+            row = rows[d] if d < len(rows) else None
+            if not row:
+                caps.append(K)
+                continue
+            keep = sum(1 for r in range(min(K, len(row))) if row[r] >= self.tau)
+            caps.append(min(K, max(1, keep)))
+        return caps

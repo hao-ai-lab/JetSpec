@@ -204,7 +204,7 @@ class LLM:
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
-                      kv_cache_verify: bool = False) -> dict:
+                      profile_table: dict = None, kv_cache_verify: bool = False) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes in one forward under a 4D ancestor mask, and tree_accept takes the
@@ -217,8 +217,11 @@ class LLM:
         top2gap_fanout). `prompt_info` (optional dict: task label / reasoning mode
         / decoded text) is forwarded to the algorithm's build() for the
         prompt-adaptive (semantic_aware) algorithms; None → they use their
-        logit-fingerprint fallback. All bundled algorithms recover crossproduct at
-        their identity knobs, so the choice is lossless regardless.
+        logit-fingerprint fallback. `profile_table` (optional dict: offline
+        per-(depth,rank) acceptance, from bench/collect_profile.py) is forwarded to
+        the profile-guided algorithms (depth_rank_histogram); None → they recover
+        crossproduct. All bundled algorithms recover crossproduct at their identity
+        knobs, so the choice is lossless regardless.
 
         `target_layer_ids` (the head's tapped layers): when set with block_size>1,
         each verify forward extracts `target_hidden`, threaded into the next
@@ -244,7 +247,7 @@ class LLM:
         if kv_cache_verify:
             return self._generate_tree_kv_cached(
                 committed, tree_drafter, block_size, tree_width, budget, algo_obj,
-                target_layer_ids, sp, return_stats, prompt_info,
+                target_layer_ids, sp, return_stats, prompt_info, profile_table,
             )
         dtype = self.model.dtype
         neg = torch.finfo(dtype).min
@@ -271,7 +274,7 @@ class LLM:
         while len(new_ids) < sp.max_new_tokens:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
-                                  prompt_info=prompt_info)
+                                  prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
             prefix = committed[:, :-1]              # tokens before the anchor (= tree root)
             P = prefix.shape[1]
@@ -327,7 +330,7 @@ class LLM:
     @torch.inference_mode()
     def _generate_tree_kv_cached(self, committed, tree_drafter, block_size, tree_width,
                                  budget, algo_obj, target_layer_ids, sp,
-                                 return_stats, prompt_info) -> dict:
+                                 return_stats, prompt_info, profile_table) -> dict:
         """Tree spec decode over a PERSISTENT target KV cache (the wall-clock path).
 
         Mirrors `generate_chain`'s persistent-cache verify, extended to trees: each
@@ -374,7 +377,7 @@ class LLM:
         while len(new_ids) < sp.max_new_tokens:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
-                                  prompt_info=prompt_info)
+                                  prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
             past_len = cache.get_seq_length()                          # == committed.shape[1] - 1
             # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.

@@ -53,6 +53,7 @@ ALGO_KWARGS = {
     "task_router": {},          # prompt-adaptive; routes via fallback w/o prompt_info
     "reasoning_router": {},
     "class_histogram": {},
+    "depth_rank_histogram": {"tau": 0.02},  # needs --profile to shape; else == crossproduct
 }
 
 
@@ -119,7 +120,18 @@ def main():
     ap.add_argument("--max-new", type=int, default=256)
     ap.add_argument("--kv-cache-verify", action="store_true",
                     help="persistent-cache tree verify (real wall-clock) instead of recompute")
+    ap.add_argument("--profile", default=None,
+                    help="JSON profile_table (bench/collect_profile.py) for depth_rank_histogram")
+    ap.add_argument("--b2-tau", type=float, default=None,
+                    help="override depth_rank_histogram tau (per-(depth,rank) accept cutoff)")
     args = ap.parse_args()
+    profile_table = None
+    if args.profile:
+        import json
+        with open(args.profile) as f:
+            profile_table = json.load(f)
+    if args.b2_tau is not None:
+        ALGO_KWARGS["depth_rank_histogram"] = {"tau": args.b2_tau}
     head_path = args.draft_head or os.environ.get("PTD_DRAFT_HEAD")
     if not head_path:
         raise SystemExit("set --draft-head or PTD_DRAFT_HEAD")
@@ -161,7 +173,8 @@ def main():
             out, dt = _timed(lambda: llm.generate_tree(
                 p, drafter, block_size=bs, tree_width=args.width, budget=args.budget,
                 algo=algo, algo_kwargs=ALGO_KWARGS[algo], target_layer_ids=tli,
-                sampling_params=sp, return_stats=True, kv_cache_verify=args.kv_cache_verify))
+                sampling_params=sp, return_stats=True, kv_cache_verify=args.kv_cache_verify,
+                profile_table=profile_table))
             all_acc += out["accept_lengths"]; all_tree += out["tree_sizes"]
             spec_ntok += len(out["token_ids"]); spec_time += dt
             ep = _exact_prefix(rg, out["token_ids"])

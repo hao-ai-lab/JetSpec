@@ -1,7 +1,12 @@
-"""profile_guided — tree shape driven by external acceptance profiles (PLANNED).
+"""profile_guided — tree shape driven by external acceptance profiles.
 
-Placeholders only. These modules document mechanism + dependency for the
-profile-guided algorithms; they are intentionally NOT registered (the package
-is not imported by ``ptd.tree``), so the live registry stays at the shipped set.
-See ``ptd/tree/ROADMAP.md``. Implement, then wire registration when ready.
+Implemented:
+- `depth_rank_histogram` (B2) — per-(depth, rank) acceptance cap; the budget-aware
+  generalization of the low-budget winners. Profiler: ``bench/collect_profile.py``.
+
+Planned (placeholders, NOT registered — build() raises; see ``ptd/tree/ROADMAP.md``):
+- `online_warmup` (B5), `template_bandit` (B7) — need serving-loop feedback (vLLM phase).
+
+Importing this package registers the implemented algorithms only.
 """
+from ptd.tree.profile_guided import depth_rank_histogram  # noqa: F401  (registers B2)

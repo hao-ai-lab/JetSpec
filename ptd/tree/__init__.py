@@ -21,6 +21,7 @@ Bundled algorithms, by family:
 - `tree_to_chain/`  — single-pass uncertainty-aware shaping (top2gap_fanout).
 - `semantic_aware/` — prompt-adaptive routing (task_router, reasoning_router,
                       class_histogram).
+- `profile_guided/` — offline-profile-driven shaping (depth_rank_histogram).
 All recover crossproduct at their identity knob. Importing this package
 registers all of them; `list_algorithms()` enumerates the registry.
 """
@@ -31,6 +32,7 @@ from ptd.tree._core.accept import tree_accept
 from ptd.tree import baselines        # noqa: F401  (import to register algorithms)
 from ptd.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
 from ptd.tree import semantic_aware   # noqa: F401  (import to register algorithms)
+from ptd.tree import profile_guided   # noqa: F401  (import to register algorithms)
 
 __all__ = [
     "DraftTree", "TreeAlgorithm",

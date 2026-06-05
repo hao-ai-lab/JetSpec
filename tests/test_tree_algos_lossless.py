@@ -33,6 +33,7 @@ ACTIVE_KWARGS = {
     "task_router": {},          # routes via logit-fingerprint fallback (no prompt_info)
     "reasoning_router": {},     # routes via logit-fingerprint fallback
     "class_histogram": {},      # per-class template stand-in
+    "depth_rank_histogram": {"tau": 0.02},  # no profile_table here -> recovers crossproduct
 }
 
 PROMPT = "Solve: what is 17 times 23? Answer:"
