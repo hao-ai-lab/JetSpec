@@ -17,3 +17,9 @@ the tree builds or whether decoding is lossless.
 The goal is an owned, minimal high-throughput engine (single clone, no heavy
 external dependency) that reaches serving-class numbers, complementing the
 reference HF engine used for correctness and demos.
+
+See [`DESIGN.md`](./DESIGN.md) for the architecture, what it reuses (the
+`ptd.tree.build_from_topk` contract + the #58 persistent-cache verify pattern),
+the throughput target (the vLLM fork's measured ~7.8× decode), and the N0→N3
+milestone ladder. **N0 (single-stream AR over a paged KV cache) is the next
+implementation step.**
