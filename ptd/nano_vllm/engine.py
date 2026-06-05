@@ -12,7 +12,11 @@ N0 is vanilla AR (no tree). N1 layers tree spec on the same paged cache, using
 `PagedKVCache.gather` for the accepted-path KV (the paged `_select_kv_cache`).
 N2a adds `generate_batch`: continuous-batched AR over the *multi-sequence* paged
 pool (one shared cache, per-`seq_id` block tables), token-identical to running
-`generate` on each prompt alone (the N2a lossless gate).
+`generate` on each prompt alone (the N2a lossless gate). N2b adds
+`generate_tree_batch`: batched per-sequence TREE-spec over the same pool (each seq
+builds its own tree, one batched verify forward under a padded per-seq 4D ancestor
+mask, per-seq accept + ref-count-safe gather), token-identical to running
+`generate_tree` on each prompt alone (the N2b lossless gate).
 """
 import torch
 from transformers import DynamicCache
@@ -371,3 +375,236 @@ class NanoEngine:
                 v_new = values[i:i + 1, :, max_len:max_len + 1, :]
                 cache.append(k_new, v_new, layer_idx, seq_id=s)
         return logits
+
+    @torch.inference_mode()
+    def generate_tree_batch(self, prompts: list, tree_drafter, block_size: int = 4,
+                            tree_width: int = 2, budget: int = 15, algo: str = "crossproduct",
+                            algo_kwargs: dict = None, sampling_params: SamplingParams = None) -> list:
+        """Batched per-sequence TREE-spec decode over the shared multi-seq paged
+        cache (nano_vllm N2b). Returns a list of `{token_ids, text, tpf}` aligned to
+        `prompts`, each token-identical to single-stream `generate_tree(prompt)` run
+        alone — the N2b lossless gate.
+
+        This is the tree-spec analogue of `generate_batch` (N2a) and the batched
+        analogue of `generate_tree` (N1). Each round, every live sequence builds its
+        OWN draft tree (`get_algorithm(algo).build` on its drafter logits — the N1
+        per-seq path, with possibly different node counts N_i), the trees are padded
+        to `max_N` and verified in ONE batched forward under the design's padded 4D
+        mask, and each sequence's accepted root-to-leaf path is taken by `tree_accept`
+        on its own logit slice. Each sequence's KV is gathered independently
+        (ref-count-safe `PagedKVCache` per-seq append), so dropping a finished
+        sequence never perturbs the survivors.
+
+        Per-seq isolation comes from the additive mask `(B, 1, max_N, max_len + max_N)`
+        (`max_len = max(past_len[i])`): for seq i, query j < N_i sees its real prefix
+        columns `[0, past_len[i])`, its own tree nodes `[max_len, max_len + N_i)`
+        filtered by the ancestor matrix, and nothing else (padding prefix columns,
+        other seqs' tree columns, and padding tree columns are all `-inf`); padding
+        queries j >= N_i are fully masked. RoPE positions are per-seq depth-relative
+        (`past_len[i] + depth[i, j]`), `cache_position` is uniform — exactly the N1
+        single-stream geometry replicated per row, so each sequence's attention graph
+        is isomorphic to verifying its tree alone.
+
+        Lossless by construction (commits the verify forward's own greedy along each
+        accepted path); fp32 bitwise-equal to single-stream `generate_tree` on CPU,
+        bf16 carries the same SDPA reduction-order caveat as N0/N1/N2a.
+
+        `algo` / `algo_kwargs` mirror `generate_tree`; all bundled algorithms recover
+        crossproduct at their identity knobs, so the choice is lossless regardless.
+        Hidden-state-conditioned (DraftHead) drafting is N1-only for now: this batched
+        route runs the no-hidden path (`target_hidden=None`), which is what the stub
+        drafters that gate it exercise."""
+        # tree contract (engine -> tree, one-way): import only the public ptd.tree API
+        from ptd.tree import get_algorithm, build_ancestor_matrix, tree_accept
+
+        sp = sampling_params or SamplingParams()
+        # Tokenize / normalize prompts to input_id lists.
+        prompt_ids = []
+        for p in prompts:
+            if isinstance(p, str):
+                ids = self.tokenizer(p, return_tensors="pt").input_ids[0].tolist()
+            else:
+                ids = p.to(self.device).view(-1).tolist()
+            prompt_ids.append([int(t) for t in ids])
+        n_seq = len(prompt_ids)
+
+        D = max(1, block_size - 1)
+        algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
+        num_layers = self.model.config.num_hidden_layers
+        cache = PagedKVCache(
+            block_size=self.block_size, max_batch_size=max(2, n_seq),
+            device=torch.device(self.device), dtype=self.dtype,
+        )
+        scheduler = Scheduler(cache, max_batch_size=max(2, n_seq))
+        for seq_id, ids in enumerate(prompt_ids):
+            scheduler.admit_request(SequenceRequest(
+                seq_id=seq_id, input_ids=list(ids),
+                max_new_tokens=sp.max_new_tokens, temperature=sp.temperature,
+            ))
+        scheduler.step()                              # FCFS admit all into the pool
+
+        # Per-seq decode state. `committed` is the full token stream incl. the anchor
+        # (= each round's tree root); the pool trails it by that anchor (the root
+        # enters via the verify forward, exactly as in N1). `new_ids` accumulates the
+        # generated tokens; `rounds` counts verify forwards for tpf.
+        committed = {}
+        new_ids = {sid: [] for sid in range(n_seq)}
+        rounds = {sid: 0 for sid in range(n_seq)}
+
+        # --- prefill: each prompt forwards once into the pool under its seq_id;
+        # sample its first token (the anchor / first tree root). Mirrors the N2a
+        # prefill, plus N1's anchor bookkeeping. ---------------------------------
+        for sid, ids in enumerate(prompt_ids):
+            input_ids = torch.tensor([ids], device=self.device)
+            self._prefill_into_pool(cache, sid, input_ids, num_layers)
+            logits = self._last_prefill_logits
+            first_tok = int(sample(logits[:, -1:, :], sp.temperature).item())
+            new_ids[sid].append(first_tok)
+            # committed = prompt + anchor; the anchor is NOT yet cached (it is the
+            # tree root, fed via the next verify forward).
+            committed[sid] = torch.cat(
+                [input_ids, torch.tensor([[first_tok]], device=self.device)], dim=1)
+
+        # Active = sequences still decoding (not finished on the first token).
+        active = [sid for sid in range(n_seq)
+                  if not self._is_finished(new_ids[sid], sp)]
+
+        # --- decode: each round builds every live seq's tree, verifies in one
+        # batched forward, then per-seq tree_accept + ref-count-safe pool append. --
+        while active:
+            trees, ancestors, past_lens = [], [], []
+            for sid in active:
+                draft_logits = tree_drafter.propose_logits(
+                    committed[sid], D, target_hidden=None).to(self.device)   # (1, D, V)
+                tree = algo_obj.build(
+                    int(committed[sid][0, -1]), draft_logits, block_size, tree_width,
+                    budget, self.device)
+                trees.append(tree)
+                ancestors.append(build_ancestor_matrix(tree).bool())
+                past_lens.append(cache.get_seq_length(seq_id=sid))   # == committed-1
+            max_N = max(t.num_nodes for t in trees)
+
+            # ONE batched verify forward over the padded per-seq trees.
+            tree_kv = self._batched_tree_verify_forward(
+                cache, active, trees, ancestors, past_lens, max_N, num_layers)
+            logits = tree_kv["logits"]                # (B, max_N, V)
+
+            still = []
+            for i, sid in enumerate(active):
+                tree = trees[i]
+                N = tree.num_nodes
+                logits_i = logits[i:i + 1, :N, :]     # (1, N, V) — only real nodes
+                accepted_path, acc, correction = tree_accept(tree, logits_i, sp.temperature)
+                rounds[sid] += 1
+                # Append [root | accepted nodes] tree-node KV to the pool (the N1
+                # gather's keep set, applied per-seq). The pool grows from
+                # past_len[i] to past_len[i] + (acc + 1); the correction has no KV
+                # yet (it becomes the next round's anchor / root).
+                self._append_tree_path_kv(cache, sid, tree_kv, i, accepted_path, num_layers)
+                accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] \
+                    if acc > 0 else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
+                block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
+                committed[sid] = torch.cat([committed[sid], block.view(1, -1)], dim=1)
+                for t in block.tolist():
+                    new_ids[sid].append(int(t))
+                    if int(t) in self.eos_token_ids:
+                        break
+                if not self._is_finished(new_ids[sid], sp):
+                    still.append(sid)
+            active = still
+
+        out = []
+        for sid in range(n_seq):
+            ids = new_ids[sid][: sp.max_new_tokens]
+            r = rounds[sid]
+            out.append({"token_ids": ids,
+                        "text": self.tokenizer.decode(ids, skip_special_tokens=True),
+                        "tpf": (len(ids) / r if r else 0.0)})
+        return out
+
+    def _batched_tree_verify_forward(self, cache: PagedKVCache, seq_ids: list,
+                                     trees: list, ancestors: list, past_lens: list,
+                                     max_N: int, num_layers: int) -> dict:
+        """One padded batched tree-verify forward over `seq_ids` (the N2b forward).
+
+        Reconstructs every sequence's dense prefix KV from the pool, pads to the
+        batch max prefix length `max_len`, appends each seq's `N_i` tree-node columns
+        (right-padded to `max_N`), and forwards once under the design's 4D additive
+        mask so each sequence's tree nodes see ONLY that seq's prefix + their tree
+        ancestors. Returns `{"logits": (B, max_N, V), "cache": DynamicCache,
+        "max_len": max_len}`; the caller slices each seq's accepted-path KV out of
+        the verify cache and appends it to the pool via `_append_tree_path_kv`.
+
+        Geometry (per seq i, the N1 single-stream verify replicated per row):
+          - input_ids[i, j]    = tree_i.token_ids[j]              (j < N_i; pad 0)
+          - position_ids[i, j] = past_len[i] + depth_i[j]         (RoPE, depth-based)
+          - cache_position[j]  = max_len + j                      (uniform append slot)
+          - mask[i, 0, j, k]:  0 on real prefix cols [0, past_len[i]); 0 on tree cols
+            [max_len, max_len + N_i) where ancestor_i[j, k - max_len]; -inf elsewhere
+            (padding prefix cols, other seqs' / padding tree cols). Padding queries
+            j >= N_i are fully -inf (never attend)."""
+        B = len(seq_ids)
+        max_len = max(past_lens)
+        neg = torch.finfo(self.dtype).min
+        kv_len = max_len + max_N
+
+        # Build a padded DynamicCache from each seq's logical prefix KV (right-padded
+        # with zeros to max_len; padding columns are masked out below). The verify
+        # forward appends the max_N tree columns onto this, giving (B, H, kv_len, D).
+        batched = DynamicCache()
+        for layer_idx in range(num_layers):
+            k_pad = torch.zeros((B, cache._num_heads, max_len, cache._head_dim),
+                                dtype=self.dtype, device=self.device)
+            v_pad = torch.zeros_like(k_pad)
+            for i, s in enumerate(seq_ids):
+                gk, gv = cache._logical_kv(layer_idx, seq_id=s)   # (1, H, past_len[i], D)
+                P_i = gk.shape[2]
+                k_pad[i, :, :P_i, :] = gk[0]
+                v_pad[i, :, :P_i, :] = gv[0]
+            batched.update(k_pad, v_pad, layer_idx)
+
+        # Per-seq tree nodes (token_ids / RoPE positions), right-padded to max_N.
+        input_ids = torch.zeros((B, max_N), dtype=torch.long, device=self.device)
+        position_ids = torch.zeros((B, max_N), dtype=torch.long, device=self.device)
+        for i, s in enumerate(seq_ids):
+            tree, N, past = trees[i], trees[i].num_nodes, past_lens[i]
+            input_ids[i, :N] = tree.token_ids
+            position_ids[i, :N] = past + tree.depth.to(self.device)
+
+        # 4D additive mask (B, 1, max_N, kv_len): per-seq prefix + ancestor isolation.
+        mask = torch.full((B, 1, max_N, kv_len), neg, dtype=self.dtype, device=self.device)
+        for i, s in enumerate(seq_ids):
+            N, past = trees[i].num_nodes, past_lens[i]
+            mask[i, 0, :N, :past] = 0.0                         # real prefix: visible
+            tree_block = torch.where(                           # tree cols: ancestor relation
+                ancestors[i],
+                torch.zeros((), dtype=self.dtype, device=self.device),
+                torch.full((), neg, dtype=self.dtype, device=self.device))
+            mask[i, 0, :N, max_len:max_len + N] = tree_block    # (N, N) ancestor-masked
+            # rows j >= N (padding queries) stay fully -inf; cols outside the two
+            # blocks (padding prefix, other seqs' / padding tree cols) stay -inf.
+        cache_position = torch.arange(max_len, max_len + max_N, device=self.device)
+        logits, batched, _ = self.runner.forward(
+            input_ids, batched, position_ids,
+            attention_mask=mask, cache_position=cache_position,
+        )
+        return {"logits": logits, "cache": batched, "max_len": max_len}
+
+    def _append_tree_path_kv(self, cache: PagedKVCache, seq_id: int, tree_kv: dict,
+                             batch_idx: int, accepted_path: list, num_layers: int) -> None:
+        """Append seq `seq_id`'s accepted-path tree-node KV from the verify cache
+        into the pool (the per-seq, ref-count-safe analogue of N1's `gather`).
+
+        `accepted_path` is `[0(root), …acc accepted nodes]` in tree order; their KV
+        sits at columns `max_len + node_idx` of the verify cache. After this append
+        the pool length for `seq_id` is `past_len + (acc + 1)`, restoring the N1
+        invariant (pool == committed minus the next anchor)."""
+        max_len = tree_kv["max_len"]
+        verify = tree_kv["cache"]
+        cols = max_len + torch.tensor(accepted_path, device=self.device)   # (acc+1,)
+        for layer_idx in range(num_layers):
+            keys = verify.layers[layer_idx].keys          # (B, H, max_len + max_N, D)
+            values = verify.layers[layer_idx].values
+            k_path = keys[batch_idx:batch_idx + 1, :, cols, :]    # (1, H, acc+1, D)
+            v_path = values[batch_idx:batch_idx + 1, :, cols, :]
+            cache.append(k_path, v_path, layer_idx, seq_id=seq_id)
