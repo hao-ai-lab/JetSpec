@@ -154,6 +154,12 @@ class NanoEngine:
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
+        # Drop any per-layer context K/V from a prior call; the optional DraftHead
+        # context cache extends as target_hidden grows within THIS generation. No-op
+        # for drafters without a persistent cache (recompute path).
+        reset_ctx = getattr(tree_drafter, "reset_context_cache", None)
+        if callable(reset_ctx):
+            reset_ctx()
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.dtype

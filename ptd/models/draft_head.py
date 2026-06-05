@@ -76,6 +76,99 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     return q_embed, k_embed
 
 
+def _apply_rope_k(k, cos, sin, unsqueeze_dim=1):
+    """RoPE for K only, over the supplied (already row-sliced) cos/sin.
+
+    Mirrors the k branch of `apply_rotary_pos_emb` byte-for-byte
+    (k_embed = k*cos + rotate_half(k)*sin) so applying it to a contiguous row
+    region (with cos/sin pre-sliced to those rows' absolute positions) produces
+    the same bytes as the full-length call on those rows. Used by the no-cat path
+    to RoPE the context and block regions separately before the buffer write."""
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    return (k * cos) + (rotate_half(k) * sin)
+
+
+def _apply_rope_q(q, cos, sin, q_len, unsqueeze_dim=1):
+    """RoPE for Q only — the q branch of `apply_rotary_pos_emb`, byte-for-byte.
+    Q occupies the trailing `q_len` block positions, hence the `cos[..., -q_len:, :]`
+    slice (identical to the recompute path)."""
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    return (q * cos[..., -q_len:, :]) + (rotate_half(q) * sin[..., -q_len:, :])
+
+
+class _LayerKVScratch:
+    """Per-layer capacity-backed [context ; block] K/V buffer for one attention
+    layer — replaces the per-round `torch.cat([k_ctx, k_noise])` with in-place
+    writes into a reused buffer (the `CatArrayBatched` bottleneck, measured #1 GPU
+    self-time). Holds (bsz, heads, capacity, head_dim) buffers, grown (doubling)
+    only when a round needs more rows; `combine()` writes the context + block rows
+    and returns the contiguous `[:total]` slice.
+
+    LOSSLESS note: the context K/V handed in each round is the FULL fresh
+    projection (same GEMM shape as the recompute path's `k_proj(target_hidden)`),
+    so reusing the BUFFER (not the projected values) keeps the result bit-identical
+    to the cat path — only the concatenation copy is replaced, never the arithmetic.
+    """
+
+    def __init__(self) -> None:
+        self.k_buf: Optional[torch.Tensor] = None
+        self.v_buf: Optional[torch.Tensor] = None
+
+    def _ensure(self, ref: torch.Tensor, total: int) -> None:
+        # ref: (bsz, heads, n, head_dim); buffers share its bsz/heads/head_dim.
+        if self.k_buf is not None and self.k_buf.shape[-2] >= total:
+            return
+        cap = 1 if self.k_buf is None else self.k_buf.shape[-2]
+        while cap < total:
+            cap *= 2
+        shape = (ref.shape[0], ref.shape[1], cap, ref.shape[-1])
+        self.k_buf = ref.new_empty(shape)
+        self.v_buf = ref.new_empty(shape)
+
+    def combine(self, k_ctx, v_ctx, k_block, v_block) -> tuple[torch.Tensor, torch.Tensor]:
+        ctx_len = k_ctx.shape[-2]
+        total = ctx_len + k_block.shape[-2]
+        self._ensure(k_ctx, total)
+        self.k_buf[..., :ctx_len, :] = k_ctx
+        self.k_buf[..., ctx_len:total, :] = k_block
+        self.v_buf[..., :ctx_len, :] = v_ctx
+        self.v_buf[..., ctx_len:total, :] = v_block
+        return self.k_buf[..., :total, :], self.v_buf[..., :total, :]
+
+
+class DFlashContextCache:
+    """Opt-in per-layer [context ; block] K/V scratch, scoped to ONE generate_tree
+    call. Each round the attention layer projects the FULL context + the block (same
+    GEMMs as the recompute path), then writes both into this layer's reused buffer
+    instead of `torch.cat`-ing them — removing the `CatArrayBatched` copy (the
+    measured #1 GPU bottleneck) while staying BIT-IDENTICAL (only the join is
+    replaced, never the projection/RoPE arithmetic).
+
+    Reusing the projected *values* across rounds (project only new rows) was rejected
+    on purpose: a smaller-shaped `k_proj(new_rows)` GEMM does not reduce in the same
+    order as the recompute path's full `k_proj(target_hidden)`, so it diverges at
+    fp32 epsilon (~1e-7) — failing the lossless gate. The buffer-only design keeps
+    losslessness exact. Default path (DynamicCache / recompute) never touches this
+    class, so it stays byte-unchanged."""
+
+    def __init__(self) -> None:
+        self._layers: dict[int, _LayerKVScratch] = {}
+
+    def reset(self) -> None:
+        self._layers.clear()
+
+    def combine(self, layer_idx: int, k_ctx, v_ctx, k_block, v_block) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the contiguous (context ++ block) K/V for `layer_idx`, written into
+        the layer's reused buffer (no per-round cat)."""
+        scratch = self._layers.get(layer_idx)
+        if scratch is None:
+            scratch = _LayerKVScratch()
+            self._layers[layer_idx] = scratch
+        return scratch.combine(k_ctx, v_ctx, k_block, v_block)
+
+
 def _to_additive_attention_mask(
     attention_mask: torch.Tensor,
     *,
@@ -139,6 +232,22 @@ class Qwen3DFlashAttention(nn.Module):
         self.k_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
         self.sliding_window = config.sliding_window if config.layer_types[layer_idx] == "sliding_attention" else None
 
+    def _proj_norm_rope_k(self, rows: torch.Tensor, cos_slice, sin_slice) -> torch.Tensor:
+        """k_proj -> view -> k_norm -> transpose -> RoPE for `rows` (bsz, n, H).
+
+        Returns (bsz, heads, n, head_dim) post-RoPE K — byte-identical to the
+        corresponding slice of the recompute path (all three ops are per-row, and
+        cos/sin are pre-sliced to these rows' absolute positions)."""
+        bsz, n = rows.shape[:-1]
+        k = self.k_proj(rows).view(bsz, n, -1, self.head_dim)
+        k = self.k_norm(k).transpose(1, 2)
+        return _apply_rope_k(k, cos_slice, sin_slice)
+
+    def _proj_v(self, rows: torch.Tensor) -> torch.Tensor:
+        """v_proj -> view -> transpose for `rows` (bsz, n, H) -> (bsz, heads, n, head_dim)."""
+        bsz, n = rows.shape[:-1]
+        return self.v_proj(rows).view(bsz, n, -1, self.head_dim).transpose(1, 2)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -147,6 +256,7 @@ class Qwen3DFlashAttention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        context_cache: Optional["DFlashContextCache"] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         bsz, q_len = hidden_states.shape[:-1]
@@ -157,16 +267,32 @@ class Qwen3DFlashAttention(nn.Module):
         q = self.q_proj(hidden_states)
         q = q.view(bsz, q_len, -1, self.head_dim)
         q = self.q_norm(q).transpose(1, 2)
-        k_ctx = self.k_proj(target_hidden)
-        k_noise = self.k_proj(hidden_states)
-        v_ctx = self.v_proj(target_hidden)
-        v_noise = self.v_proj(hidden_states)
-        k = torch.cat([k_ctx, k_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
-        v = torch.cat([v_ctx, v_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
-        k = self.k_norm(k).transpose(1, 2)
-        v = v.transpose(1, 2)
         cos, sin = position_embeddings
-        q, k = apply_rotary_pos_emb(q, k, cos, sin)
+        if context_cache is not None:
+            # No-cat path: project the FULL context + the block (same GEMMs the
+            # recompute branch runs — k_proj(target_hidden) and k_proj(hidden_states)),
+            # norm + RoPE each region (per-row, so identical to the cat path), then
+            # write both into the layer's reused buffer instead of torch.cat — removing
+            # the CatArrayBatched copy. Bit-identical to the recompute path: only the
+            # concatenation is replaced, never the projection/RoPE arithmetic. RoPE uses
+            # the context rows' absolute positions (0..ctx_len-1) and the block's
+            # (ctx_len..ctx_len+q_len-1), matching apply_rotary_pos_emb over the join.
+            k_ctx = self._proj_norm_rope_k(target_hidden, cos[:, :ctx_len], sin[:, :ctx_len])
+            v_ctx = self._proj_v(target_hidden)
+            k_block = self._proj_norm_rope_k(hidden_states, cos[:, ctx_len:ctx_len + q_len], sin[:, ctx_len:ctx_len + q_len])
+            v_block = self._proj_v(hidden_states)
+            k, v = context_cache.combine(self.layer_idx, k_ctx, v_ctx, k_block, v_block)
+            q = _apply_rope_q(q, cos, sin, q_len)
+        else:
+            k_ctx = self.k_proj(target_hidden)
+            k_noise = self.k_proj(hidden_states)
+            v_ctx = self.v_proj(target_hidden)
+            v_noise = self.v_proj(hidden_states)
+            k = torch.cat([k_ctx, k_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
+            v = torch.cat([v_ctx, v_noise], dim=1).view(bsz, ctx_len + q_len, -1, self.head_dim)
+            k = self.k_norm(k).transpose(1, 2)
+            v = v.transpose(1, 2)
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
         # NOTE: DynamicCache.get_seq_length() defaults to layer_idx=0, which returns layer 0's
         # cached length — even when called from layer_idx > 0. Because layer 0 runs first and
         # updates its cache before layer 1's forward, layers 1..N would otherwise read layer 0's
@@ -244,6 +370,7 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
+        context_cache: Optional["DFlashContextCache"] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         residual = hidden_states
@@ -258,6 +385,7 @@ class Qwen3DFlashDecoderLayer(GradientCheckpointingLayer):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
+            context_cache=context_cache,
             **kwargs,
         )[0]
         hidden_states = residual + hidden_states
@@ -356,9 +484,12 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
         target_hidden: Optional[torch.Tensor] = None,
         past_key_values: Optional[Cache] = None,
         use_cache: bool = False,
+        context_cache: Optional["DFlashContextCache"] = None,
         **kwargs,
     ) -> torch.Tensor:
         hidden_states = noise_embedding
+        # fc / adapter / hidden_norm are per-row, so the projected context prefix is
+        # stable across rounds — the invariant the optional context_cache relies on.
         target_hidden = self.hidden_norm(self.fc(self.hidden_dim_adapter(target_hidden)))
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         for layer in self.layers:
@@ -370,6 +501,7 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
                 past_key_value=past_key_values,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
+                context_cache=context_cache,
                 **kwargs,
             )
         return self.norm(hidden_states)  # (B, L, H); caller applies the target lm_head

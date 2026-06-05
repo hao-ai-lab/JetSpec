@@ -21,6 +21,7 @@ import torch
 from transformers import DynamicCache
 
 from ptd.draft import Drafter, TreeDrafter
+from ptd.models.draft_head import DFlashContextCache
 
 
 class _DraftHeadForward:
@@ -29,20 +30,36 @@ class _DraftHeadForward:
     Both drafters need the same single-step head forward; this holds the head /
     target / config and exposes `_forward_head` returning raw `(1, depth, V)`
     logits. The two public drafters compose it (chain argmaxes, tree returns raw).
+
+    Optional context cache (`use_context_cache=True`): the head writes the
+    projected context + block K/V into a reused per-layer buffer instead of
+    `torch.cat`-ing them each round, removing the `CatArrayBatched` copy (the #1 GPU
+    bottleneck). The engine calls `reset_context_cache()` at the start of each
+    `generate_tree`. Lossless by construction (see DFlashContextCache); OFF by
+    default, so the recompute path is byte-unchanged.
     """
 
-    def __init__(self, head, target, block_size: int, target_layer_ids, draft_shift: bool = False):
+    def __init__(self, head, target, block_size: int, target_layer_ids, draft_shift: bool = False,
+                 use_context_cache: bool = False):
         self.head = head
         self.target = target
         self.block_size = block_size
         self.target_layer_ids = target_layer_ids
         self.draft_shift = draft_shift
+        self.use_context_cache = use_context_cache
+        self._context_cache = DFlashContextCache() if use_context_cache else None
         # The head's device + dtype are the source of truth: every tensor we
         # build (anchor row, mask-id placeholders, position ids) goes here so
         # embed_tokens / fc / lm_head never hit a device or dtype mismatch.
         self.device = next(head.parameters()).device
         self.dtype = next(head.parameters()).dtype
         self.mask_token_id = head.mask_token_id
+
+    def reset_context_cache(self) -> None:
+        """Drop the persistent per-layer context K/V (call at the start of every
+        generation). No-op when the cache mode is off."""
+        if self._context_cache is not None:
+            self._context_cache.reset()
 
     def _forward_head(self, context_ids: torch.Tensor, target_hidden: torch.Tensor, depth: int) -> torch.Tensor:
         """Run the head once and return `(1, depth, V)` draft logits.
@@ -72,12 +89,17 @@ class _DraftHeadForward:
         # absolute positions over that concatenation (benchmark.py:163 draft_pos_ids).
         position_ids = torch.arange(ctx_len + block_size, device=self.device).unsqueeze(0)
 
+        # Cache mode: pass the context cache and NO DynamicCache (the head writes
+        # context+block K/V into a reused per-layer buffer instead of torch.cat).
+        # cached_kv_len stays 0 either way (fresh DynamicCache vs None), so the
+        # block-causal mask is identical. Default: fresh DynamicCache (recompute).
         hidden = self.head(
             target_hidden=target_hidden.to(device=self.device, dtype=self.dtype),
             noise_embedding=noise_embedding,
             position_ids=position_ids,
-            past_key_values=DynamicCache(),
+            past_key_values=None if self.use_context_cache else DynamicCache(),
             use_cache=False,
+            context_cache=self._context_cache,
             is_causal=self.head.resolve_causal_head("auto"),
         )  # (1, block_size, H)
 
@@ -99,13 +121,19 @@ class DraftHeadDrafter(Drafter):
     target-agreeing prefix — lossless regardless of draft quality.
     """
 
-    def __init__(self, head, target, block_size: int, target_layer_ids, draft_shift: bool = False):
-        self._fwd = _DraftHeadForward(head, target, block_size, target_layer_ids, draft_shift)
+    def __init__(self, head, target, block_size: int, target_layer_ids, draft_shift: bool = False,
+                 use_context_cache: bool = False):
+        self._fwd = _DraftHeadForward(head, target, block_size, target_layer_ids, draft_shift,
+                                      use_context_cache)
         self.head = head
         self.target = target
         self.block_size = block_size
         self.target_layer_ids = target_layer_ids
         self.draft_shift = draft_shift
+
+    def reset_context_cache(self) -> None:
+        """Reset the persistent context cache (call at the start of each generation)."""
+        self._fwd.reset_context_cache()
 
     @torch.inference_mode()
     def propose(
@@ -127,13 +155,19 @@ class DraftHeadTreeDrafter(TreeDrafter):
     nodes under a 4D ancestor mask. Lossless regardless of draft quality.
     """
 
-    def __init__(self, head, target, block_size: int, target_layer_ids, draft_shift: bool = False):
-        self._fwd = _DraftHeadForward(head, target, block_size, target_layer_ids, draft_shift)
+    def __init__(self, head, target, block_size: int, target_layer_ids, draft_shift: bool = False,
+                 use_context_cache: bool = False):
+        self._fwd = _DraftHeadForward(head, target, block_size, target_layer_ids, draft_shift,
+                                      use_context_cache)
         self.head = head
         self.target = target
         self.block_size = block_size
         self.target_layer_ids = target_layer_ids
         self.draft_shift = draft_shift
+
+    def reset_context_cache(self) -> None:
+        """Reset the persistent context cache (call at the start of each generation)."""
+        self._fwd.reset_context_cache()
 
     @torch.inference_mode()
     def propose_logits(
