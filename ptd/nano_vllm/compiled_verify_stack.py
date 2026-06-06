@@ -219,6 +219,30 @@ class CompiledVerifyStack:
         """Run the compiled verify stack. Args mirror `_stack`; returns `(1, N, V)`
         logits, or `(logits, target_hidden)` when this stack was built with
         `need_hidden=True`."""
+        # The KV-block pool count (`k_pools[i].shape[0]`) is set by the engine's
+        # per-prompt `reserve_capacity(prompt_len + max_new_tokens + budget)`, so it
+        # differs across prompts (and between a short warmup and a long decode).
+        # `torch.compile(dynamic=False)` would specialize on that block-count and
+        # recompile the whole 36-layer stack for every distinct pool size — a recompile
+        # storm that blows dynamo's `cache_size_limit` and SILENTLY falls back to eager
+        # (the verify forward then runs unfused, collapsing decode_cuda_speedup to ~2×).
+        # Mark the pool block-dim dynamic so the stack compiles ONCE with a symbolic
+        # block-count and is reused for any prompt length; only dim 0 (num_blocks)
+        # varies — block_size / Hkv / head_dim stay static, and the in-graph scatter +
+        # paged_tree_attn op both tolerate a symbolic block-count. (`mark_dynamic` is
+        # honored even under `dynamic=False`; it is a cheap idempotent flag-set, a no-op
+        # once the symbolic graph exists.)
+        for t in k_pools:
+            torch._dynamo.mark_dynamic(t, 0)
+        for t in v_pools:
+            torch._dynamo.mark_dynamic(t, 0)
+        # Same story for the per-layer block tables: their column count is the reserved
+        # block-table width = ceil(reserve_capacity / block_size), which also tracks
+        # prompt length, so it too varies prompt-to-prompt and would re-trigger the
+        # specialize-recompile. Mark the width (dim 1) dynamic; the kernel indexes the
+        # table by runtime `seq_lens_k`, so a symbolic column count is safe.
+        for t in block_tables:
+            torch._dynamo.mark_dynamic(t, 1)
         return self._compiled(
             input_ids, cos, sin, k_pools, v_pools, block_tables, cu, seq_lens_k,
             qq_bias, node_blks, node_offs,
