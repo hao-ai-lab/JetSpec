@@ -13,12 +13,29 @@ Built on top of HF `transformers` (the target is a standard `AutoModelForCausalL
 ```bash
 git clone https://github.com/snyhlxde1/parallel-tree-decoding
 cd parallel-tree-decoding
-pip install -e .
-python examples/simple_generate.py            # offline greedy on Qwen3-8B (needs a CUDA GPU)
+pip install -e '.[kernel]'                    # [kernel] pulls triton for the tree-spec path
+python examples/tree_spec_generate.py         # trained-head tree-spec on Qwen3-8B (needs a CUDA GPU)
+python examples/simple_generate.py            # offline greedy baseline
 ```
 
 ```python
-from ptd import LLM, SamplingParams
+from ptd import load_draft_head, DraftHeadTreeDrafter
+from ptd.nano_vllm import NanoEngine, SamplingParams
+
+# Compiled tree-attention verify path (the contribution); "triton_paged_tree" runs it un-compiled.
+engine = NanoEngine("Qwen/Qwen3-8B", attn_backend="triton_paged_tree_compiled")
+head = load_draft_head("Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma")
+drafter = DraftHeadTreeDrafter(head, target=engine.model, block_size=head.block_size,
+                               target_layer_ids=head.target_layer_ids)
+out = engine.generate_tree("The three primary colors are", drafter,
+                           block_size=head.block_size, tree_width=7, budget=63,
+                           target_layer_ids=head.target_layer_ids,
+                           sampling_params=SamplingParams(temperature=0.0, max_new_tokens=64))
+print(out["text"], "\ntokens-per-forward:", out["tpf"])
+```
+
+```python
+from ptd import LLM, SamplingParams           # the SDPA reference baseline
 
 llm = LLM("Qwen/Qwen3-8B")
 out = llm.generate("The three primary colors are", SamplingParams(temperature=0.0, max_new_tokens=64))
