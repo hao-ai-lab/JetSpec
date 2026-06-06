@@ -22,9 +22,27 @@ them, exactly mirroring the validated `a0_compile_fusion` prototype. The engine
 seam reserves the node slots (via `PagedKVCache.reserve_tree_slots`) BEFORE the
 call, so after verify the accepted-path `gather` reads those slots unchanged.
 
-This unit is logits-only (`need_hidden=False`). The tapped-hidden variant (the
-DraftHead path with `block_size > 1`) is a later unit; the engine falls back to
-the eager kernel path for it.
+Two construction-time variants, selected by the `need_hidden` Python-constant
+flag (A3-HIDDEN):
+  - `need_hidden=False` (A3-INT): logits-only. Inductor DCEs the residual stream
+    once `lm_head(norm(...))` is taken, so untapped per-layer hidden never escapes.
+  - `need_hidden=True` (A3-HIDDEN): the real DraftHead path. The stack ALSO returns
+    the tapped target-layer hidden states the head conditions on. It captures the
+    POST-layer residual at each `target_layer_id` (a Python-constant list baked at
+    construction, so the tap set is a compile-time constant) and returns their
+    `torch.cat` along the feature dim as a second output — matching
+    `draft_head.extract_context_feature(out.hidden_states, target_layer_ids)`
+    EXACTLY: that helper taps `out.hidden_states[L + 1]` (offset=1: index 0 is the
+    embedding output), i.e. the OUTPUT of target layer `L` = the residual stream
+    AFTER layer `L`. In `_stack`, that residual is the value of `hidden` once the
+    loop body for layer index `L` completes. The two variants are SEPARATE compiled
+    callables (one `torch.compile` per instance), so the False graph DCEs the taps
+    the True graph keeps live.
+
+A wrong tap does NOT break token-losslessness (each verify row is still
+target-greedy, so the committed tokens match SDPA regardless), but it silently
+feeds the DraftHead the wrong context and DROPS accept_len — so A3-HIDDEN is gated
+on accept_len equality vs the eager kernel path, not just token equality.
 
 SDPA stays the default + the lossless oracle. This module imports only `torch` at
 scope (the custom_op + `apply_rotary_pos_emb` are bound at construction time over
@@ -39,17 +57,26 @@ from ptd.nano_vllm.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (reg
 
 class CompiledVerifyStack:
     """A compiled, read-only Qwen3 tree-verify forward bound once over the real
-    model handles. `__call__` runs the compiled stack and returns `(1, N, V)`
-    logits — token-identical to the SDPA/kernel verify forward, at fused cost.
+    model handles. `__call__` runs the compiled stack and returns either `(1, N, V)`
+    logits (`need_hidden=False`) or `(logits, target_hidden)` where `target_hidden`
+    is `(1, N, len(target_layer_ids)*H)` (`need_hidden=True`) — token-identical to
+    the SDPA/kernel verify forward, at fused cost, with `target_hidden` byte-matching
+    `extract_context_feature` over the same tapped layers.
 
     Bound handles (from the loaded model):
       - `embed_tokens`, `layers` (each layer's `self_attn` / LN / `mlp`), `norm`,
         `lm_head`, and `apply_rotary_pos_emb` from the installed Qwen3 module.
     Per-call tensors come from the engine seam (RoPE cos/sin, the block pool +
     block table + per-seq key lengths, the ancestor `qq_bias`, and the reserved
-    node-KV scatter indices)."""
+    node-KV scatter indices).
 
-    def __init__(self, model, block_size: int) -> None:
+    `need_hidden` / `target_layer_ids` are construction-time Python constants (the
+    tap set is baked into the traced graph). Build one instance per variant — the
+    engine keeps a `need_hidden=False` stack for logits-only verifies and a
+    `need_hidden=True` stack for the DraftHead path."""
+
+    def __init__(self, model, block_size: int, need_hidden: bool = False,
+                 target_layer_ids=None) -> None:
         # apply_rotary_pos_emb is bound from the SAME module HF dispatches through,
         # so RoPE is bit-identical to the model's own forward.
         from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
@@ -69,6 +96,24 @@ class CompiledVerifyStack:
         self.num_queries_per_kv = self.num_heads_q // self.num_heads_kv   # nqpkv
         self.scaling = self.head_dim ** -0.5                              # head_dim ** -0.5
         self.block_size = int(block_size)
+
+        # A3-HIDDEN: tapped-hidden variant constants. `need_hidden` and the tap set
+        # are Python constants baked into the traced graph: `_stack` branches on
+        # `self.need_hidden` and reads `self.target_layer_ids` at trace time, so the
+        # False graph DCEs the residual stream (logits-only) and the True graph keeps
+        # exactly the tapped post-layer residuals live and concatenated. Stored as a
+        # tuple so it's hashable/immutable and the membership test below is a constant.
+        self.need_hidden = bool(need_hidden)
+        self.target_layer_ids = tuple(target_layer_ids) if target_layer_ids is not None else ()
+        if self.need_hidden and not self.target_layer_ids:
+            raise ValueError("need_hidden=True requires a non-empty target_layer_ids")
+        # HF's `output_hidden_states` tuple stores the FINAL layer's entry POST the
+        # model's final RMSNorm (lm_head(hidden_states[-1]) == logits exactly), while
+        # every earlier entry is the raw pre-norm post-layer residual. So tapping the
+        # last layer means tapping `norm(hidden)`, not the residual — match it, or the
+        # last-layer tap silently mismatches `extract_context_feature` (accept_len
+        # drop). Compile-time constant index.
+        self._last_layer_idx = len(self.layers) - 1
 
         # fullgraph=True so a graph break (e.g. an unexpected Python op leaking into
         # the trace) fails loudly rather than silently falling back to eager; the
@@ -91,7 +136,8 @@ class CompiledVerifyStack:
         node_blks,        # list[(N,) long]       per layer: reserved pool block id per node
         node_offs,        # list[(N,) long]       per layer: reserved pool offset per node
     ):
-        """Read-only Qwen3 forward over the N tree nodes -> `(1, N, V)` logits.
+        """Read-only Qwen3 forward over the N tree nodes -> `(1, N, V)` logits, or
+        `(logits, target_hidden)` when `need_hidden` (A3-HIDDEN).
 
         Reproduces `Qwen3Attention.forward` per layer EXACTLY: q/k-norm over the
         head_dim BEFORE transpose, `apply_rotary_pos_emb` on the (1, H, N, D)
@@ -104,11 +150,22 @@ class CompiledVerifyStack:
         Block tables / scatter maps are PER-LAYER: the pool assigns each layer its
         own physical blocks, so layer i uses `block_tables[i]` / `node_blks[i]` /
         `node_offs[i]` (a single shared grid would read/write the wrong blocks for
-        layers other than the first)."""
+        layers other than the first).
+
+        When `need_hidden`, after each layer body completes `hidden` holds that
+        layer's OUTPUT residual stream; we capture it for every layer index in the
+        constant `target_layer_ids` set (matching `extract_context_feature`'s
+        `hidden_states[L + 1]` tap) and `torch.cat` the captures along the feature
+        dim in `target_layer_ids` order -> `(1, N, len(ids)*H)`."""
         N = input_ids.shape[1]
         Hq, Hkv, Dh = self.num_heads_q, self.num_heads_kv, self.head_dim
         hidden = self.embed_tokens(input_ids)                # (1, N, hidden)
         hshape = (1, N, -1, Dh)
+        # A3-HIDDEN: collect the post-layer residual for each tapped layer. Keyed by
+        # layer index so we can re-emit in `target_layer_ids` order (the head's fc
+        # concatenates in that order); the membership test reads a constant set.
+        tap_set = set(self.target_layer_ids)
+        taps = {}
         for i, layer in enumerate(self.layers):
             attn = layer.self_attn
             residual = hidden
@@ -133,7 +190,17 @@ class CompiledVerifyStack:
             residual = hidden
             h = layer.post_attention_layernorm(hidden)
             hidden = residual + layer.mlp(h)
-        return self.lm_head(self.norm(hidden))                            # (1, N, V)
+            # Post-layer-`i` residual == extract_context_feature's hidden_states[i+1]
+            # for every layer EXCEPT the last, whose HF entry is post-final-norm.
+            if self.need_hidden and i in tap_set:
+                taps[i] = self.norm(hidden) if i == self._last_layer_idx else hidden
+        logits = self.lm_head(self.norm(hidden))                          # (1, N, V)
+        if self.need_hidden:
+            # Concatenate in target_layer_ids order (the head's fc expects that
+            # layout); matches extract_context_feature(out.hidden_states, ids).
+            target_hidden = torch.cat([taps[L] for L in self.target_layer_ids], dim=-1)
+            return logits, target_hidden
+        return logits
 
     def __call__(
         self,
@@ -149,7 +216,9 @@ class CompiledVerifyStack:
         node_blks,
         node_offs,
     ):
-        """Run the compiled verify stack. Args mirror `_stack`; returns `(1, N, V)`."""
+        """Run the compiled verify stack. Args mirror `_stack`; returns `(1, N, V)`
+        logits, or `(logits, target_hidden)` when this stack was built with
+        `need_hidden=True`."""
         return self._compiled(
             input_ids, cos, sin, k_pools, v_pools, block_tables, cu, seq_lens_k,
             qq_bias, node_blks, node_offs,

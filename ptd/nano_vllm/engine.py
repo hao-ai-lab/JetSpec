@@ -59,15 +59,25 @@ class NanoEngine:
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
         elif attn_backend == "triton_paged_tree_compiled":
-            # A3-INT: same custom_op attention backend as "triton_paged_tree"
-            # (prefill + the eager kernel fallback both ride it), PLUS a compiled
-            # read-only verify stack that replaces the per-round verify forward.
+            # A3-INT/A3-HIDDEN: same custom_op attention backend as
+            # "triton_paged_tree" (prefill + the eager kernel fallback both ride it),
+            # PLUS compiled read-only stacks that replace the per-round verify forward
+            # and the AR decode forward.
+            #   - `compiled_verify`: logits-only verify (need_hidden=False).
+            #   - `compiled_verify_hidden`: the DraftHead path (need_hidden=True),
+            #     built lazily on first use because `target_layer_ids` only arrive
+            #     with `generate_tree`'s args (keyed by tap set so a different head
+            #     gets its own compiled graph).
+            #   - `compiled_ar`: a compiled N=1 single-node verify stack so the AR
+            #     decode `generate()` compares compiled-vs-compiled with the tree path.
             from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
             from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
             self.compiled_verify = CompiledVerifyStack(self.model, block_size=self.block_size)
+            self._compiled_verify_hidden = {}        # target_layer_ids -> stack
+            self.compiled_ar = CompiledVerifyStack(self.model, block_size=self.block_size)
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -103,7 +113,12 @@ class NanoEngine:
         # kernel. Prefill runs on the kernel too (qq_bias=None -> pure causal, since
         # context_len = seq_len - S = 0). attention_mask=None: the kernel masks.
         # getattr default keeps object.__new__-built engines (test fixtures) on SDPA.
-        kernel = getattr(self, "attn_backend", "sdpa") == "triton_paged_tree"
+        # A3-HIDDEN: the compiled backend also rides the kernel substrate for prefill,
+        # then runs the decode forward (N=1) through the compiled AR stack so
+        # `decode_cuda_speedup` compares compiled-vs-compiled with the tree path.
+        backend = getattr(self, "attn_backend", "sdpa")
+        kernel = backend in ("triton_paged_tree", "triton_paged_tree_compiled")
+        compiled = backend == "triton_paged_tree_compiled"
         if kernel:
             cache._paged_handoff = True
             cache._handoff_seq_ids = [0]
@@ -123,13 +138,57 @@ class NanoEngine:
             if out_ids[-1] in self.eos_token_ids:
                 break
             pos = torch.tensor([[cur]], device=self.device)
-            logits, cache, _ = self.runner.forward(next_tok, cache, pos)
+            if compiled:
+                # A3-HIDDEN: compiled N=1 decode — reuse the verify stack with a
+                # single node (qq_bias=None -> pure causal: the kernel makes the
+                # cached prefix [0, cur) always-visible and the lone node attends
+                # itself). Reserve the one slot (the stack scatters its post-RoPE
+                # K/V in-graph), then run the compiled AR stack. Byte-equivalent to
+                # the eager kernel decode forward; compiled so the AR baseline is
+                # fused like the tree verify (a fair decode_cuda_speedup).
+                bts, node_blks, node_offs, slk = cache.reserve_tree_slots(0, 1, cur)
+                dummy = torch.zeros(1, 1, self.model.config.hidden_size,
+                                    device=self.device, dtype=self.dtype)
+                cos, sin = self.model.model.rotary_emb(dummy, pos)
+                cu = torch.tensor([0, 1], device=self.device, dtype=torch.int32)
+                nlayers = self.model.config.num_hidden_layers
+                k_pools = [cache.pool(i)[0] for i in range(nlayers)]
+                v_pools = [cache.pool(i)[1] for i in range(nlayers)]
+                logits = self.compiled_ar(
+                    next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
+                    None, node_blks, node_offs,
+                )
+            else:
+                logits, cache, _ = self.runner.forward(next_tok, cache, pos)
             next_tok = sample(logits[:, -1:, :], sp.temperature)
             out_ids.append(int(next_tok.item()))
             cur += 1
 
         text = self.tokenizer.decode(out_ids, skip_special_tokens=True)
         return {"token_ids": out_ids, "text": text}
+
+    def _get_compiled_verify_hidden(self, target_layer_ids):
+        """Lazily build (and cache) the `need_hidden=True` compiled verify stack for
+        a given tap set. A3-HIDDEN: `target_layer_ids` only arrive with
+        `generate_tree`'s args, so we can't bake the tap set at engine construction;
+        we cache one compiled stack per distinct tap tuple (different heads tap
+        different layers and need their own DCE'd graph). Robust to the test fixtures
+        that bypass `__init__` (no `_compiled_verify_hidden` dict)."""
+        from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+
+        cache = getattr(self, "_compiled_verify_hidden", None)
+        if cache is None:
+            cache = {}
+            self._compiled_verify_hidden = cache
+        key = tuple(target_layer_ids)
+        stack = cache.get(key)
+        if stack is None:
+            stack = CompiledVerifyStack(
+                self.model, block_size=self.block_size,
+                need_hidden=True, target_layer_ids=target_layer_ids,
+            )
+            cache[key] = stack
+        return stack
 
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
@@ -228,15 +287,17 @@ class NanoEngine:
                     anc, torch.zeros((), dtype=torch.float32, device=self.device),
                     torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
                 )
-                if compiled and not need_hidden:
-                    # A3-INT compiled verify: bypass model.__call__ + the per-layer
-                    # Python and run the fused read-only stack. Reserve this round's
-                    # node slots in the pool's block table (the allocation half of
-                    # append, no scatter — the compiled stack scatters the post-RoPE
+                if compiled:
+                    # A3-INT/A3-HIDDEN compiled verify: bypass model.__call__ + the
+                    # per-layer Python and run the fused read-only stack. Reserve this
+                    # round's node slots in the pool's block table (the allocation half
+                    # of append, no scatter — the compiled stack scatters the post-RoPE
                     # node K/V in-graph), then call the compiled stack directly. After
                     # it returns, the node KV lives in the pool exactly where the eager
                     # kernel's `update` would have put it, so `cache.gather(keep)`
-                    # below works byte-for-byte unchanged.
+                    # below works byte-for-byte unchanged. When `need_hidden` (the real
+                    # DraftHead path) the stack ALSO returns the tapped target_hidden,
+                    # byte-matching extract_context_feature over `target_layer_ids`.
                     bts, node_blks, node_offs, slk = cache.reserve_tree_slots(0, N, past_len)
                     dummy = torch.zeros(1, N, self.model.config.hidden_size,
                                         device=self.device, dtype=self.dtype)
@@ -245,15 +306,22 @@ class NanoEngine:
                     nlayers = self.model.config.num_hidden_layers
                     k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                     v_pools = [cache.pool(i)[1] for i in range(nlayers)]
-                    logits = self.compiled_verify(
-                        seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
-                        qq_bias, node_blks, node_offs,
-                    )
-                    new_hidden = None
+                    if need_hidden:
+                        stack = self._get_compiled_verify_hidden(target_layer_ids)
+                        logits, new_hidden = stack(
+                            seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
+                            qq_bias, node_blks, node_offs,
+                        )
+                    else:
+                        logits = self.compiled_verify(
+                            seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
+                            qq_bias, node_blks, node_offs,
+                        )
+                        new_hidden = None
                 else:
-                    # Eager kernel path (also the need_hidden=True fallback for the
-                    # compiled backend: the tapped-hidden compiled variant is a later
-                    # unit, so DraftHead/block_size>1 verifies route through here).
+                    # Eager kernel path (the non-compiled "triton_paged_tree" backend;
+                    # also remains the oracle the compiled need_hidden path is gated
+                    # against in tests).
                     cache._handoff_seq_ids = [0]
                     cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": qq_bias}
                     logits, cache, new_hidden = self.runner.forward(
