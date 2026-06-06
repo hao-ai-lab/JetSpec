@@ -41,6 +41,21 @@ from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
 # `bucket - N` dummy rows (here 1), a negligible verify-forward cost.
 _TREE_BUCKETS = (64, 128, 192, 256)
 
+# A3-GRAPH backends. The compiled verify/AR stacks (A3-INT/A3-HIDDEN) ride two flag sets:
+#   - `_KERNEL_BACKENDS`: routes prefill + the verify forward through the paged tree-attn
+#     custom_op substrate (the eager kernel and both compiled layers all need this).
+#   - `_COMPILED_BACKENDS`: ALSO swaps the per-round verify forward for the compiled
+#     read-only `CompiledVerifyStack` (bypassing `model.__call__`).
+#   - `_CUDAGRAPH_BACKENDS`: a strict superset of compiled — it ALSO captures one CUDA
+#     graph per tree-N bucket around the compiled stack and replays it per round
+#     (A3-GRAPH), collapsing the per-kernel launch storm that compile can't remove at
+#     B=1. It is opt-in: "triton_paged_tree_compiled" stays the compiled-non-graph oracle
+#     (byte-for-byte unchanged), so the cudagraph path can be diffed against it.
+_KERNEL_BACKENDS = ("triton_paged_tree", "triton_paged_tree_compiled",
+                    "triton_paged_tree_cudagraph")
+_COMPILED_BACKENDS = ("triton_paged_tree_compiled", "triton_paged_tree_cudagraph")
+_CUDAGRAPH_BACKENDS = ("triton_paged_tree_cudagraph",)
+
 
 def _bucket_for_n(n: int) -> int:
     """Smallest bucket >= n (A3-BUCKET). For n beyond the largest bucket, rounds up to
@@ -84,7 +99,7 @@ class NanoEngine:
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
-        elif attn_backend == "triton_paged_tree_compiled":
+        elif attn_backend in _COMPILED_BACKENDS:
             # A3-INT/A3-HIDDEN: same custom_op attention backend as
             # "triton_paged_tree" (prefill + the eager kernel fallback both ride it),
             # PLUS compiled read-only stacks that replace the per-round verify forward
@@ -96,6 +111,10 @@ class NanoEngine:
             #     gets its own compiled graph).
             #   - `compiled_ar`: a compiled N=1 single-node verify stack so the AR
             #     decode `generate()` compares compiled-vs-compiled with the tree path.
+            # A3-GRAPH ("triton_paged_tree_cudagraph"): additionally wraps the tree
+            # verify stacks in per-bucket CUDA graphs (built lazily in generate_tree
+            # once the pool is reserved + the bucket set known). `_use_cudagraph` gates
+            # that extra layer; everything else is identical to the compiled backend.
             from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
             from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
 
@@ -104,6 +123,8 @@ class NanoEngine:
             self.compiled_verify = CompiledVerifyStack(self.model, block_size=self.block_size)
             self._compiled_verify_hidden = {}        # target_layer_ids -> stack
             self.compiled_ar = CompiledVerifyStack(self.model, block_size=self.block_size)
+            self._use_cudagraph = attn_backend in _CUDAGRAPH_BACKENDS
+            self._graphed_verify = {}                # (need_hidden, tap_set) -> GraphedVerify
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -143,8 +164,8 @@ class NanoEngine:
         # then runs the decode forward (N=1) through the compiled AR stack so
         # `decode_cuda_speedup` compares compiled-vs-compiled with the tree path.
         backend = getattr(self, "attn_backend", "sdpa")
-        kernel = backend in ("triton_paged_tree", "triton_paged_tree_compiled")
-        compiled = backend == "triton_paged_tree_compiled"
+        kernel = backend in _KERNEL_BACKENDS
+        compiled = backend in _COMPILED_BACKENDS
         if kernel:
             cache._paged_handoff = True
             cache._handoff_seq_ids = [0]
@@ -255,6 +276,54 @@ class NanoEngine:
             cache[key] = stack
         return stack
 
+    def _get_graphed_verify(self, stack, paged_cache, block_table_width,
+                            need_hidden, target_layer_ids):
+        """Lazily build (and cache) the per-bucket `GraphedVerify` wrapping `stack`
+        (A3-GRAPH). Built on first use because it needs the LIVE post-`reserve_capacity`
+        k/v pools + the pinned block-table width, which only exist once `generate_tree`
+        has prefilled and reserved. The per-bucket graph itself is captured lazily inside
+        `replay` the first time each bucket is seen (so the warmup scatter uses real
+        reserved slots) — captured ONCE per bucket, never recaptured within a decode.
+
+        Keyed by (need_hidden, tap set); REBUILT when the live pool or block-table width
+        changes. A captured graph hard-codes the pool's device addresses and the staged
+        block-table column count, both fixed by THIS prompt's `reserve_capacity`. A new
+        prompt builds a fresh `PagedKVCache` (new pool addresses) and may reserve a
+        different width, so the old prompt's graphs are unusable. Rather than accumulate
+        one `GraphedVerify` per prompt (each pinning that prompt's freed KV pools +
+        captured graphs alive — an unbounded leak), we keep a SINGLE entry per
+        (need_hidden, tap) and replace it (dropping the stale one, freeing its pool refs
+        and graphs) whenever the pool tensor or width differs. Within one decode the pool
+        + width are constant, so the entry is built once and every round replays it — the
+        gate (no per-ROUND recapture) holds; a new prompt rebuilds once (per decode)."""
+        from ptd.nano_vllm.graph_capture import GraphedVerify
+
+        cache = getattr(self, "_graphed_verify", None)
+        if cache is None:
+            cache = {}
+            self._graphed_verify = cache
+        key = (bool(need_hidden), tuple(target_layer_ids) if target_layer_ids else ())
+        # The live pool tensor identity + width tag this prompt's reservation; if they
+        # changed (new prompt / new reserve_capacity), the cached graphs read stale
+        # addresses, so rebuild (and drop the old GraphedVerify so its pool refs free).
+        pool0 = paged_cache.pool(0)[0]
+        tag = (id(pool0), int(block_table_width))
+        gv = cache.get(key)
+        if gv is None or gv.pool_tag != tag:
+            nlayers = self.model.config.num_hidden_layers
+            k_pools = [paged_cache.pool(i)[0] for i in range(nlayers)]
+            v_pools = [paged_cache.pool(i)[1] for i in range(nlayers)]
+            gv = GraphedVerify(
+                stack, k_pools, v_pools, block_table_width=block_table_width,
+                head_dim=self.compiled_verify.head_dim,
+                hidden_size=self.model.config.hidden_size,
+                device=torch.device(self.device), dtype=self.dtype,
+                buckets=_TREE_BUCKETS,
+            )
+            gv.pool_tag = tag
+            cache[key] = gv
+        return gv
+
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
@@ -302,8 +371,8 @@ class NanoEngine:
         # pool with post-RoPE prefix KV via the kernel path; the eager kernel is the
         # need_hidden fallback). `kernel` therefore covers both; `compiled` gates the
         # extra step of swapping the verify forward for the compiled read-only stack.
-        kernel = backend in ("triton_paged_tree", "triton_paged_tree_compiled")
-        compiled = backend == "triton_paged_tree_compiled"
+        kernel = backend in _KERNEL_BACKENDS
+        compiled = backend in _COMPILED_BACKENDS
 
         # --- prefill: populate the persistent paged cache with the prompt's KV ---
         cache = PagedKVCache(
@@ -397,20 +466,43 @@ class NanoEngine:
                     nlayers = self.model.config.num_hidden_layers
                     k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                     v_pools = [cache.pool(i)[1] for i in range(nlayers)]
+                    use_graph = getattr(self, "_use_cudagraph", False)
                     if need_hidden:
                         stack = self._get_compiled_verify_hidden(target_layer_ids)
-                        logits, new_hidden = stack(
-                            seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
-                            qq_bias_b, node_blks, node_offs,
-                        )
-                        logits = logits[:, :N, :]                # drop the B-N pad rows
-                        new_hidden = new_hidden[:, :N, :]
+                        if use_graph:
+                            # A3-GRAPH: replay the bucket-B captured graph. Copies this
+                            # round's inputs into the persistent buffers + replays the
+                            # whole captured forward (incl. the in-graph node-KV scatter)
+                            # over the live pool; logits/new_hidden are sliced to [:N]
+                            # inside replay, token-identical to the direct stack call.
+                            gv = self._get_graphed_verify(
+                                stack, cache, cache.reserved_block_table_width,
+                                need_hidden=True, target_layer_ids=target_layer_ids)
+                            logits, new_hidden = gv.replay(
+                                B, seq_step_b, cos, sin, bts, cu, slk,
+                                qq_bias_b, node_blks, node_offs, N)
+                        else:
+                            logits, new_hidden = stack(
+                                seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
+                                qq_bias_b, node_blks, node_offs,
+                            )
+                            logits = logits[:, :N, :]            # drop the B-N pad rows
+                            new_hidden = new_hidden[:, :N, :]
                     else:
-                        logits = self.compiled_verify(
-                            seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
-                            qq_bias_b, node_blks, node_offs,
-                        )
-                        logits = logits[:, :N, :]                # drop the B-N pad rows
+                        if use_graph:
+                            gv = self._get_graphed_verify(
+                                self.compiled_verify, cache,
+                                cache.reserved_block_table_width,
+                                need_hidden=False, target_layer_ids=None)
+                            logits = gv.replay(
+                                B, seq_step_b, cos, sin, bts, cu, slk,
+                                qq_bias_b, node_blks, node_offs, N)
+                        else:
+                            logits = self.compiled_verify(
+                                seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
+                                qq_bias_b, node_blks, node_offs,
+                            )
+                            logits = logits[:, :N, :]            # drop the B-N pad rows
                         new_hidden = None
                 else:
                     # Eager kernel path (the non-compiled "triton_paged_tree" backend;

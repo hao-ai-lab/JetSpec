@@ -63,6 +63,13 @@ class _GpuTimer:
 
     def wrap(self, fn):
         def inner(*a, **k):
+            # During CUDA-graph capture the timed callable may be re-entered (e.g. the
+            # graph captures `CompiledVerifyStack.__call__`); event-record + synchronize
+            # are illegal mid-capture and would invalidate it. Pass through untimed when
+            # the current stream is capturing — the capture itself is timed at the
+            # `_capture_bucket` boundary, not at the inner stack call.
+            if torch.cuda.is_current_stream_capturing():
+                return fn(*a, **k)
             s, e = Event(enable_timing=True), Event(enable_timing=True)
             s.record()
             r = fn(*a, **k)
@@ -117,15 +124,53 @@ def main():
     verify = _GpuTimer()
     draft = _GpuTimer()
     prefill = _GpuTimer()
+    capture = _GpuTimer()      # A3-GRAPH: one-time per-prompt graph capture (subtracted)
     drafter.propose_logits = draft.wrap(drafter.propose_logits)
-    if backend == "triton_paged_tree_compiled":
-        # On the compiled backend, `runner.forward` runs ONLY prefill (decode goes
-        # through the compiled stacks), so route it to a separate `prefill` timer and
-        # report DECODE-only speedup — matching the fork's `decode_cuda_s` (which
-        # excludes `prefill_cuda_s`). The compiled verify/AR stacks are the decode leg.
+    if backend in ("triton_paged_tree_compiled", "triton_paged_tree_cudagraph"):
+        # On the compiled backends, `runner.forward` runs ONLY prefill (decode goes
+        # through the compiled stacks / captured graphs), so route it to a separate
+        # `prefill` timer and report DECODE-only speedup — matching the fork's
+        # `decode_cuda_s` (which excludes `prefill_cuda_s`).
+        #   - "..._compiled": the tree verify leg IS `CompiledVerifyStack.__call__`.
+        #   - "..._cudagraph": the steady-state tree verify is `GraphedVerify.replay`
+        #     (the captured graph; the stack `__call__` only runs at warmup/capture,
+        #     which is excluded). Time the leg that actually runs per decode round.
+        # The AR leg stays the compiled N=1 stack on both, so we keep timing
+        # `CompiledVerifyStack.__call__` too — but on the cudagraph backend the tree
+        # verify no longer routes through it, so wrapping replay is what captures the
+        # tree leg. Wrapping both is safe: AR -> stack, tree -> replay, disjoint.
         eng.runner.forward = prefill.wrap(eng.runner.forward)
         from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
         CompiledVerifyStack.__call__ = verify.wrap(CompiledVerifyStack.__call__)
+        if backend == "triton_paged_tree_cudagraph":
+            # The tree verify leg is `GraphedVerify.replay` (copy-in + `g.replay()`). The
+            # FIRST replay per (pool,width) ALSO captures the graph inside `replay` (a
+            # one-time per-prompt setup: warm + trace + capture, ~seconds). Timing replay
+            # naively folds that capture into the steady-state number, so we time replay
+            # ourselves and SKIP the round in which a capture fired (detected by the
+            # `graphs` dict growing) — recording it to a separate `capture` timer instead.
+            # The reported verify/round is then pure per-round cost (copy-in + launch),
+            # matching how the compiled leg times only its per-round forward.
+            from ptd.nano_vllm.graph_capture import GraphedVerify
+            _orig_replay = GraphedVerify.replay
+
+            def _timed_replay(self, *a, **k):
+                pre = len(self.graphs)
+                s, e = Event(enable_timing=True), Event(enable_timing=True)
+                s.record()
+                r = _orig_replay(self, *a, **k)
+                e.record()
+                e.synchronize()
+                dt = s.elapsed_time(e)
+                if len(self.graphs) > pre:        # this round captured -> setup, not steady
+                    capture.ms += dt
+                    capture.n += 1
+                else:
+                    verify.ms += dt
+                    verify.n += 1
+                return r
+
+            GraphedVerify.replay = _timed_replay
     else:
         # eager/sdpa: runner.forward is BOTH prefill and decode; the per-sample prefill
         # (1 call over the ~291-tok prompt) is a small, symmetric add to both legs.
@@ -149,6 +194,7 @@ def main():
 
     # ---- tree leg: verify-only GPU time per output token ------------------------
     verify.ms, verify.n, draft.ms, draft.n = 0.0, 0, 0.0, 0
+    capture.ms, capture.n = 0.0, 0
     tree_tok, rounds, acc_sum, N_all = 0, 0, 0, []
     for p in prompts:
         o = eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
@@ -157,6 +203,9 @@ def main():
         acc_sum += sum(o["accept_lengths"])
         N_all += o["tree_sizes"]
     torch.cuda.synchronize()
+    # `verify.ms` already excludes capture rounds (the cudagraph `_timed_replay` routes a
+    # capturing round's time to the `capture` timer instead; on other backends capture
+    # is unused and `verify.ms` is the per-round forward time directly).
     tree_verify_ms = verify.ms
     tree_per_tok = tree_verify_ms / tree_tok
     accept_len = acc_sum / rounds
@@ -169,6 +218,9 @@ def main():
     print(f"tree : verify_gpu={tree_verify_ms/1e3:7.3f}s  ntok={tree_tok:4d}  rounds={rounds:4d}  "
           f"verify/round={tree_verify_ms/rounds:6.2f}ms  verify/tok={tree_per_tok:6.2f}ms")
     print(f"       drafter_gpu={draft.ms/1e3:7.3f}s ({draft.ms/(draft.ms+tree_verify_ms)*100:.0f}% of draft+verify, EXCLUDED)")
+    if capture.n:
+        print(f"       graph_capture_gpu={capture.ms/1e3:7.3f}s over {capture.n} captures "
+              f"(one-time per-prompt setup, EXCLUDED from verify/round)")
     print(f"       accept_len={accept_len:.3f}   tree-N: min/mean/max={min(N_all)}/{avgN:.1f}/{max(N_all)}")
     print(f"\nRESULT nano verify-only decode_cuda_speedup = {speedup:.2f}x   "
           f"[fork={FORK['decode_cuda_speedup']:.2f}x]")

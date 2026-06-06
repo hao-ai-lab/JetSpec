@@ -37,19 +37,27 @@ from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
 from tests.test_nano_kernel_e2e import _tiny_model, _tiny_nano, PROMPT, SP
 
 
-def _add_compiled_backend():
+def _add_compiled_backend(cudagraph: bool = False):
     """Extend `_tiny_nano` to also wire the compiled backend (the e2e fixture only
     knows sdpa / triton_paged_tree). We mirror its bypass-`__init__` construction and
     bind a `CompiledVerifyStack` over the tiny model, then route via the same fixture
-    by post-attaching `compiled_verify`. Returns a builder `(model) -> NanoEngine`."""
+    by post-attaching `compiled_verify`. Returns a builder `(model) -> NanoEngine`.
+
+    `cudagraph=True` (A3-GRAPH) flips on the opt-in CUDA-graph layer: the same compiled
+    stacks, but the per-round tree verify replays a per-bucket captured graph instead of
+    calling the stack directly. The compiled-non-graph build (`cudagraph=False`) stays the
+    untouched oracle the graph path is diffed against."""
     from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
 
     def build(model):
         eng = _tiny_nano(model, "triton_paged_tree")     # registers interface + flips impl
-        eng.attn_backend = "triton_paged_tree_compiled"
+        eng.attn_backend = ("triton_paged_tree_cudagraph" if cudagraph
+                            else "triton_paged_tree_compiled")
         eng.compiled_verify = CompiledVerifyStack(model, block_size=eng.block_size)
         eng.compiled_ar = CompiledVerifyStack(model, block_size=eng.block_size)
         eng._compiled_verify_hidden = {}
+        eng._use_cudagraph = cudagraph
+        eng._graphed_verify = {}
         return eng
 
     return build
@@ -288,4 +296,105 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
     assert max_diff < 1e-4, (
         f"compiled target_hidden diverged from eager-kernel tap "
         f"(target_layer_ids={target_layer_ids}, max|diff|={max_diff}) — accept_len would drop"
+    )
+
+
+# --- A3-GRAPH: CUDA-graph capture+replay must stay token-lossless -------------
+# The opt-in "triton_paged_tree_cudagraph" backend captures one CUDA graph per tree-N
+# bucket around the compiled verify stack and replays it per round. Replay reruns the
+# IDENTICAL fp32 forward over staged inputs + the live pool (incl. the in-graph node-KV
+# scatter), so the committed tokens must be bit-identical to BOTH the SDPA oracle AND the
+# compiled-non-graph path (the latter is the graph's own pre-capture behavior). A capture
+# bug (stale-address read, un-replayed scatter, pad leak) would flip tokens here.
+
+
+@pytest.mark.parametrize("seed", [1, 7])
+def test_n1_cudagraph_verify_matches_sdpa_and_compiled_random(seed):
+    """Graph-replay verify (logits-only) token-identical to SDPA and to compiled."""
+    model = _tiny_model(0)
+    drafter = RandomTreeDrafter(vocab_size=model.config.vocab_size)
+    build_compiled = _add_compiled_backend(cudagraph=False)
+    build_graph = _add_compiled_backend(cudagraph=True)
+
+    def run(e):
+        torch.manual_seed(seed)            # identical trees across builds
+        return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
+                               budget=15, sampling_params=SP)["token_ids"]
+
+    sdpa = run(_tiny_nano(model, "sdpa"))
+    comp = run(build_compiled(model))
+    graph = run(build_graph(model))
+    assert comp == sdpa, f"compiled diverged from SDPA (seed={seed})"
+    assert graph == sdpa, f"cudagraph verify diverged from SDPA (seed={seed})"
+    assert graph == comp, f"cudagraph verify diverged from compiled-non-graph (seed={seed})"
+
+
+def test_n1_cudagraph_verify_matches_sdpa_echo():
+    """Echo drafter (multi-node accept) — graph replay token-identical to SDPA."""
+    model = _tiny_model(0)
+    drafter = TargetEchoTreeDrafter(model)
+    build_graph = _add_compiled_backend(cudagraph=True)
+
+    def run(e):
+        torch.manual_seed(1)
+        return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
+                               budget=15, sampling_params=SP)["token_ids"]
+
+    sdpa = run(_tiny_nano(model, "sdpa"))
+    graph = run(build_graph(model))
+    assert graph == sdpa, "cudagraph verify diverged from SDPA (echo drafter)"
+
+
+@pytest.mark.parametrize("target_layer_ids", [[0], [0, 1]])
+def test_n1_cudagraph_verify_need_hidden_matches_sdpa(target_layer_ids):
+    """need_hidden=True (DraftHead tap) graph replay token-identical to SDPA — the
+    captured tuple's second output (target_hidden) must replay correctly too."""
+    model = _tiny_model(0)
+    drafter = TargetEchoTreeDrafter(model)
+    build_graph = _add_compiled_backend(cudagraph=True)
+
+    def run(e):
+        torch.manual_seed(1)
+        return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
+                               budget=15, target_layer_ids=target_layer_ids,
+                               sampling_params=SP)["token_ids"]
+
+    sdpa = run(_tiny_nano(model, "sdpa"))
+    graph = run(build_graph(model))
+    assert graph == sdpa, (
+        f"cudagraph need_hidden verify diverged from SDPA "
+        f"(target_layer_ids={target_layer_ids})"
+    )
+
+
+def test_cudagraph_captures_once_per_bucket_no_recapture():
+    """A full decode captures each tree-N bucket ONCE and never recaptures (the A3-GRAPH
+    gate). We monkeypatch `_bucket_for_n` to a constant so every round hits ONE bucket,
+    count `_capture_bucket` calls over a multi-round decode, and assert exactly one."""
+    import ptd.nano_vllm.graph_capture as _gc_mod
+
+    model = _tiny_model(0)
+    drafter = TargetEchoTreeDrafter(model)
+    eng = _add_compiled_backend(cudagraph=True)(model)
+
+    calls = {"n": 0}
+    orig = _gc_mod.GraphedVerify._capture_bucket
+
+    def counting(self, B):
+        calls["n"] += 1
+        return orig(self, B)
+
+    _gc_mod.GraphedVerify._capture_bucket = counting
+    try:
+        torch.manual_seed(1)
+        # SP runs enough rounds that a per-round recapture would show up as calls > 1.
+        out = eng.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
+                                budget=15, sampling_params=SP, return_stats=True)
+    finally:
+        _gc_mod.GraphedVerify._capture_bucket = orig
+
+    assert out["rounds"] >= 2, "need a multi-round decode to detect recapture"
+    assert calls["n"] == 1, (
+        f"expected ONE capture for the single bucket, got {calls['n']} "
+        f"(per-round recapture over {out['rounds']} rounds)"
     )
