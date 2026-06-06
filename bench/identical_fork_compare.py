@@ -207,8 +207,16 @@ def main():
     # capturing round's time to the `capture` timer instead; on other backends capture
     # is unused and `verify.ms` is the per-round forward time directly).
     tree_verify_ms = verify.ms
-    tree_per_tok = tree_verify_ms / tree_tok
     accept_len = acc_sum / rounds
+    # Per-ROUND verify GPU over the verify-TIMED rounds (verify.n), then per-tok via
+    # accept_len. Do NOT divide tree_verify_ms by all `tree_tok`/`rounds`: the cudagraph
+    # `_timed_replay` routes each cold-bucket round to the `capture` timer (one per prompt,
+    # since GraphedVerify rebuilds per prompt pool), so `verify.ms` covers `verify.n`
+    # rounds -- not all `rounds`. Dividing by all tokens undercounts per-tok and INFLATES
+    # the speedup; (verify.n, accept_len) is the consistent pair, matching the clean
+    # per-call event-split methodology.
+    tree_per_round = tree_verify_ms / max(1, verify.n)
+    tree_per_tok = tree_per_round / accept_len
     avgN = statistics.mean(N_all)
 
     speedup = ar_per_tok / tree_per_tok
@@ -216,7 +224,7 @@ def main():
     print(f"AR   : verify_gpu={ar_verify_ms/1e3:7.3f}s  ntok={ar_tok:4d}  "
           f"verify/tok={ar_per_tok:6.2f}ms")
     print(f"tree : verify_gpu={tree_verify_ms/1e3:7.3f}s  ntok={tree_tok:4d}  rounds={rounds:4d}  "
-          f"verify/round={tree_verify_ms/rounds:6.2f}ms  verify/tok={tree_per_tok:6.2f}ms")
+          f"verify_rounds={verify.n:4d}  verify/round={tree_per_round:6.2f}ms  verify/tok={tree_per_tok:6.2f}ms")
     print(f"       drafter_gpu={draft.ms/1e3:7.3f}s ({draft.ms/(draft.ms+tree_verify_ms)*100:.0f}% of draft+verify, EXCLUDED)")
     if capture.n:
         print(f"       graph_capture_gpu={capture.ms/1e3:7.3f}s over {capture.n} captures "
