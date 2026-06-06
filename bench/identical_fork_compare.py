@@ -176,10 +176,19 @@ def main():
         # (1 call over the ~291-tok prompt) is a small, symmetric add to both legs.
         eng.runner.forward = verify.wrap(eng.runner.forward)
 
-    # warmup (excluded): one short AR + one short tree to trace/compile every bucket
-    # the steady-state decode will hit (so the timed run sees zero compile cost).
-    eng.generate(prompts[0], SamplingParams(0.0, 8))
-    eng.generate_tree(prompts[0], drafter, sampling_params=SamplingParams(0.0, 16), **tkw)
+    # warmup (excluded): warm at the SAME `sp` as the timed legs, so the warmup's
+    # `reserve_capacity(prompt_len + max_new_tokens + budget)` reserves the SAME pool
+    # block-count the timed loop will use. A short warmup (max_new_tokens=8/16) reserves
+    # a SMALLER pool, so the timed loop hit a fresh pool shape on its first round and paid
+    # a one-time recompile + Triton autotune INSIDE the measured window — which, over a
+    # short decode, dominated the per-round average and collapsed decode_cuda_speedup to
+    # ~2×. Warm twice so autotune fully settles. (The compiled stack marks the pool
+    # block-dim dynamic, so the single warmed graph is reused across prompt lengths and
+    # the timed loop sees zero recompiles.)
+    eng.generate(prompts[0], sp)
+    eng.generate(prompts[0], sp)
+    eng.generate_tree(prompts[0], drafter, sampling_params=sp, **tkw)
+    eng.generate_tree(prompts[0], drafter, sampling_params=sp, **tkw)
     torch.cuda.synchronize()
 
     # ---- AR leg: verify-only GPU time per output token --------------------------
