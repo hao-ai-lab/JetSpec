@@ -17,6 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+kernel = ["triton"]
+bench = ["datasets"]
 
 [tool.setuptools.packages.find]
 where = ["."]
