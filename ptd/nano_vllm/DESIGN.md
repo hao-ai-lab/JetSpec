@@ -24,7 +24,7 @@ substrate that aims at that ceiling with no external serving dependency.
   tree contract turns it into a `DraftTree`. Identical to the fork's adapter.
 - **Verify accept** — `ptd.tree.tree_accept`, ancestor mask via
   `ptd.tree.build_ancestor_matrix`.
-- **The #58 persistent-cache verify pattern** — `ptd/engine/llm.py
+- **The persistent-cache verify pattern** — `ptd/engine/llm.py
   `_generate_tree_kv_cached` + `_select_kv_cache`: forward only the tree nodes
   against a cached prefix, then gather the accepted root-to-leaf path's KV back to
   a linear prefix. nano's paged cache generalises exactly this gather to block
@@ -72,7 +72,7 @@ B32**. The kernel's per-step cost is near-flat while SDPA's dense-reconstruct + 
 grows with batch, so it crosses over ~B=32; at small batch it is overhead-limited
 (per-layer block-table rebuild + H2D transfer ×num_layers/step + many small triton
 launches). It does **not** approach the fork's ~7.8× (a different, far-more-optimized
-tree-decode regime). **Follow-on (task #71):** cut the per-step host overhead (hoist
+tree-decode regime). **Follow-on optimization:** cut the per-step host overhead (hoist
 layer-invariant `seq_lens_k`; keep block tables on GPU), add the **N2b** batched-tree
 kernel path (deferred — rectangular `S=max_N` padding makes `total_q=B·max_N` ≠ the
 ragged `qq_bias`), and re-measure at larger batch / longer context. SDPA stays the
@@ -94,7 +94,7 @@ the fork's **~7.8× decode**.
    iterate until bitwise-close (fp32) / within-tolerance (bf16), THEN wire it in. No
    guessing — every iteration has a ground-truth check.
 2. **Reference implementation.** The fork's working triton tree kernel —
-   `refs`/b200 `/raid/zhf004/vllm-ptd/vllm/v1/attention/backends/tree_attn.py` +
+   `refs`/GPU `/an/external/vllm/fork/vllm/v1/attention/backends/tree_attn.py` +
    `vllm/v1/attention/ops/triton_unified_attention.py` — is the shape to adapt &
    simplify (drop CUDA-graph capture / debug instrumentation), not invent.
 3. **Cheap failure.** Work is pushed + on `master`; failed kernel attempts cost
@@ -118,7 +118,6 @@ the fork's **~7.8× decode**.
 
 **Caveats / constraints:**
 - **GPU-bound.** Triton kernels can't be CPU-validated like the rest of nano — N3
-  needs b200 (GPU 5) + the ControlMaster tunnel; iteration is GPU-round-trip-paced.
   (Triton's interpret mode helps for small debugging only.)
 - **Hardest piece so far** — budget a focused multi-attempt session; correctness
   first (match SDPA), perf tuning (block sizes, memory coalescing) second.
@@ -148,5 +147,4 @@ ptd/nano_vllm/
 
 Status: **N0→N2 merged to `master`; N3 kernel shipped on `feat/draft-head`** (opt-in,
 N0/N1/N2a; correct + lossless; throughput crosses over ~B=32). See the milestone-ladder
-status + N3 result above. Remaining: the throughput-gap optimization + N2b kernel path
-(task #71).
+status + N3 result above. Remaining: the throughput-gap optimization + N2b kernel path.

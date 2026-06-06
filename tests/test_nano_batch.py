@@ -10,7 +10,7 @@ arithmetic directly. The headline property — decoding N prompts of DIFFERENT
 lengths together yields the SAME tokens as decoding each alone — is checked
 per-sequence. Mirrors `tests/test_nano_engine.py`'s `_tiny_nano` harness.
 (On b200 in bf16 a batched forward vs a single-token forward can flip a borderline
-argmax after ~tens of exact tokens — the same class as the #58 caveat.)
+argmax after ~tens of exact tokens — the same class as the bf16 borderline-argmax caveat.)
 """
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM

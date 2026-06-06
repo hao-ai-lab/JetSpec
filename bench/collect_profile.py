@@ -10,7 +10,7 @@ the token the target actually picks (its argmax). Aggregates
 HF (no vLLM): one recompute verify forward per spec step, target_hidden threaded
 like the engine so the DraftHead sees its real context.
 
-    CUDA_VISIBLE_DEVICES=5 PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    CUDA_VISIBLE_DEVICES=0 PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       PYTHONPATH=. python bench/collect_profile.py --dataset gsm8k --samples 20 \
         --width 7 --budget 255 --out profiles/gsm8k_epoch6.json

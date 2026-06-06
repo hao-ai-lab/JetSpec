@@ -20,7 +20,7 @@ the tree-KV-cache task), so spec_tps / speedup UNDERSTATE what the engine will d
 with cached verify. accept_len / d_k / tree / lossless are cache-independent and
 ARE the apples-to-apples parity metrics vs the reference.
 
-    CUDA_VISIBLE_DEVICES=5 PTD_TEST_MODEL=Qwen/Qwen3-8B \
+    CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
       PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       PYTHONPATH=. python bench/benchmark.py --dataset gsm8k --samples 5 \

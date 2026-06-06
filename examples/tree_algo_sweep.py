@@ -9,7 +9,7 @@ to expand everything.
 
 Needs CUDA + a real Qwen3-8B target + a trained DFlash head; run on b200:
 
-    CUDA_VISIBLE_DEVICES=5 PTD_TEST_MODEL=Qwen/Qwen3-8B \
+    CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
       PTD_DRAFT_HEAD="Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma" \
       HF_HOME=/path/to/hf_cache \
       python examples/tree_algo_sweep.py

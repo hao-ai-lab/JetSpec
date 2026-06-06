@@ -17,7 +17,7 @@ padding a no-op for attention), so this gates the batched mask / RoPE-position /
 per-seq KV-routing arithmetic directly. Mirrors `tests/test_nano_tree.py`'s and
 `tests/test_nano_batch.py`'s `_tiny_nano` harness. (On b200 in bf16 a batched
 verify vs a single-stream verify can flip a borderline argmax after ~tens of exact
-tokens — the same class as the #58 caveat.)
+tokens — the same class as the bf16 borderline-argmax caveat.)
 """
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM

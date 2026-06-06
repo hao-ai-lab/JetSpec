@@ -16,7 +16,7 @@ Needs CUDA + a real Qwen3-8B target + a trained head; run on b200 (GPU 0-3, the
 PTD lane):
 
     CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
-      PTD_DRAFT_HEAD="Moonlight556/qwen3-8b-dflash-mathregen-sweep::cell_4_lr3e-4_distill" \
+      PTD_DRAFT_HEAD="<insert-trained-dflash-head-checkpoint-path>" \
       pytest tests/test_draft_head_lossless.py -x -s
 """
 import os
@@ -83,7 +83,7 @@ def ref(llm):
 
 @pytest.fixture(scope="module")
 def head(llm):
-    # cell_4 is an in-place (non-shift) DFlash head; draft_shift stays False.
+    # The DFlash head is in-place (non-shift); draft_shift stays False.
     return load_draft_head(DRAFT_HEAD)
 
 

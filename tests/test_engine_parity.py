@@ -9,7 +9,7 @@ budget 255, sdpa, single-pass, gsm8k shuffle seed=0): accept_len 9.48,
 per-position d0/d1/d2/d3 = 1.00/0.96/0.92/0.84. Our engine matches within a few
 percent (the residual is the bf16 recompute-vs-KV-cache tail divergence).
 
-    CUDA_VISIBLE_DEVICES=5 PTD_TEST_MODEL=Qwen/Qwen3-8B \
+    CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
       PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       pytest tests/test_engine_parity.py -x -s

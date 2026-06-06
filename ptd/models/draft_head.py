@@ -173,7 +173,7 @@ class Qwen3DFlashAttention(nn.Module):
         # post-update length (ctx_len+q_len) instead of their own still-empty cache (0). That bug
         # makes _build_dflash_causal_attention_mask produce an all-zero (non-causal) mask at layers
         # 1..N on the first speculative iteration, which mismatches training (training applies the
-        # same block-causal mask uniformly at every layer; see specforge/core/dflash.py). Pass
+        # same block-causal mask uniformly at every layer (as in the reference). Pass
         # self.layer_idx to query THIS layer's own cached length.
         cached_kv_len = (
             past_key_values.get_seq_length(self.layer_idx)

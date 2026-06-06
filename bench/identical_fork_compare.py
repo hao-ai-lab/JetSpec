@@ -1,8 +1,8 @@
 """Identical-conditions nano-vs-fork comparison for the verify-only decode speedup.
 
 Measures nano's `decode_cuda_speedup` (AR verify-only GPU time per token ÷ tree
-verify-only GPU time per token) under conditions MATCHED to the Lanxiang vLLM-fork
-DFlash profile that reported 7.55× (`vllm_profile_dflash/metrics_summary.txt` /
+verify-only GPU time per token) under conditions MATCHED to a reference vLLM fork
+DFlash profile that reported comparable speedup (`see-reference-fork-benchmarks` /
 `gains_report.txt`). The fork's verify-only `decode_cuda_s` wraps only the target
 `execute_model` (the drafter `propose` runs in a separate, untimed RPC), so this
 harness EXCLUDES nano's drafter from both legs via a CUDA-event split, matching the
@@ -29,7 +29,7 @@ The intrinsic difference being measured is the verify ENGINE: nano's triton page
 tree-attn vs the fork's FLASH_ATTN flash-varlen. That is the comparison SUBJECT, not
 a condition to match.
 
-    NANO_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=5 PYTHONPATH=. \
+    NANO_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
     PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
     python bench/identical_fork_compare.py --samples 4 --max-tokens 210
 """

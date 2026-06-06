@@ -6,7 +6,7 @@ fp32 the paged store and HF's `DynamicCache` are bitwise-equal (the gather/appen
 is a plain copy, no rounding), so this gates the block arithmetic directly.
 Mirrors `tests/test_tree_kv_cache.py`'s `_tiny_llm` harness. (On b200 in bf16 a
 block forward vs a single-token forward can flip a borderline argmax after ~tens
-of exact tokens — the same class as the existing #58 caveat; validated on b200.)
+of exact tokens — the same class as the existing bf16 borderline-argmax caveat; validated on b200.)
 """
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM

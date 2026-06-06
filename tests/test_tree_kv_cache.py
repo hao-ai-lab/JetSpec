@@ -1,4 +1,4 @@
-"""Tree KV-cache verify gate (#58): the persistent-cache tree verify
+"""Tree KV-cache verify gate: the persistent-cache tree verify
 (`generate_tree(kv_cache_verify=True)`) must produce exactly the same tokens as
 the recompute path and as plain greedy — losslessness is preserved by the
 select_kv_cache gather that keeps only the accepted root-to-leaf path's KV.
@@ -73,7 +73,7 @@ def test_kv_cache_tree_lossless_random():
     cached = _tree(llm, RandomTreeDrafter(128), kv_cache_verify=True)["token_ids"]
     n = min(len(greedy), len(cached))
     assert recompute[:n] == greedy[:n], "recompute tree diverged from greedy"
-    assert cached[:n] == greedy[:n], "kv-cache tree diverged from greedy (#58 gather bug)"
+    assert cached[:n] == greedy[:n], "kv-cache tree diverged from greedy (KV-cache gather bug)"
     assert cached == recompute, "kv-cache tree != recompute tree (not a drop-in)"
 
 

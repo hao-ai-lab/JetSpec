@@ -10,7 +10,7 @@ plain copy, no rounding), so this gates the gather / mask / cache_position
 arithmetic directly. Mirrors `tests/test_nano_engine.py`'s `_tiny_nano` and
 `tests/test_tree_kv_cache.py`'s fixtures. (On b200 in bf16 a block forward vs the
 recompute path can flip a borderline argmax after ~tens of exact tokens — the same
-class as the #58 caveat; validated separately on b200.)
+class as the bf16 borderline-argmax caveat; validated separately on b200.)
 """
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
