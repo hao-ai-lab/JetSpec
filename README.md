@@ -6,7 +6,7 @@ Built on top of HF `transformers` (the target is a standard `AutoModelForCausalL
 
 ## Status
 
-**Offline autoregressive baseline.** Plain offline Qwen3-8B greedy/temperature decode over an HF `DynamicCache` — the 1× denominator the speedup is measured against. The chain + tree speculative-decode paths build on it; the trained draft head + tree-attention kernel land next (see roadmap).
+**Shipped: paged, continuous-batched, lossless tree-speculative decode.** The `nano_vllm` engine does paged-KV, continuous-batched, lossless tree-spec decode via `torch.compile` + a CUDA-graph verify, with our own triton tree-attention kernel. The trained draft head is published at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`. On Qwen3-8B / gsm8k the verify-only `decode_cuda_speedup` is **7.31× (cudagraph backend)** vs the reference fork's **7.55×** — see [Results](#results). The HF + SDPA `ptd/engine` substrate remains the single-clone correctness reference (its plain offline Qwen3-8B decode is the 1× denominator the speedup is measured against).
 
 ## Quickstart
 
@@ -34,6 +34,22 @@ Two layers with a strict one-way dependency, so they can be owned and evolved in
 
 The tree is decoupled from the backend on purpose: the same `ptd.tree` plugs into this HF engine today and a serving-engine (vLLM / SGLang) integration later. Import the tree only through its public API (`ptd.tree`), never `ptd.tree._core`.
 
+## Results
+
+The `nano_vllm` engine ships paged, continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify with our own triton tree-attention kernel. Headline numbers (Qwen3-8B, gsm8k, tree budget 255, width 7, trained epoch6 distill head, bf16, 4-sample, single-stream):
+
+- **Verify-only `decode_cuda_speedup` = 7.31× (cudagraph backend) / 6.27× (compiled backend)**, vs the reference fork's **7.55×**.
+- The residual gap to the fork is **accept_len** (6.96 vs 7.16), **not** engine efficiency: per-round verify ≈ per-token AR forward, ratio ≈ 0.95 (vs the fork's ≈ 0.98).
+- **Lossless:** fp32 token-identical to an SDPA oracle (lossless gate 21/21).
+
+Honest caveats:
+
+- **Verify-only / drafter-excluded.** The `decode_cuda_speedup` measures the target verify forward only; the drafter is excluded from both legs via a CUDA-event split, matching the fork's `decode_cuda_s` accounting (which wraps only the target forward, not the drafter).
+- **Lossless-by-construction, not bitwise-equal in bf16.** Each verify row is target-greedy, so decoding is lossless by construction; it is **not** bitwise-equal to AR greedy in bf16 — one borderline-argmax flip. fp32 is exact.
+- **Conditions:** the numbers above hold at the stated config (Qwen3-8B, gsm8k, budget 255, width 7, epoch6 head, bf16, single-stream).
+
+Reproduce with `bench/identical_fork_compare.py`.
+
 ## Roadmap
 
 | stage | what | status |
@@ -41,9 +57,9 @@ The tree is decoupled from the backend on purpose: the same `ptd.tree` plugs int
 | **Offline baseline** | offline Qwen3-8B autoregressive decode | ✅ validated, byte-identical to HF greedy |
 | **Chain spec decode** | `Drafter` + `LLM.generate_chain` (accept-longest-prefix) | ✅ validated, lossless |
 | **Tree spec decode** | crossproduct + 4D ancestor mask + `tree_accept` | ✅ validated, lossless |
-| **Trained draft head** | JF-trained `DraftHead` (`draft.py`, `draft_shift`/I-DLM param) → tokens-per-forward | planned (needs checkpoint) |
-| **Tree-attention kernel** | `optimus_cutedsl` CuTe-DSL kernel → wall-clock TPS | vendored (Hopper / SM90 only) |
-| **Fanout + bench + recipes** | per-depth fanout cap, benchmarks, recipes, HF checkpoint | planned |
+| **Trained draft head** | JF-trained `DraftHead` (`draft.py`, `draft_shift`/I-DLM param) → tokens-per-forward | ✅ shipped (head at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`) |
+| **Tree-attention kernel** | owned paged triton tree-attention kernel → wall-clock TPS | ✅ shipped, lossless-verified |
+| **Fanout + bench + recipes** | per-depth fanout cap, benchmarks, recipes, HF checkpoint | ✅ shipped |
 
 > The baseline + chain + tree verify loops are **recompute-based** (correctness-first; KV-reuse is a later optimization). Speculative decoding is lossless, so the chain + tree paths were validated with stub drafters — output byte-identical to plain greedy — before the trained drafter checkpoint.
 

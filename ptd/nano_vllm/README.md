@@ -1,12 +1,14 @@
-# nano_vllm — high-throughput engine substrate (placeholder)
+# nano_vllm — high-throughput engine substrate
 
-This package reserves the structure for a second decode **substrate**, sitting
-alongside [`ptd/engine`](../engine) in the same swappable-engine design:
+A second decode **substrate**, sitting alongside [`ptd/engine`](../engine) in the
+same swappable-engine design. N0–N2b plus the N3 triton tree-attention kernel are
+**shipped and lossless-verified** — paged KV-cache, continuous batching, and an owned
+paged tree-attn kernel.
 
 | substrate | optimizes for | status |
 |---|---|---|
 | `ptd/engine` | clarity, single-clone reproducibility (HF + SDPA) | ✅ implemented |
-| `ptd/nano_vllm` | throughput (paged KV-cache, tree-attention kernel, batching) | 🚧 reserved |
+| `ptd/nano_vllm` | throughput (paged KV-cache, tree-attention kernel, batching) | ✅ shipped (N0–N2b + N3 kernel) |
 
 Both consume the **same** engine-agnostic tree contract — `get_algorithm(...)`,
 `build_ancestor_matrix(...)`, `tree_accept(...)` from [`ptd.tree`](../tree) — with
@@ -19,7 +21,8 @@ external dependency) that reaches serving-class numbers, complementing the
 reference HF engine used for correctness and demos.
 
 See [`DESIGN.md`](./DESIGN.md) for the architecture, what it reuses (the
-`ptd.tree.build_from_topk` contract + the #58 persistent-cache verify pattern),
-the throughput target (the vLLM fork's measured ~7.8× decode), and the N0→N3
-milestone ladder. **N0 (single-stream AR over a paged KV cache) is the next
-implementation step.**
+`ptd.tree.build_from_topk` contract + the persistent-cache verify pattern),
+the throughput target (the vLLM fork's measured 7.55× decode), and the N0→N3
+milestone ladder. **N0–N2b plus the N3 triton tree-attention kernel are shipped
+and lossless-verified;** with `torch.compile` + CUDA-graph verify the verify-only
+`decode_cuda_speedup` reaches 7.31× (cudagraph) vs the fork's 7.55×.

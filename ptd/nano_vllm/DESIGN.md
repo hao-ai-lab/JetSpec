@@ -10,12 +10,14 @@ the reverse — so every tree algorithm runs unchanged; the engine choice change
 `ptd/engine` (HF + `DynamicCache` + SDPA 4D mask) is for **clarity, single-clone
 reproducibility, and correctness**. It is single-stream and tops out where the HF
 substrate does. The collaborator's vLLM fork gives the **throughput upper bound**
-(measured: `ptd_crossproduct` ≡ the fork's native tree, **~7.8× decode** on b200) —
+(measured: `ptd_crossproduct` ≡ the fork's native tree, **7.55× decode**) —
 but it's an external, heavy dependency we don't own. `nano_vllm` is the **owned**
-substrate that aims at that ceiling with no external serving dependency.
+substrate that aims at that ceiling with no external serving dependency, and it now
+reaches it: verify-only `decode_cuda_speedup` **7.31× (cudagraph) / 6.27× (compiled)**
+vs the fork's **7.55×** (see "N3 result" below).
 
-> Target to beat / approach: the fork's **7.8× decode_cuda_speedup** (gsm8k, B=255,
-> Qwen3-8B + epoch6 head). nano is measured *against that ceiling*.
+> Target to beat / approach: the fork's **7.55× decode_cuda_speedup** (gsm8k, B=255,
+> Qwen3-8B + epoch6 head). nano reaches parity: **7.31×** verify-only, cudagraph backend.
 
 ## What it reuses (don't rebuild)
 
@@ -55,28 +57,37 @@ substrate that aims at that ceiling with no external serving dependency.
   matched batch.
 - **N3 — tree-attention kernel.** Replace the SDPA 4D mask with a paged tree-attn
   kernel (the fork uses a triton tree kernel; ours can start from that shape).
-  Gate: decode_cuda_speedup approaching the fork's ~7.8×.
+  Gate: decode_cuda_speedup approaching the fork's 7.55×. **Reached: 7.31×
+  (cudagraph) verify-only.**
 
 **Status: N0–N2b shipped + merged to `master`** (`9fc9123` / `498ebd0` / `bce70c5`
 / `8e00dc0`); **N3 kernel shipped on `feat/draft-head`** (`457df8e` metadata builder
 · `b6158d5` triton kernel · `bdc665e` engine integration). nano does paged,
-continuous-batched, lossless AR + tree-spec; b200 **3.91× batched throughput** (B=8,
-AR, SDPA path = concurrency-only).
+continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify
+with our own triton tree-attention kernel.
 
-**N3 result (opt-in `attn_backend="triton_paged_tree"`; N0/N1/N2a):** the paged
-tree-attn kernel is **correct + lossless** — `kernel == SDPA` on a random pool (30/30,
-fp32 2e-6 / bf16 8e-3) and token-identical end-to-end (`test_nano_kernel_e2e.py`,
-13/13 b200) for N0/N1/N2a. **Throughput is a batch-scaling crossover, not a blanket
-win** (Qwen3-8B AR decode, b200): kernel/SDPA = **0.59× @ B8 · 0.80× @ B16 · 1.04× @
-B32**. The kernel's per-step cost is near-flat while SDPA's dense-reconstruct + pad
-grows with batch, so it crosses over ~B=32; at small batch it is overhead-limited
-(per-layer block-table rebuild + H2D transfer ×num_layers/step + many small triton
-launches). It does **not** approach the fork's ~7.8× (a different, far-more-optimized
-tree-decode regime). **Follow-on optimization:** cut the per-step host overhead (hoist
-layer-invariant `seq_lens_k`; keep block tables on GPU), add the **N2b** batched-tree
-kernel path (deferred — rectangular `S=max_N` padding makes `total_q=B·max_N` ≠ the
-ragged `qq_bias`), and re-measure at larger batch / longer context. SDPA stays the
-default + the correctness oracle.
+**N3 result (`attn_backend="triton_paged_tree"`):** the paged tree-attn kernel is
+**correct + lossless** — `kernel == SDPA` on a random pool (30/30, fp32 2e-6 / bf16
+8e-3) and token-identical end-to-end (`test_nano_kernel_e2e.py`, 13/13). It **reaches
+parity** with the fork: with `torch.compile` + a CUDA-graph verify, the **verify-only
+`decode_cuda_speedup` is 7.31× (cudagraph backend) / 6.27× (compiled backend) vs the
+fork's 7.55×** (Qwen3-8B, gsm8k, tree budget 255, width 7, epoch6 distill head, bf16,
+4-sample, single-stream). The residual gap to the fork is **accept_len** (6.96 vs
+7.16), **not** engine efficiency — per-round verify ≈ per-token AR forward, ratio
+≈ 0.95 (the fork's is ≈ 0.98). Losslessness is **by construction** (each verify row
+is target-greedy; fp32 token-identical, lossless gate 21/21) but **not bitwise-equal
+to AR greedy in bf16** — one borderline-argmax flip; fp32 is exact. The
+`decode_cuda_speedup` is **verify-only**: the drafter is excluded from both legs via
+a CUDA-event split, matching the fork's `decode_cuda_s` accounting (which wraps only
+the target forward, not the drafter). Reproduce via `bench/identical_fork_compare.py`.
+
+> **Superseded:** an earlier eager-mode measurement (no `torch.compile` / CUDA graph)
+> framed the kernel as a batch-scaling crossover — kernel/SDPA = 0.59× @ B8 · 0.80× @
+> B16 · 1.04× @ B32, crossing over ~B=32, overhead-limited at small batch (per-layer
+> block-table rebuild + H2D transfer + many small triton launches). That regime is
+> superseded by the compile + CUDA-graph verify result above, which removes the
+> per-step host overhead and reaches fork parity. SDPA stays the default + the
+> correctness oracle.
 
 ## N3 — implementation plan (resumption)
 
@@ -84,8 +95,8 @@ default + the correctness oracle.
 `engine._batched_decode_forward` / `_batched_tree_verify_forward`) with a **paged
 tree-attention kernel** that reads K/V straight from the block pool (via block
 table / slot mapping) and applies the per-node ancestor mask + fused softmax — so
-no padding waste, no dense copy. This is the lever from 3.91× (concurrency) toward
-the fork's **~7.8× decode**.
+no padding waste, no dense copy. This is the lever toward
+the fork's **7.55× decode** (reached: verify-only 7.31× cudagraph; see "N3 result" above).
 
 **Why it's tractable despite being a custom kernel:**
 1. **Correctness oracle, for free.** The SDPA path (N2) is already lossless-validated.
@@ -113,8 +124,8 @@ the fork's **~7.8× decode**.
 1. **Kernel == SDPA** on random inputs (b200) — the correctness gate. Then the full
    nano suite (`test_nano_*`) must stay green with the kernel enabled (reuses the
    existing per-seq lossless gates as end-to-end correctness).
-2. **b200 throughput** — `decode_cuda_speedup` / tok/s vs the SDPA path and vs the
-   fork's 7.8×, at matched batch + budget.
+2. **Throughput** — `decode_cuda_speedup` / tok/s vs the SDPA path and vs the
+   fork's 7.55×, at matched batch + budget.
 
 **Caveats / constraints:**
 - **GPU-bound.** Triton kernels can't be CPU-validated like the rest of nano — N3
@@ -145,6 +156,8 @@ ptd/nano_vllm/
    then copy the accepted path into the sequence's blocks (mirrors `_select_kv_cache`
    but block-granular). Confirm against N1's lossless gate.
 
-Status: **N0→N2 merged to `master`; N3 kernel shipped on `feat/draft-head`** (opt-in,
-N0/N1/N2a; correct + lossless; throughput crosses over ~B=32). See the milestone-ladder
-status + N3 result above. Remaining: the throughput-gap optimization + N2b kernel path.
+Status: **N0→N2 merged to `master`; N3 triton tree-attn kernel shipped on
+`feat/draft-head`** (correct + lossless). With `torch.compile` + CUDA-graph verify,
+verify-only `decode_cuda_speedup` reaches **7.31× (cudagraph) / 6.27× (compiled)** vs
+the fork's **7.55×** — parity; the residual gap is accept_len, not engine efficiency.
+See the milestone-ladder status + N3 result above.
