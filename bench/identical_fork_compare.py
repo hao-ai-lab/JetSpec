@@ -1,0 +1,180 @@
+"""Identical-conditions nano-vs-fork comparison for the verify-only decode speedup.
+
+Measures nano's `decode_cuda_speedup` (AR verify-only GPU time per token ÷ tree
+verify-only GPU time per token) under conditions MATCHED to the Lanxiang vLLM-fork
+DFlash profile that reported 7.55× (`vllm_profile_dflash/metrics_summary.txt` /
+`gains_report.txt`). The fork's verify-only `decode_cuda_s` wraps only the target
+`execute_model` (the drafter `propose` runs in a separate, untimed RPC), so this
+harness EXCLUDES nano's drafter from both legs via a CUDA-event split, matching the
+fork's accounting.
+
+Matched conditions (fork -> here):
+  prompt_set            gsm8k                      gsm8k (same dataset)
+  prompt_format         chat_template              apply_chat_template(enable_thinking=False)
+  prompt_fmt            "{question}\nPlease ...\\boxed{{}}."   identical (dflash_profiling.py:48-55)
+  target model          Qwen/Qwen3-8B              Qwen/Qwen3-8B
+  dtype                 bf16                       bf16
+  block_size (depth)    16                         16
+  tree_width            7                          7
+  max_tree_budget       255                        255
+  tree_draft            accum_logp  +              algo="crossproduct"  (both = cumulative-logprob
+  tree_construction     breadth_first +              breadth-biased heap, per-depth top-k width,
+  max_draft_passes      0                            budget-capped: byte-for-byte the same heap loop)
+  head_type             causal                     epoch6 causal distill head (PTD_DRAFT_HEAD)
+  max_num_seqs / bs     1 / 1                      single-stream
+  samples               4                          --samples (default 4)
+  output tokens/sample  ~208                       --max-tokens (default 210)
+
+The intrinsic difference being measured is the verify ENGINE: nano's triton paged
+tree-attn vs the fork's FLASH_ATTN flash-varlen. That is the comparison SUBJECT, not
+a condition to match.
+
+    NANO_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=5 PYTHONPATH=. \
+    PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    python bench/identical_fork_compare.py --samples 4 --max-tokens 210
+"""
+import argparse
+import os
+import statistics
+
+import torch
+from torch.cuda import Event
+
+from ptd.engine.llm import SamplingParams
+from ptd.nano_vllm.engine import NanoEngine
+from ptd.models.draft_head import load_draft_head
+from ptd.draft_head_drafter import DraftHeadTreeDrafter
+
+# Fork-exact gsm8k prompt format (dflash_profiling.py `load_dataset_prompt_bank`).
+GSM8K_FMT = ("{question}\n"
+             "Please reason step by step, and put your final answer within \\boxed{{}}.")
+
+# Fork reference numbers (gains_report.txt / metrics_summary.txt, gsm8k, tp1 bs1).
+FORK = dict(decode_cuda_speedup=7.546, accept_len=7.155, avg_tree_nodes=254,
+            ar_decode_cuda_s=20.366, dflash_decode_cuda_s=2.699)
+
+
+class _GpuTimer:
+    """Accumulate GPU self-time (ms) of a wrapped callable via CUDA events."""
+
+    def __init__(self):
+        self.ms = 0.0
+        self.n = 0
+
+    def wrap(self, fn):
+        def inner(*a, **k):
+            s, e = Event(enable_timing=True), Event(enable_timing=True)
+            s.record()
+            r = fn(*a, **k)
+            e.record()
+            e.synchronize()
+            self.ms += s.elapsed_time(e)
+            self.n += 1
+            return r
+        return inner
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--samples", type=int, default=4)
+    ap.add_argument("--max-tokens", type=int, default=210)
+    ap.add_argument("--tree-width", type=int, default=7)
+    ap.add_argument("--budget", type=int, default=255)
+    ap.add_argument("--algo", type=str, default="crossproduct")
+    args = ap.parse_args()
+
+    backend = os.environ.get("NANO_BACKEND", "triton_paged_tree_compiled")
+    head_id = os.environ["PTD_DRAFT_HEAD"]
+    eng = NanoEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
+                     attn_backend=backend, block_size=16)
+    head = load_draft_head(head_id)
+    tli, bs = head.target_layer_ids, head.block_size
+    drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
+                                   target_layer_ids=tli, draft_shift=False)
+    print(f"backend={backend}  head={head_id}")
+    print(f"head: target_layer_ids={tli} block_size={bs}")
+
+    from datasets import load_dataset
+    ds = load_dataset("openai/gsm8k", "main", split="test")
+    prompts = [eng.tokenizer.apply_chat_template(
+        [{"role": "user", "content": GSM8K_FMT.format(question=ds[i]["question"])}],
+        tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        for i in range(args.samples)]
+
+    sp = SamplingParams(0.0, args.max_tokens)
+    tkw = dict(block_size=bs, tree_width=args.tree_width, budget=args.budget,
+               algo=args.algo, target_layer_ids=tli, return_stats=True)
+
+    # --- verify-only event split. The verify leg is whatever runs the target forward:
+    #   - tree/AR, eager or sdpa   -> runner.forward.
+    #   - tree, compiled backend   -> the compiled verify stack (compiled_verify or the
+    #     lazily-built need_hidden stack); AR compiled -> compiled_ar. All compiled
+    #     stacks are CompiledVerifyStack instances invoked as `stack(...)`, i.e. via
+    #     `CompiledVerifyStack.__call__` — so we time at the CLASS method (instance-attr
+    #     wrapping misses the `__call__` dunder, which Python resolves on the type).
+    # The drafter (propose_logits) is timed separately and EXCLUDED from the speedup,
+    # matching the fork (its `decode_cuda_s` wraps only `execute_model`, not `propose`).
+    verify = _GpuTimer()
+    draft = _GpuTimer()
+    prefill = _GpuTimer()
+    drafter.propose_logits = draft.wrap(drafter.propose_logits)
+    if backend == "triton_paged_tree_compiled":
+        # On the compiled backend, `runner.forward` runs ONLY prefill (decode goes
+        # through the compiled stacks), so route it to a separate `prefill` timer and
+        # report DECODE-only speedup — matching the fork's `decode_cuda_s` (which
+        # excludes `prefill_cuda_s`). The compiled verify/AR stacks are the decode leg.
+        eng.runner.forward = prefill.wrap(eng.runner.forward)
+        from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+        CompiledVerifyStack.__call__ = verify.wrap(CompiledVerifyStack.__call__)
+    else:
+        # eager/sdpa: runner.forward is BOTH prefill and decode; the per-sample prefill
+        # (1 call over the ~291-tok prompt) is a small, symmetric add to both legs.
+        eng.runner.forward = verify.wrap(eng.runner.forward)
+
+    # warmup (excluded): one short AR + one short tree to trace/compile every bucket
+    # the steady-state decode will hit (so the timed run sees zero compile cost).
+    eng.generate(prompts[0], SamplingParams(0.0, 8))
+    eng.generate_tree(prompts[0], drafter, sampling_params=SamplingParams(0.0, 16), **tkw)
+    torch.cuda.synchronize()
+
+    # ---- AR leg: verify-only GPU time per output token --------------------------
+    verify.ms, verify.n = 0.0, 0
+    ar_tok = 0
+    for p in prompts:
+        o = eng.generate(p, sp)
+        ar_tok += len(o["token_ids"])
+    torch.cuda.synchronize()
+    ar_verify_ms = verify.ms
+    ar_per_tok = ar_verify_ms / ar_tok                     # ms verify GPU / output tok
+
+    # ---- tree leg: verify-only GPU time per output token ------------------------
+    verify.ms, verify.n, draft.ms, draft.n = 0.0, 0, 0.0, 0
+    tree_tok, rounds, acc_sum, N_all = 0, 0, 0, []
+    for p in prompts:
+        o = eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
+        tree_tok += len(o["token_ids"])
+        rounds += o["rounds"]
+        acc_sum += sum(o["accept_lengths"])
+        N_all += o["tree_sizes"]
+    torch.cuda.synchronize()
+    tree_verify_ms = verify.ms
+    tree_per_tok = tree_verify_ms / tree_tok
+    accept_len = acc_sum / rounds
+    avgN = statistics.mean(N_all)
+
+    speedup = ar_per_tok / tree_per_tok
+    print("\n=== verify-only (drafter excluded), identical fork conditions ===")
+    print(f"AR   : verify_gpu={ar_verify_ms/1e3:7.3f}s  ntok={ar_tok:4d}  "
+          f"verify/tok={ar_per_tok:6.2f}ms")
+    print(f"tree : verify_gpu={tree_verify_ms/1e3:7.3f}s  ntok={tree_tok:4d}  rounds={rounds:4d}  "
+          f"verify/round={tree_verify_ms/rounds:6.2f}ms  verify/tok={tree_per_tok:6.2f}ms")
+    print(f"       drafter_gpu={draft.ms/1e3:7.3f}s ({draft.ms/(draft.ms+tree_verify_ms)*100:.0f}% of draft+verify, EXCLUDED)")
+    print(f"       accept_len={accept_len:.3f}   tree-N: min/mean/max={min(N_all)}/{avgN:.1f}/{max(N_all)}")
+    print(f"\nRESULT nano verify-only decode_cuda_speedup = {speedup:.2f}x   "
+          f"[fork={FORK['decode_cuda_speedup']:.2f}x]")
+    print(f"       accept_len {accept_len:.3f} vs fork {FORK['accept_len']}   "
+          f"avgN {avgN:.0f} vs fork {FORK['avg_tree_nodes']}")
+
+
+if __name__ == "__main__":
+    main()

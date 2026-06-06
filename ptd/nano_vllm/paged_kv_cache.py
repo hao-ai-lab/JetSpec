@@ -165,6 +165,46 @@ class PagedKVCache(Cache):
                 [self._vpool[layer_idx], torch.zeros(shape, dtype=self.dtype, device=self.device)], dim=0)
         self._free_blocks.extend(range(old, self._num_blocks))
 
+    def reserve_capacity(self, total_tokens: int) -> None:
+        """Pre-grow the (single-seq) pool ONCE to hold `total_tokens`, so the pool
+        tensors' block-count dim is shape-stable for the rest of the run.
+
+        A3-BUCKET: with `dynamic=False`, the compiled verify/AR stack specializes on
+        the concrete pool shape `(num_blocks, block_size, H, D)`. On-demand `_grow_pool`
+        (a `torch.cat` that bumps `num_blocks`) therefore forces a recompile every time
+        the sequence crosses a block boundary — over a real decode that is a recompile
+        per ~`block_size` tokens, blowing past dynamo's recompile_limit. Reserving the
+        whole-run capacity up front means only the `seq_lens_k` VALUE grows each round
+        (the kernel reads `[0, seq_lens_k)`); every pool/block-table SHAPE the compiled
+        graph guards on stays fixed, so recompiles stop after the bucket set is traced.
+
+        No-op in N2a (the fixed pool is pre-sized at construction) and before the first
+        append (dims unknown — the engine calls this right after prefill). Idempotent:
+        grows only the shortfall, so calling it again with a smaller budget does nothing.
+
+        The block pool is SHARED across all layers but each layer keeps its OWN block
+        table (`_seq_block_tables[seq][layer]`), so a `total_tokens`-long sequence needs
+        `num_layers × ceil(total_tokens / block_size)` physical blocks — reserve for
+        every layer, not one (a single-layer estimate undershoots ~`num_layers`-fold and
+        leaves the pool growing per round, re-triggering the recompiles this prevents).
+        Add one block_size-bucket of slack per layer for the partial last block."""
+        if not self._is_single_seq or self._num_heads is None:
+            return
+        num_layers = max(1, len(self._kpool))
+        per_layer = self._blocks_for(total_tokens) + 1      # +1: partial last block
+        # Remember the per-layer reservation so the engine can pin the compiled stack's
+        # block_table column count to it (A3-BUCKET shape stability). Never shrinks.
+        self._reserved_per_layer = max(getattr(self, "_reserved_per_layer", 0), per_layer)
+        need_blocks = num_layers * per_layer
+        if need_blocks > self._num_blocks:
+            self._grow_pool(need_blocks - self._num_blocks)
+
+    @property
+    def reserved_block_table_width(self) -> Optional[int]:
+        """Fixed per-layer block_table column count pinned by `reserve_capacity`, or
+        None if it was never called (the compiled stack then sees variable widths)."""
+        return getattr(self, "_reserved_per_layer", None)
+
     def _ensure_layer(self, layer_idx: int, key_states: torch.Tensor) -> None:
         """Create this layer's pools on first touch, learning dims from KV."""
         if self._num_heads is None:
@@ -302,7 +342,7 @@ class PagedKVCache(Cache):
         return self.get_seq_length(layer_idx, seq_id=seq_id)
 
     def reserve_tree_slots(
-        self, seq_id: int, n_nodes: int, past_len: int
+        self, seq_id: int, n_nodes: int, past_len: int, block_table_width: Optional[int] = None
     ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], torch.Tensor]:
         """Reserve `n_nodes` contiguous pool slots after `past_len` WITHOUT scattering.
 
@@ -320,6 +360,18 @@ class PagedKVCache(Cache):
         on the eager path). The slot-index *math* (`pos // block_size`,
         `% block_size`) is layer-invariant and mirrors `append` exactly; only the
         physical block ids differ.
+
+        A3-BUCKET: `block_table_width` right-pads every layer's block_table to a FIXED
+        column count (pad value 0). The block_table is the SECOND shape (besides the
+        pool) that the compiled stack guards on (`block_tables[i]` dim 1); without
+        padding it grows by one column each time the sequence crosses a block boundary,
+        re-triggering a recompile every ~`block_size` tokens. Padding to a constant
+        width baked from the reserved whole-run capacity makes it shape-stable. The pad
+        columns are never read: the kernel only walks blocks for positions `[0,
+        seq_lens_k)`, and `node_blks` indexes the real (pre-pad) entries — so padding
+        is behavior-preserving (verified token-identical). Requires the pool to already
+        hold `block_table_width` blocks per layer (`reserve_capacity` guarantees this);
+        raises if a real table somehow exceeds the requested width (a capacity bug).
 
         Returns per-layer lists (indexed by layer order 0..L-1):
         `(block_tables[i] (1, max_blk) int32, node_blk[i] (N,) long,
@@ -350,7 +402,18 @@ class PagedKVCache(Cache):
             table_t = torch.tensor(table, device=dev, dtype=torch.long)
             node_blks.append(table_t[blk_pos])
             node_offs.append(node_off_t)
-            block_tables.append(table_t.to(torch.int32).view(1, -1))
+            bt = table_t.to(torch.int32)
+            if block_table_width is not None:
+                if bt.numel() > block_table_width:
+                    raise ValueError(
+                        f"block_table for layer {layer_idx} has {bt.numel()} blocks > "
+                        f"requested fixed width {block_table_width} (reserve_capacity "
+                        f"under-provisioned)"
+                    )
+                if bt.numel() < block_table_width:           # right-pad with 0 (unread)
+                    bt = torch.cat([bt, torch.zeros(
+                        block_table_width - bt.numel(), device=dev, dtype=torch.int32)])
+            block_tables.append(bt.view(1, -1))
         self._touch(seq_id)
         seq_lens_k = torch.tensor([past_len + n_nodes], device=dev, dtype=torch.int32)
         return block_tables, node_blks, node_offs, seq_lens_k

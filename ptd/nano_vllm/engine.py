@@ -28,6 +28,32 @@ from ptd.engine.sampler import sample
 from ptd.nano_vllm.paged_kv_cache import PagedKVCache
 from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
 
+# A3-BUCKET: tree-N bucket sizes for the compiled verify stack. `torch.compile(
+# dynamic=False)` specializes `_stack` on the concrete node count N, so a variable-N
+# decode recompiles per distinct N. We snap N UP to the next bucket by padding (pad
+# rows get -inf qq_bias so real rows never attend them and tree_accept never reads
+# them — see `_pad_tree_to_bucket`), so the compiled stack only ever sees these few N
+# values. Buckets were chosen from the measured N distribution on a real gsm8k decode
+# (Qwen3-8B, budget=255, width=7, block_size=16, epoch6 head): the crossproduct heap
+# fills to the budget cap EVERY round, so N is degenerate at 255 — but the smaller
+# buckets keep early/short-context or smaller-budget runs from recompiling too, and
+# 256 covers the budget=255 steady state (the dominant case). Padding adds at most
+# `bucket - N` dummy rows (here 1), a negligible verify-forward cost.
+_TREE_BUCKETS = (64, 128, 192, 256)
+
+
+def _bucket_for_n(n: int) -> int:
+    """Smallest bucket >= n (A3-BUCKET). For n beyond the largest bucket, rounds up to
+    the next multiple of that largest bucket (keeps the stack from per-N recompiling on
+    an unexpectedly large tree; still a bounded, coarse set of shapes)."""
+    for b in _TREE_BUCKETS:
+        if n <= b:
+            return b
+    # n > max bucket: round up to the next multiple of the largest bucket so the
+    # shape set stays small and predictable rather than per-N.
+    step = _TREE_BUCKETS[-1]
+    return ((n + step - 1) // step) * step
+
 
 class NanoEngine:
     def __init__(
@@ -129,6 +155,11 @@ class NanoEngine:
         # mask from cache_position; the kernel masks internally.)
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
         logits, cache, _ = self.runner.forward(input_ids, cache, pos)
+        if compiled:
+            # A3-BUCKET: pre-grow the pool to the whole-run length ONCE so the compiled
+            # AR (N=1) stack's pool-shape guard never trips mid-decode (only seq_lens_k
+            # value grows, not the pool block-count shape). +1 for the lone decode slot.
+            cache.reserve_capacity(prompt_len + sp.max_new_tokens + 1)
         next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
@@ -146,7 +177,10 @@ class NanoEngine:
                 # K/V in-graph), then run the compiled AR stack. Byte-equivalent to
                 # the eager kernel decode forward; compiled so the AR baseline is
                 # fused like the tree verify (a fair decode_cuda_speedup).
-                bts, node_blks, node_offs, slk = cache.reserve_tree_slots(0, 1, cur)
+                # Pin the block_table width (fixed by reserve_capacity) so the compiled
+                # AR stack's block_table shape guard stays stable as the seq lengthens.
+                bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
+                    0, 1, cur, block_table_width=cache.reserved_block_table_width)
                 dummy = torch.zeros(1, 1, self.model.config.hidden_size,
                                     device=self.device, dtype=self.dtype)
                 cos, sin = self.model.model.rotary_emb(dummy, pos)
@@ -166,6 +200,37 @@ class NanoEngine:
 
         text = self.tokenizer.decode(out_ids, skip_special_tokens=True)
         return {"token_ids": out_ids, "text": text}
+
+    def _pad_tree_to_bucket(self, seq_step, posN, qq_bias, N: int, B: int):
+        """Pad the N real tree rows up to bucket size B (A3-BUCKET). Returns
+        `(seq_step_b (1,B), posN_b (1,B), qq_bias_b (B,B))`. No-op (returns the
+        inputs) when B == N.
+
+        Padding is lossless for the committed tokens AND the tapped hidden because:
+          - `qq_bias_b[i, N:] = -inf` for every real row i < N: real queries assign
+            -inf score to pad keys, so the softmax over `[prefix | tree]` is identical
+            to the unbucketed (N,N) bias — real rows' attention output is unchanged.
+          - `qq_bias_b[N:, :] = -inf` for every pad row: pad queries attend nothing
+            (all keys -inf). Their attention output is the kernel's all-masked value
+            (irrelevant — we slice `[:N]` off), and crucially they are never read by
+            `tree_accept`, which walks child indices 0..N-1 only (so a pad row is never
+            `current` and its logit/hidden is never inspected).
+          - pad rows get a dummy token (0) and the last real RoPE position; neither
+            feeds back into any real row (the -inf bias isolates them).
+        The pad rows' post-RoPE K/V is scattered into the reserved slots
+        `[past_len+N, past_len+B)`, which `gather(keep)` never selects and then frees."""
+        if B == N:
+            return seq_step, posN, qq_bias
+        pad = B - N
+        dev = self.device
+        seq_step_b = torch.cat(
+            [seq_step, torch.zeros((1, pad), dtype=seq_step.dtype, device=dev)], dim=1)
+        # Pad RoPE positions with the last real position (value is masked out anyway).
+        posN_b = torch.cat([posN, posN[:, -1:].expand(1, pad)], dim=1)
+        neg_inf = torch.full((), float("-inf"), dtype=qq_bias.dtype, device=dev)
+        qq_bias_b = neg_inf.expand(B, B).clone()           # every pad interaction -inf
+        qq_bias_b[:N, :N] = qq_bias                         # real block unchanged
+        return seq_step_b, posN_b, qq_bias_b
 
     def _get_compiled_verify_hidden(self, target_layer_ids):
         """Lazily build (and cache) the `need_hidden=True` compiled verify stack for
@@ -257,6 +322,14 @@ class NanoEngine:
         )
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
+        if compiled:
+            # A3-BUCKET: pre-grow the pool to the whole-run high-water mark ONCE so the
+            # compiled stack's pool-shape guard never trips. Peak occupancy in a round
+            # is prefix + the B reserved tree nodes (before gather compacts back), so
+            # reserve prompt + max_new_tokens + the largest bucket. After this only the
+            # `seq_lens_k` value changes per round; every pool/block-table shape stays
+            # fixed -> recompiles stop after the bucket set is traced.
+            cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + _TREE_BUCKETS[-1])
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
@@ -298,25 +371,46 @@ class NanoEngine:
                     # below works byte-for-byte unchanged. When `need_hidden` (the real
                     # DraftHead path) the stack ALSO returns the tapped target_hidden,
                     # byte-matching extract_context_feature over `target_layer_ids`.
-                    bts, node_blks, node_offs, slk = cache.reserve_tree_slots(0, N, past_len)
-                    dummy = torch.zeros(1, N, self.model.config.hidden_size,
+                    #
+                    # A3-BUCKET: pad the N real tree rows up to a fixed bucket B so the
+                    # compiled stack only ever sees the few `_TREE_BUCKETS` node counts
+                    # (no per-N recompile). The pad rows get -inf qq_bias both ways, so
+                    # real rows never attend pad keys and pad rows are never `current`
+                    # in tree_accept (which walks real child indices 0..N-1 only) — the
+                    # logits/hidden we slice back to [:N] are bit-identical to the
+                    # unbucketed stack. We reserve B slots (the compiled stack scatters
+                    # all B rows' KV in-graph); `gather(keep)` below references only
+                    # `past_len + accepted_path` (< past_len + N), and decrefs ALL old
+                    # blocks (incl. the transient pad slots), so the pad KV never
+                    # survives the round.
+                    B = _bucket_for_n(N)
+                    seq_step_b, posN_b, qq_bias_b = self._pad_tree_to_bucket(
+                        seq_step, posN, qq_bias, N, B)
+                    # Pin the block_table width too (the second compiled-stack shape guard
+                    # besides the pool) — reserve_capacity fixed the per-layer reservation.
+                    bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
+                        0, B, past_len, block_table_width=cache.reserved_block_table_width)
+                    dummy = torch.zeros(1, B, self.model.config.hidden_size,
                                         device=self.device, dtype=self.dtype)
-                    cos, sin = self.model.model.rotary_emb(dummy, posN)
-                    cu = torch.tensor([0, N], device=self.device, dtype=torch.int32)
+                    cos, sin = self.model.model.rotary_emb(dummy, posN_b)
+                    cu = torch.tensor([0, B], device=self.device, dtype=torch.int32)
                     nlayers = self.model.config.num_hidden_layers
                     k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                     v_pools = [cache.pool(i)[1] for i in range(nlayers)]
                     if need_hidden:
                         stack = self._get_compiled_verify_hidden(target_layer_ids)
                         logits, new_hidden = stack(
-                            seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
-                            qq_bias, node_blks, node_offs,
+                            seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
+                            qq_bias_b, node_blks, node_offs,
                         )
+                        logits = logits[:, :N, :]                # drop the B-N pad rows
+                        new_hidden = new_hidden[:, :N, :]
                     else:
                         logits = self.compiled_verify(
-                            seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
-                            qq_bias, node_blks, node_offs,
+                            seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
+                            qq_bias_b, node_blks, node_offs,
                         )
+                        logits = logits[:, :N, :]                # drop the B-N pad rows
                         new_hidden = None
                 else:
                     # Eager kernel path (the non-compiled "triton_paged_tree" backend;

@@ -129,6 +129,98 @@ def test_n1_compiled_verify_need_hidden_matches_sdpa(target_layer_ids):
     )
 
 
+# --- A3-BUCKET: tree-N bucketing must stay token-lossless ---------------------
+# Bucketing pads the N real tree rows up to a fixed bucket B (pad rows get -inf
+# qq_bias both ways, a dummy token, and are sliced off after). The committed tokens
+# and the tapped hidden must be bit-identical to the unbucketed path, because
+# tree_accept walks only real child indices 0..N-1 and real rows assign -inf score to
+# pad keys. We FORCE a non-trivial pad on the tiny model (whose trees are tiny, N~15)
+# by monkeypatching the bucket function, then assert the bucketed compiled decode is
+# token-identical to SDPA (the lossless oracle). A broken pad (e.g. real rows attending
+# pad keys, or a pad row leaking into accept) would flip tokens here.
+
+import ptd.nano_vllm.engine as _eng_mod
+
+
+def _force_bucket(monkeypatch, pad: int):
+    """Make `_bucket_for_n(N)` return `N + pad` so every round pads by exactly `pad`
+    rows — exercises the padding path on the tiny model's small trees."""
+    monkeypatch.setattr(_eng_mod, "_bucket_for_n", lambda n: n + pad)
+
+
+def test_bucket_for_n_math():
+    """`_bucket_for_n` snaps UP to the next bucket; beyond the max it rounds up to a
+    multiple of the largest bucket (bounded shape set, never per-N)."""
+    assert _eng_mod._TREE_BUCKETS == (64, 128, 192, 256)
+    assert _eng_mod._bucket_for_n(1) == 64
+    assert _eng_mod._bucket_for_n(64) == 64
+    assert _eng_mod._bucket_for_n(65) == 128
+    assert _eng_mod._bucket_for_n(255) == 256
+    assert _eng_mod._bucket_for_n(256) == 256
+    assert _eng_mod._bucket_for_n(257) == 512
+
+
+def test_pad_tree_to_bucket_structure():
+    """`_pad_tree_to_bucket` keeps the real (N,N) qq_bias block intact and sets every
+    pad interaction (real->pad cols, pad->any rows) to -inf, with B==N a no-op."""
+    eng = object.__new__(_eng_mod.NanoEngine)
+    eng.device = "cpu"
+    N, pad = 4, 3
+    B = N + pad
+    seq_step = torch.arange(1, N + 1).view(1, N)
+    posN = torch.arange(10, 10 + N).view(1, N)
+    qq = torch.where(torch.eye(N).bool(),
+                     torch.zeros(()), torch.full((), float("-inf")))
+    ss_b, pos_b, qq_b = eng._pad_tree_to_bucket(seq_step, posN, qq, N, B)
+    assert ss_b.shape == (1, B) and pos_b.shape == (1, B) and qq_b.shape == (B, B)
+    assert torch.equal(ss_b[:, :N], seq_step) and (ss_b[:, N:] == 0).all()
+    assert torch.equal(qq_b[:N, :N], qq)                 # real block unchanged
+    assert torch.isneginf(qq_b[:N, N:]).all()            # real rows never attend pad
+    assert torch.isneginf(qq_b[N:, :]).all()             # pad rows attend nothing
+    # B == N: identity (no copy, returns inputs)
+    assert eng._pad_tree_to_bucket(seq_step, posN, qq, N, N)[0] is seq_step
+
+
+@pytest.mark.parametrize("pad", [1, 5])
+def test_n1_compiled_verify_bucketed_matches_sdpa(monkeypatch, pad):
+    """Bucketed (padded) compiled verify token-identical to SDPA (logits-only)."""
+    model = _tiny_model(0)
+    drafter = TargetEchoTreeDrafter(model)
+    build_compiled = _add_compiled_backend()
+    sdpa = (lambda e: (torch.manual_seed(1), e.generate_tree(
+        PROMPT, drafter, block_size=4, tree_width=2, budget=15,
+        sampling_params=SP)["token_ids"])[1])(_tiny_nano(model, "sdpa"))
+    _force_bucket(monkeypatch, pad)
+    torch.manual_seed(1)
+    comp = build_compiled(model).generate_tree(
+        PROMPT, drafter, block_size=4, tree_width=2, budget=15,
+        sampling_params=SP)["token_ids"]
+    assert comp == sdpa, f"bucketed compiled verify diverged from SDPA (pad={pad})"
+
+
+@pytest.mark.parametrize("target_layer_ids", [[0], [0, 1]])
+def test_n1_compiled_verify_bucketed_need_hidden_matches_sdpa(monkeypatch, target_layer_ids):
+    """Bucketed need_hidden compiled verify (DraftHead tap) token-identical to SDPA —
+    the pad rows must not perturb the tapped target_hidden fed to the drafter."""
+    model = _tiny_model(0)
+    drafter = TargetEchoTreeDrafter(model)
+    build_compiled = _add_compiled_backend()
+
+    def run(e):
+        torch.manual_seed(1)
+        return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
+                               budget=15, target_layer_ids=target_layer_ids,
+                               sampling_params=SP)["token_ids"]
+
+    sdpa = run(_tiny_nano(model, "sdpa"))
+    _force_bucket(monkeypatch, 4)
+    comp = run(build_compiled(model))
+    assert comp == sdpa, (
+        f"bucketed need_hidden compiled verify diverged from SDPA "
+        f"(target_layer_ids={target_layer_ids})"
+    )
+
+
 @pytest.mark.parametrize("target_layer_ids", [[0], [1], [0, 1]])
 @torch.inference_mode()      # custom op has no autograd formula; mirror generate_tree
 def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
