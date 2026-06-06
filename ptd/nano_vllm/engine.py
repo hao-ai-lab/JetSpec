@@ -395,10 +395,13 @@ class NanoEngine:
             # A3-BUCKET: pre-grow the pool to the whole-run high-water mark ONCE so the
             # compiled stack's pool-shape guard never trips. Peak occupancy in a round
             # is prefix + the B reserved tree nodes (before gather compacts back), so
-            # reserve prompt + max_new_tokens + the largest bucket. After this only the
-            # `seq_lens_k` value changes per round; every pool/block-table shape stays
-            # fixed -> recompiles stop after the bucket set is traced.
-            cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + _TREE_BUCKETS[-1])
+            # reserve prompt + max_new_tokens + the largest bucket a tree of this `budget`
+            # can hit (`_bucket_for_n(budget)`, not the static top bucket -- otherwise a
+            # caller passing budget>255 undershoots the reservation and `reserve_tree_slots`
+            # raises mid-decode). After this only the `seq_lens_k` value changes per round;
+            # every pool/block-table shape stays fixed -> recompiles stop after the bucket
+            # set is traced.
+            cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + _bucket_for_n(budget))
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
