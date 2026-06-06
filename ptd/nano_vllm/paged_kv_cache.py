@@ -301,6 +301,60 @@ class PagedKVCache(Cache):
         self._touch(seq_id)
         return self.get_seq_length(layer_idx, seq_id=seq_id)
 
+    def reserve_tree_slots(
+        self, seq_id: int, n_nodes: int, past_len: int
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], torch.Tensor]:
+        """Reserve `n_nodes` contiguous pool slots after `past_len` WITHOUT scattering.
+
+        The allocation half of `append` (blocks + block-table extend + refcount),
+        minus the pool write — the compiled verify stack scatters this round's node
+        K/V into the returned slots IN-GRAPH (so the kernel reads the nodes and
+        Inductor keeps the k/v projections live). Reserves under EVERY already-touched
+        layer (all populated by prefill) so `gather(keep)` afterwards reads
+        contiguous, fully-populated slots, exactly as if `append` had run.
+
+        Block tables are PER-LAYER and the pool hands each layer DIFFERENT physical
+        block ids (layer 0 -> block 0, layer 1 -> block 1, …), so a single shared
+        grid cannot drive every layer — each layer needs its own block_table /
+        node_blk / node_off (matching how `kernel_block_table` is rebuilt per layer
+        on the eager path). The slot-index *math* (`pos // block_size`,
+        `% block_size`) is layer-invariant and mirrors `append` exactly; only the
+        physical block ids differ.
+
+        Returns per-layer lists (indexed by layer order 0..L-1):
+        `(block_tables[i] (1, max_blk) int32, node_blk[i] (N,) long,
+        node_off[i] (N,) long, seq_lens_k (1,) int32 == past_len + n_nodes)`.
+        `seq_lens_k` is layer-invariant (one tensor). `append`/`gather`/`pool` are
+        untouched — they remain the oracle path's machinery."""
+        seq_id = self._default_seq_id if seq_id is None else seq_id
+        self._ensure_seq(seq_id)
+        dev = self.device
+        layer_ids = sorted(self._kpool.keys())
+        pos_t = past_len + torch.arange(n_nodes, device=dev)
+        blk_pos = pos_t // self._block_size                     # slot -> block-table index
+        node_off_t = pos_t % self._block_size                   # layer-invariant offsets
+        block_tables, node_blks, node_offs = [], [], []
+        for layer_idx in layer_ids:
+            table = self._seq_block_tables[seq_id].setdefault(layer_idx, [])
+            filled = self._seq_filled[seq_id].setdefault(layer_idx, 0)
+            room = (self._block_size - filled) if table else 0
+            need = max(0, n_nodes - room)
+            new_block_count = (need + self._block_size - 1) // self._block_size
+            new_blocks = [int(b) for b in self.allocate(new_block_count).tolist()]
+            for b in new_blocks:                               # claim per layer
+                self._incref_block(b)
+            table.extend(new_blocks)
+            # Last-block fill after these n_nodes land (mirrors append's bookkeeping).
+            self._seq_filled[seq_id][layer_idx] = ((past_len + n_nodes - 1) % self._block_size) + 1
+            # This layer's physical block ids -> the kernel block_table + scatter map.
+            table_t = torch.tensor(table, device=dev, dtype=torch.long)
+            node_blks.append(table_t[blk_pos])
+            node_offs.append(node_off_t)
+            block_tables.append(table_t.to(torch.int32).view(1, -1))
+        self._touch(seq_id)
+        seq_lens_k = torch.tensor([past_len + n_nodes], device=dev, dtype=torch.int32)
+        return block_tables, node_blks, node_offs, seq_lens_k
+
     def gather(self, positions: torch.Tensor, seq_id: Optional[int] = None) -> None:
         """Compact `seq_id`'s non-contiguous keep set into a linear prefix (all layers).
 

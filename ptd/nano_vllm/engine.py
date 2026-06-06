@@ -58,6 +58,16 @@ class NanoEngine:
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
+        elif attn_backend == "triton_paged_tree_compiled":
+            # A3-INT: same custom_op attention backend as "triton_paged_tree"
+            # (prefill + the eager kernel fallback both ride it), PLUS a compiled
+            # read-only verify stack that replaces the per-round verify forward.
+            from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
+            from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+
+            register_ptd_paged_tree()
+            self.model.config._attn_implementation = "ptd_paged_tree"
+            self.compiled_verify = CompiledVerifyStack(self.model, block_size=self.block_size)
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -163,7 +173,13 @@ class NanoEngine:
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         target_hidden = None
 
-        kernel = getattr(self, "attn_backend", "sdpa") == "triton_paged_tree"
+        backend = getattr(self, "attn_backend", "sdpa")
+        # A3-INT compiled verify rides the kernel substrate (prefill populates the
+        # pool with post-RoPE prefix KV via the kernel path; the eager kernel is the
+        # need_hidden fallback). `kernel` therefore covers both; `compiled` gates the
+        # extra step of swapping the verify forward for the compiled read-only stack.
+        kernel = backend in ("triton_paged_tree", "triton_paged_tree_compiled")
+        compiled = backend == "triton_paged_tree_compiled"
 
         # --- prefill: populate the persistent paged cache with the prompt's KV ---
         cache = PagedKVCache(
@@ -212,12 +228,38 @@ class NanoEngine:
                     anc, torch.zeros((), dtype=torch.float32, device=self.device),
                     torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
                 )
-                cache._handoff_seq_ids = [0]
-                cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": qq_bias}
-                logits, cache, new_hidden = self.runner.forward(
-                    seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
-                    output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
-                )
+                if compiled and not need_hidden:
+                    # A3-INT compiled verify: bypass model.__call__ + the per-layer
+                    # Python and run the fused read-only stack. Reserve this round's
+                    # node slots in the pool's block table (the allocation half of
+                    # append, no scatter — the compiled stack scatters the post-RoPE
+                    # node K/V in-graph), then call the compiled stack directly. After
+                    # it returns, the node KV lives in the pool exactly where the eager
+                    # kernel's `update` would have put it, so `cache.gather(keep)`
+                    # below works byte-for-byte unchanged.
+                    bts, node_blks, node_offs, slk = cache.reserve_tree_slots(0, N, past_len)
+                    dummy = torch.zeros(1, N, self.model.config.hidden_size,
+                                        device=self.device, dtype=self.dtype)
+                    cos, sin = self.model.model.rotary_emb(dummy, posN)
+                    cu = torch.tensor([0, N], device=self.device, dtype=torch.int32)
+                    nlayers = self.model.config.num_hidden_layers
+                    k_pools = [cache.pool(i)[0] for i in range(nlayers)]
+                    v_pools = [cache.pool(i)[1] for i in range(nlayers)]
+                    logits = self.compiled_verify(
+                        seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
+                        qq_bias, node_blks, node_offs,
+                    )
+                    new_hidden = None
+                else:
+                    # Eager kernel path (also the need_hidden=True fallback for the
+                    # compiled backend: the tapped-hidden compiled variant is a later
+                    # unit, so DraftHead/block_size>1 verifies route through here).
+                    cache._handoff_seq_ids = [0]
+                    cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": qq_bias}
+                    logits, cache, new_hidden = self.runner.forward(
+                        seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
+                        output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                    )
             else:
                 # 4D additive mask: queries = N nodes; keys = past_len cached prefix
                 # (all visible) + N nodes (ancestor mask, incl self).
