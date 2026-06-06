@@ -392,6 +392,18 @@ class NanoEngine:
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
         if compiled:
+            if getattr(self, "_use_cudagraph", False) and _bucket_for_n(budget) > _TREE_BUCKETS[-1]:
+                # A3-GRAPH's GraphedVerify staging buffers are sized to the largest
+                # STATIC bucket (`_TREE_BUCKETS[-1]`); a budget whose bucket exceeds it
+                # can't be replayed (replay would copy an oversized tree into the fixed
+                # staging). Fail loud and point at the compiled NON-graph backend, which
+                # pads to `_bucket_for_n(budget)` and handles arbitrary budgets.
+                raise ValueError(
+                    f"attn_backend='triton_paged_tree_cudagraph' supports tree budget "
+                    f"<= {_TREE_BUCKETS[-1]} (the largest CUDA-graph staging bucket); got "
+                    f"budget={budget}. Use attn_backend='triton_paged_tree_compiled' for "
+                    f"larger budgets."
+                )
             # A3-BUCKET: pre-grow the pool to the whole-run high-water mark ONCE so the
             # compiled stack's pool-shape guard never trips. Peak occupancy in a round
             # is prefix + the B reserved tree nodes (before gather compacts back), so
