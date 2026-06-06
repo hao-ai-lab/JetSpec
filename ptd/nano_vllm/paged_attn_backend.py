@@ -21,7 +21,7 @@ import torch
 from transformers.integrations.sdpa_attention import sdpa_attention_forward
 
 from ptd.nano_vllm.paged_kv_cache import PagedHandle
-from ptd.nano_vllm.paged_tree_attn import paged_tree_attn
+from ptd.nano_vllm.paged_tree_attn_op import paged_tree_attn
 
 
 def _ptd_paged_tree_attn_forward(
