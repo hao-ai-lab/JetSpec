@@ -385,14 +385,35 @@ class PagedKVCache(Cache):
         pos_t = past_len + torch.arange(n_nodes, device=dev)
         blk_pos = pos_t // self._block_size                     # slot -> block-table index
         node_off_t = pos_t % self._block_size                   # layer-invariant offsets
-        block_tables, node_blks, node_offs = [], [], []
+
+        # Pass A (host-only, no GPU): compute each layer's new_block_count and
+        # accumulate a running total. Seeding `_seq_block_tables`/`_seq_filled`
+        # exactly as the old per-layer loop did, but issuing NO allocation yet.
+        counts: list[int] = []
         for layer_idx in layer_ids:
             table = self._seq_block_tables[seq_id].setdefault(layer_idx, [])
             filled = self._seq_filled[seq_id].setdefault(layer_idx, 0)
             room = (self._block_size - filled) if table else 0
             need = max(0, n_nodes - room)
             new_block_count = (need + self._block_size - 1) // self._block_size
-            new_blocks = [int(b) for b in self.allocate(new_block_count).tolist()]
+            counts.append(new_block_count)
+        total = sum(counts)
+
+        # ONE batched allocation replaces the ~per-layer `allocate().tolist()` storm
+        # (one DtoH sync instead of one-per-layer). `allocate` hands out free block
+        # ids sequentially, so slicing `all_new` in layer order below is identical to
+        # calling `allocate(counts[i])` per layer in sequence — no decref happens
+        # between layers here, so the free pool is unchanged across the slices.
+        all_new = [int(b) for b in self.allocate(total).tolist()] if total else []
+
+        # Pass B: walk layers with a cursor into `all_new`, doing exactly what the
+        # old loop did with its per-layer `new_blocks`.
+        block_tables, node_blks, node_offs = [], [], []
+        cursor = 0
+        for layer_idx, new_block_count in zip(layer_ids, counts):
+            new_blocks = all_new[cursor:cursor + new_block_count]
+            cursor += new_block_count
+            table = self._seq_block_tables[seq_id][layer_idx]
             for b in new_blocks:                               # claim per layer
                 self._incref_block(b)
             table.extend(new_blocks)
@@ -438,17 +459,40 @@ class PagedKVCache(Cache):
         blk_pos = idx // self._block_size
         off = idx % self._block_size
         tables = self._seq_block_tables.get(seq_id, {})
-        for layer_idx in list(tables.keys()):
+        layer_ids = list(tables.keys())
+
+        # Pass A: per-layer GPU gather (real work — kept per layer) + stash the old
+        # block list, then decref ALL layers' old blocks. `new_block_count` is
+        # layer-invariant (depends only on `keep`), so every layer needs the same
+        # count. Decreffing every layer up front BEFORE the batched allocate
+        # preserves the critical "freed slots are reusable in-place" semantic the
+        # fixed N2a pool relies on for the compaction.
+        stashed: list[tuple[int, torch.Tensor, torch.Tensor]] = []
+        for layer_idx in layer_ids:
             table = tables[layer_idx]
             old_blocks = list(table)
             src_blk = torch.tensor(table, device=self.device, dtype=torch.long)[blk_pos]
             gathered_k = self._kpool[layer_idx][src_blk, off]          # (keep, H, D)
             gathered_v = self._vpool[layer_idx][src_blk, off]
-            # Decref old blocks BEFORE allocating new ones so freed slots are
-            # reusable in-place (the fixed N2a pool may need them for the compaction).
+            stashed.append((layer_idx, gathered_k, gathered_v))
             for b in old_blocks:
                 self._decref_block(b)
-            new_blocks = [int(b) for b in self.allocate(new_block_count).tolist()]
+
+        # ONE batched allocation AFTER all decrefs (one DtoH sync instead of one
+        # per layer). Freed slots are now reusable, matching the original per-layer
+        # decref-then-allocate ordering intent. `allocate` hands out ids
+        # sequentially, so slicing `new_block_count` per layer in order is identical
+        # to calling `allocate(new_block_count)` per layer in sequence.
+        all_new = (
+            [int(b) for b in self.allocate(new_block_count * len(layer_ids)).tolist()]
+            if new_block_count else []
+        )
+
+        # Pass B: walk layers with a cursor, incref + scatter-write EXACTLY as before.
+        cursor = 0
+        for layer_idx, gathered_k, gathered_v in stashed:
+            new_blocks = all_new[cursor:cursor + new_block_count]
+            cursor += new_block_count
             for b in new_blocks:
                 self._incref_block(b)
             tables[layer_idx] = list(new_blocks)
