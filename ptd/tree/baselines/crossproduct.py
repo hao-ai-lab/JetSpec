@@ -22,6 +22,23 @@ from ptd.tree._core.base import DraftTree, TreeAlgorithm
 from ptd.tree._core.registry import register_tree_algo
 
 
+def _topk_pair_to_lists(
+    topk_tok_t: torch.Tensor,
+    topk_lp_t: torch.Tensor,
+) -> tuple[list[list[int]], list[list[float]]]:
+    """Materialize top-k tokens/logprobs in one host transfer when sourced on GPU."""
+    if topk_tok_t.device.type == "cpu" and topk_lp_t.device.type == "cpu":
+        return topk_tok_t.tolist(), topk_lp_t.tolist()
+
+    topk_pair_cpu = torch.stack(
+        (topk_tok_t.to(dtype=torch.float64), topk_lp_t.to(dtype=torch.float64)),
+        dim=-1,
+    ).cpu().tolist()
+    topk_tokens_cpu = [[int(pair[0]) for pair in row] for row in topk_pair_cpu]
+    topk_logprobs_cpu = [[pair[1] for pair in row] for row in topk_pair_cpu]
+    return topk_tokens_cpu, topk_logprobs_cpu
+
+
 @register_tree_algo("crossproduct")
 class CrossProduct(TreeAlgorithm):
     """V0 — best-first heap expansion on cumulative log-prob.
@@ -56,8 +73,7 @@ class CrossProduct(TreeAlgorithm):
         log_probs = torch.log_softmax(draft_logits.squeeze(0), dim=-1)  # (D, V)
         topk_lp_t, topk_tok_t = torch.topk(log_probs, tree_width, dim=-1)  # (D, k)
 
-        topk_tokens_cpu = topk_tok_t.tolist()
-        topk_logprobs_cpu = topk_lp_t.tolist()
+        topk_tokens_cpu, topk_logprobs_cpu = _topk_pair_to_lists(topk_tok_t, topk_lp_t)
         return _build_from_topk(
             root_token=root_token,
             topk_tokens_cpu=topk_tokens_cpu,

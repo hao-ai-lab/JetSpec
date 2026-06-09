@@ -12,6 +12,34 @@ import torch
 from .base import DraftTree
 
 
+_ACCEPT_STATIC_CACHE: dict[
+    tuple[int, tuple[str, int | None], torch.dtype],
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+] = {}
+
+
+def _device_key(device: torch.device) -> tuple[str, int | None]:
+    device = torch.device(device)
+    return device.type, device.index
+
+
+def _static_accept_tensors(
+    num_nodes: int,
+    device: torch.device,
+    score_dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-(N, device, dtype) tensors reused across accept calls."""
+    key = (num_nodes, _device_key(device), score_dtype)
+    cached = _ACCEPT_STATIC_CACHE.get(key)
+    if cached is None:
+        node_ids = torch.arange(num_nodes, device=device)
+        later_node = node_ids[None, :] > node_ids[:, None]
+        neg_ones = torch.empty(num_nodes, dtype=score_dtype, device=device).fill_(-1)
+        cached = (node_ids, later_node, neg_ones)
+        _ACCEPT_STATIC_CACHE[key] = cached
+    return cached
+
+
 def _build_child_maps_cpu(
     token_ids: list[int],
     parents: list[int],
@@ -74,16 +102,16 @@ def gpu_tree_accept(
     if max_depth is None:
         max_depth = num_nodes - 1
 
-    node_ids = torch.arange(num_nodes, device=device)
+    _, later_node, neg_ones = _static_accept_tensors(num_nodes, device, depths.dtype)
     safe_parents = parent_indices.clamp(min=0, max=num_nodes - 1)
     valid_parent = (parent_indices >= 0) & (parent_indices < num_nodes)
 
     same_parent = parent_indices[:, None] == parent_indices[None, :]
     same_token = tree_tokens[:, None] == tree_tokens[None, :]
-    later_node = node_ids[None, :] > node_ids[:, None]
     overwritten = (same_parent & same_token & later_node).any(dim=1)
 
-    match = torch.ones(num_nodes, dtype=torch.bool, device=device)
+    match = torch.empty(num_nodes, dtype=torch.bool, device=device)
+    match[0] = True
     match[1:] = (
         valid_parent[1:]
         & ~overwritten[1:]
@@ -96,12 +124,12 @@ def gpu_tree_accept(
         prefix_match = prefix_match & prefix_match[jump]
         jump = jump[jump]
 
-    score = torch.where(prefix_match, depths, torch.full_like(depths, -1))
+    score = torch.where(prefix_match, depths, neg_ones)
     best_node = torch.argmax(score)
     accepted_depth = depths[best_node]
     correction = greedy_targets[best_node]
 
-    path_buf = torch.zeros(max_depth + 1, dtype=torch.long, device=device)
+    path_buf = torch.empty(max_depth + 1, dtype=torch.long, device=device)
     current = best_node.unsqueeze(0)
     for depth in range(max_depth, -1, -1):
         path_buf[depth : depth + 1] = current
