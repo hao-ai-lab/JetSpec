@@ -24,6 +24,16 @@ GSM8K_PROMPT = (
     "Please reason step by step, and put your final answer within \\boxed{{}}."
 )
 
+MATH_PROMPT = (
+    "{problem}\n"
+    "Please reason step by step, and put your final answer within \\boxed{{}}."
+)
+
+HUMANEVAL_PROMPT = (
+    "Write a solution to the following problem and make sure that it "
+    "passes the tests:\n```python\n{prompt}\n```"
+)
+
 
 def summarize_tree_diag(
     *,
@@ -81,7 +91,7 @@ def format_metrics_report(
     lines = [
         "mode=dflash",
         "engine=nano_vllm",
-        "prompt_set=gsm8k",
+        f"prompt_set={metrics.get('prompt_set', 'gsm8k')}",
         "prompt_format=chat_template",
         f"attention_backend={attention_backend}",
         "head_type=causal",
@@ -105,13 +115,25 @@ def format_metrics_report(
     return "\n".join(lines) + "\n"
 
 
-def build_prompts(tokenizer, samples: int) -> list[str]:
+def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[str]:
     from datasets import load_dataset
 
-    ds = load_dataset("openai/gsm8k", "main", split="test")
+    if prompt_set == "gsm8k":
+        ds = load_dataset("openai/gsm8k", "main", split="test")
+        raw = [GSM8K_PROMPT.format(question=row["question"]) for row in ds]
+    elif prompt_set == "math500":
+        ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
+        raw = [MATH_PROMPT.format(problem=row["problem"]) for row in ds]
+    elif prompt_set == "aime":
+        ds = load_dataset("HuggingFaceH4/aime_2024", split="train")
+        raw = [MATH_PROMPT.format(problem=row["problem"]) for row in ds]
+    elif prompt_set == "humaneval":
+        ds = load_dataset("openai/openai_humaneval", split="test")
+        raw = [HUMANEVAL_PROMPT.format(prompt=row["prompt"]) for row in ds]
+    else:
+        raise ValueError(f"unknown prompt set: {prompt_set}")
     prompts = []
-    for i in range(min(samples, len(ds))):
-        prompt = GSM8K_PROMPT.format(question=ds[i]["question"])
+    for prompt in raw[:samples]:
         prompts.append(tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}],
             tokenize=False,
@@ -148,6 +170,8 @@ def parse_args():
     ap.add_argument("--drafter", choices=("eager", "compiled", "graphed"), default="eager")
     ap.add_argument("--session", action="store_true",
                     help="reuse the tree session (pool + captured graphs) across prompts")
+    ap.add_argument("--prompt-set", default="gsm8k",
+                    choices=["gsm8k", "math500", "humaneval", "aime"])
     return ap.parse_args()
 
 
@@ -163,7 +187,7 @@ def main():
         block_size=16,
     )
     drafter, target_layer_ids, block_size = build_drafter(args, eng)
-    prompts = build_prompts(eng.tokenizer, args.samples)
+    prompts = build_prompts(eng.tokenizer, args.samples, prompt_set=args.prompt_set)
     sp = SamplingParams(0.0, args.max_tokens)
     tree_kwargs = dict(
         block_size=block_size,
@@ -177,6 +201,9 @@ def main():
     )
     if args.session:
         tree_kwargs["session"] = True
+        # capacity = the longest prompt in the set (session guard is loud, not growing)
+        max_len = max(eng.tokenizer(p, return_tensors="pt").input_ids.shape[1] for p in prompts)
+        tree_kwargs["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
 
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
@@ -201,6 +228,7 @@ def main():
         num_samples=len(prompts),
         block_size=block_size,
     )
+    metrics["prompt_set"] = args.prompt_set
     print(format_metrics_report(
         metrics,
         attention_backend=backend,
