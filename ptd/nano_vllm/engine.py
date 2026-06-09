@@ -578,23 +578,39 @@ class NanoEngine:
                     output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
                 )
             target_logits = logits                                    # (1, N, V) — every row is a tree node
-            accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+            if sp.temperature == 0.0:
+                # L2 (path-to-fork-tps): GPU-resident greedy accept — one .item()
+                # (accepted_len) instead of the oracle's posterior.tolist() +
+                # child-map python walk; the path/correction stay device tensors
+                # so the gather/hidden/commit steps below never re-upload them.
+                # max_depth = block_size (the tree's depth budget) keeps the
+                # parent-walk loop short and sync-free. temperature>0 stays on
+                # the CPU oracle (gpu_tree_accept is greedy-only).
+                from ptd.tree._core.accept import gpu_tree_accept
+                greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
+                path_t, acc, corr_t = gpu_tree_accept(
+                    tree.token_ids, greedy, tree.parent_indices, tree.depth,
+                    max_depth=block_size,
+                )
+            else:
+                accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+                path_t = torch.tensor(accepted_path, device=self.device)
+                corr_t = torch.tensor(correction, device=self.device)
             # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
-            # rejected branches' KV. accepted_path = [0(root), …acc nodes], tree-ordered;
+            # rejected branches' KV. path_t = [0(root), …acc nodes], tree-ordered;
             # their cache slots are past_len + path -> contiguous positions after gather.
             keep = torch.cat([
                 torch.arange(past_len, device=self.device),
-                past_len + torch.tensor(accepted_path, device=self.device),
+                past_len + path_t,
             ])
             cache.gather(keep)                    # cache length -> past_len + (acc + 1)
             if new_hidden is not None:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
-                sel = torch.tensor(accepted_path, device=self.device)
-                target_hidden = torch.cat([target_hidden, new_hidden[:, sel, :]], dim=1)
-            accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
+                target_hidden = torch.cat([target_hidden, new_hidden[:, path_t, :]], dim=1)
+            accepted = tree.token_ids[path_t[1:]] if acc > 0 \
                 else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
-            block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
+            block = torch.cat([accepted, corr_t.reshape(1)])
             committed = torch.cat([committed, block.view(1, -1)], dim=1)
             rounds += 1
             accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
