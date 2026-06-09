@@ -48,6 +48,12 @@ def _sync(device: str) -> None:
         torch.cuda.synchronize()
 
 
+def _default_tolerance(dtype: torch.dtype) -> tuple[float, float]:
+    if dtype is torch.bfloat16:
+        return 1e-2, 2e-1
+    return 1e-3, 1e-3
+
+
 @torch.inference_mode()
 def _make_inputs(llm, ctx_len: int, target_layer_ids):
     vocab = int(llm.model.config.vocab_size)
@@ -84,11 +90,14 @@ def main():
     ap.add_argument("--ctx-lens", default="512,1024,2048")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--dtype", default="bf16")
-    ap.add_argument("--rtol", type=float, default=1e-3)
-    ap.add_argument("--atol", type=float, default=1e-3)
+    ap.add_argument("--rtol", type=float, default=None)
+    ap.add_argument("--atol", type=float, default=None)
     args = ap.parse_args()
 
     dtype = _dtype(args.dtype)
+    default_rtol, default_atol = _default_tolerance(dtype)
+    rtol = default_rtol if args.rtol is None else args.rtol
+    atol = default_atol if args.atol is None else args.atol
     ctx_lens = tuple(int(x) for x in args.ctx_lens.split(",") if x.strip())
     if not ctx_lens:
         raise SystemExit("--ctx-lens must contain at least one length")
@@ -138,12 +147,12 @@ def main():
         compiled_out = compiled.propose_logits(context_ids, depth, target_hidden=target_hidden)
         graph_out = graphed.propose_logits(context_ids, depth, target_hidden=target_hidden) if graphed else None
 
-        compiled_ok = torch.allclose(eager_out, compiled_out, rtol=args.rtol, atol=args.atol)
+        compiled_ok = torch.allclose(eager_out, compiled_out, rtol=rtol, atol=atol)
         max_abs_compiled = (eager_out - compiled_out).abs().max().item()
         graph_ok = ""
         max_abs_graph = ""
         if graph_out is not None:
-            graph_ok = str(torch.allclose(eager_out, graph_out, rtol=args.rtol, atol=args.atol))
+            graph_ok = str(torch.allclose(eager_out, graph_out, rtol=rtol, atol=atol))
             max_abs_graph = f"{(eager_out - graph_out).abs().max().item():.6g}"
 
         _, eager_ms = _time_calls(

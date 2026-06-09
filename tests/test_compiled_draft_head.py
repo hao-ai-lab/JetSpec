@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from transformers import Qwen3Config
 
-from ptd.draft_head_drafter import CompiledDraftHead, _DraftHeadForward
+from ptd.draft_head_drafter import CompiledDraftHead, GraphedDraftHead, _DraftHeadForward
 from ptd.models.draft_head import DFlashDraftModel
 
 
@@ -45,6 +45,27 @@ def _inputs(ctx_len: int, vocab_size: int, hidden_size: int):
     context_ids = torch.arange(1, ctx_len + 2, dtype=torch.long).remainder(vocab_size).view(1, -1)
     target_hidden = torch.randn(1, ctx_len, hidden_size)
     return context_ids, target_hidden
+
+
+def _cpu_graphed_draft_head(head, target, ctx_buckets=(4, 8)):
+    compiled = CompiledDraftHead(
+        head,
+        target,
+        block_size=4,
+        target_layer_ids=[0],
+        ctx_buckets=ctx_buckets,
+        compile=False,
+    )
+    graphed = object.__new__(GraphedDraftHead)
+    graphed.compiled = compiled
+    graphed.device = compiled.device
+    graphed.dtype = compiled.dtype
+    graphed.block_size = compiled.block_size
+    graphed._buffers = {}
+    graphed.graphs = {}
+    graphed.outputs = {}
+    graphed._pool = None
+    return graphed
 
 
 @torch.inference_mode()
@@ -106,3 +127,45 @@ def test_draft_head_padded_context_tail_is_masked():
     changed = compiled.forward_padded(context_ids, changed_tail, real_ctx_len=3, depth=3)
 
     torch.testing.assert_close(changed, baseline, rtol=1e-5, atol=1e-5)
+
+
+@torch.inference_mode()
+def test_graphed_draft_head_stages_every_head_input_before_replay():
+    head, target = _tiny_head_and_target()
+    graphed = _cpu_graphed_draft_head(head, target)
+    context_ids, target_hidden = _inputs(3, head.config.vocab_size, head.config.hidden_size)
+
+    capacity, buffers = graphed._stage_inputs(context_ids, target_hidden)
+
+    assert capacity == 4
+    assert set(buffers) == {"noise_embedding", "target_hidden", "position_ids", "attention_mask"}
+    torch.testing.assert_close(buffers["noise_embedding"], graphed.compiled.noise_embedding(context_ids))
+    torch.testing.assert_close(
+        buffers["target_hidden"],
+        graphed.compiled.pad_target_hidden(target_hidden, capacity),
+    )
+    torch.testing.assert_close(
+        buffers["position_ids"],
+        graphed.compiled._position_ids(real_ctx_len=3, capacity=capacity),
+    )
+    torch.testing.assert_close(
+        buffers["attention_mask"],
+        graphed.compiled._attention_mask(real_ctx_len=3, capacity=capacity),
+    )
+
+
+@torch.inference_mode()
+def test_graphed_draft_head_restages_anchor_embedding_each_round():
+    head, target = _tiny_head_and_target()
+    graphed = _cpu_graphed_draft_head(head, target)
+    context_ids, target_hidden = _inputs(3, head.config.vocab_size, head.config.hidden_size)
+    graphed._stage_inputs(context_ids, target_hidden)
+    first_noise = graphed._buffers[4]["noise_embedding"].clone()
+
+    next_context_ids = context_ids.clone()
+    next_context_ids[:, -1] = (next_context_ids[:, -1] + 7).remainder(head.config.vocab_size)
+    graphed._stage_inputs(next_context_ids, target_hidden)
+    expected_noise = graphed.compiled.noise_embedding(next_context_ids)
+
+    assert not torch.equal(first_noise, expected_noise)
+    torch.testing.assert_close(graphed._buffers[4]["noise_embedding"], expected_noise)

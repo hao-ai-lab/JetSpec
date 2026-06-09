@@ -264,13 +264,7 @@ class CompiledDraftHead:
             mask[:, :, :, capacity:] = block.view(1, 1, self.block_size, self.block_size)
         return mask
 
-    def _forward_fixed(
-        self,
-        context_ids: torch.Tensor,
-        target_hidden_padded: torch.Tensor,
-        position_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
+    def noise_embedding(self, context_ids: torch.Tensor) -> torch.Tensor:
         block_size = self.block_size
         anchor = context_ids[0, -1].view(1, 1).to(self.device)
         mask_fill = torch.full(
@@ -280,7 +274,16 @@ class CompiledDraftHead:
             device=self.device,
         )
         block_output_ids = torch.cat([anchor, mask_fill], dim=1)
-        noise_embedding = self.target.model.embed_tokens(block_output_ids)
+        return self.target.model.embed_tokens(block_output_ids)
+
+    def _forward_fixed(
+        self,
+        noise_embedding: torch.Tensor,
+        target_hidden_padded: torch.Tensor,
+        position_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        block_size = self.block_size
         hidden = self.head(
             target_hidden=target_hidden_padded,
             noise_embedding=noise_embedding,
@@ -318,10 +321,11 @@ class CompiledDraftHead:
         if real_ctx_len > capacity:
             raise ValueError(f"real_ctx_len={real_ctx_len} exceeds capacity={capacity}")
         target_hidden_padded = target_hidden_padded.to(device=self.device, dtype=self.dtype)
+        noise_embedding = self.noise_embedding(context_ids)
         position_ids = self._position_ids(real_ctx_len, capacity)
         attention_mask = self._attention_mask(real_ctx_len, capacity)
         logits = self._call_for_capacity(capacity)(
-            context_ids,
+            noise_embedding,
             target_hidden_padded,
             position_ids,
             attention_mask,
@@ -408,12 +412,16 @@ class GraphedDraftHead:
     def bucket_for_ctx_len(self, ctx_len: int) -> int:
         return self.compiled.bucket_for_ctx_len(ctx_len)
 
-    def _buffers_for_capacity(self, capacity: int, hidden_dim: int):
+    def _buffers_for_capacity(self, capacity: int, target_hidden_dim: int, noise_hidden_dim: int):
         capacity = int(capacity)
         if capacity not in self._buffers:
             self._buffers[capacity] = {
-                "context_ids": torch.zeros((1, 1), dtype=torch.long, device=self.device),
-                "target_hidden": torch.zeros((1, capacity, hidden_dim), dtype=self.dtype, device=self.device),
+                "noise_embedding": torch.zeros(
+                    (1, self.block_size, noise_hidden_dim),
+                    dtype=self.dtype,
+                    device=self.device,
+                ),
+                "target_hidden": torch.zeros((1, capacity, target_hidden_dim), dtype=self.dtype, device=self.device),
                 "position_ids": torch.zeros(
                     (1, capacity + self.block_size),
                     dtype=torch.long,
@@ -427,15 +435,30 @@ class GraphedDraftHead:
             }
         return self._buffers[capacity]
 
-    def _copy_inputs(self, buffers, context_ids, target_hidden_padded, position_ids, attention_mask):
-        buffers["context_ids"].copy_(context_ids[:, -1:].to(device=self.device))
+    def _copy_inputs(self, buffers, noise_embedding, target_hidden_padded, position_ids, attention_mask):
+        buffers["noise_embedding"].copy_(noise_embedding.to(device=self.device, dtype=self.dtype))
         buffers["target_hidden"].copy_(target_hidden_padded)
         buffers["position_ids"].copy_(position_ids)
         buffers["attention_mask"].copy_(attention_mask)
 
+    def _stage_inputs(self, context_ids: torch.Tensor, target_hidden: torch.Tensor):
+        real_ctx_len = int(target_hidden.shape[1])
+        capacity = self.compiled.bucket_for_ctx_len(real_ctx_len)
+        target_hidden_padded = self.compiled.pad_target_hidden(target_hidden, capacity)
+        noise_embedding = self.compiled.noise_embedding(context_ids)
+        position_ids = self.compiled._position_ids(real_ctx_len, capacity)
+        attention_mask = self.compiled._attention_mask(real_ctx_len, capacity)
+        buffers = self._buffers_for_capacity(
+            capacity,
+            int(target_hidden_padded.shape[2]),
+            int(noise_embedding.shape[2]),
+        )
+        self._copy_inputs(buffers, noise_embedding, target_hidden_padded, position_ids, attention_mask)
+        return capacity, buffers
+
     def _call_compiled(self, capacity: int, buffers):
         return self.compiled._call_for_capacity(capacity)(
-            buffers["context_ids"],
+            buffers["noise_embedding"],
             buffers["target_hidden"],
             buffers["position_ids"],
             buffers["attention_mask"],
@@ -465,17 +488,10 @@ class GraphedDraftHead:
     ) -> torch.Tensor:
         if target_hidden is None:
             raise ValueError("GraphedDraftHead requires target_hidden")
-        real_ctx_len = int(target_hidden.shape[1])
-        capacity = self.compiled.bucket_for_ctx_len(real_ctx_len)
-        target_hidden_padded = self.compiled.pad_target_hidden(target_hidden, capacity)
-        position_ids = self.compiled._position_ids(real_ctx_len, capacity)
-        attention_mask = self.compiled._attention_mask(real_ctx_len, capacity)
-        buffers = self._buffers_for_capacity(capacity, int(target_hidden_padded.shape[2]))
-        self._copy_inputs(buffers, context_ids, target_hidden_padded, position_ids, attention_mask)
+        capacity, buffers = self._stage_inputs(context_ids, target_hidden)
         if capacity not in self.graphs:
             self._capture_bucket(capacity, buffers)
-        else:
-            self.graphs[capacity].replay()
+        self.graphs[capacity].replay()
         return self.outputs[capacity][:, :depth, :]
 
     def propose_logits(
