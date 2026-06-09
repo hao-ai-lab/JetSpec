@@ -35,13 +35,18 @@ def _add_backend(backend: str):
     `test_compiled_verify_lossless._add_compiled_backend`, parameterized by the
     backend string so the logical-KV no-gather variants ride the same fixture)."""
     from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
-    from ptd.nano_vllm.engine import _CUDAGRAPH_BACKENDS
+    from ptd.nano_vllm.engine import _CUDAGRAPH_BACKENDS, _env_flag
 
     def build(model):
         eng = _tiny_nano(model, "triton_paged_tree")
         eng.attn_backend = backend
-        eng.compiled_verify = CompiledVerifyStack(model, block_size=eng.block_size)
-        eng.compiled_ar = CompiledVerifyStack(model, block_size=eng.block_size)
+        eng.fuse_gemms = _env_flag("NANO_FUSE_GEMMS")
+        eng.compiled_verify = CompiledVerifyStack(
+            model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
+        )
+        eng.compiled_ar = CompiledVerifyStack(
+            model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
+        )
         eng._compiled_verify_hidden = {}
         eng._use_cudagraph = backend in _CUDAGRAPH_BACKENDS
         eng._graphed_verify = {}
