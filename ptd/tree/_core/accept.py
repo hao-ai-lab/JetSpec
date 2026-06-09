@@ -42,6 +42,77 @@ def _sample_greedy(logits: torch.Tensor, temperature: float) -> torch.Tensor:
     return sampled.reshape(probs.shape[:-1])
 
 
+def gpu_tree_accept(
+    tree_tokens: torch.Tensor,
+    greedy_targets: torch.Tensor,
+    parent_indices: torch.Tensor,
+    depths: torch.Tensor,
+    max_depth: int | None = None,
+) -> tuple[torch.Tensor, int, torch.Tensor]:
+    """Vectorized greedy tree acceptance over flat tree tensors.
+
+    Args:
+        tree_tokens: (N,) draft token ids, including the root slot.
+        greedy_targets: (N,) or (1, N) precomputed target argmax tokens.
+        parent_indices: (N,) parent node index per node (-1 for root).
+        depths: (N,) depth per node, with root depth 0.
+        max_depth: optional upper bound used for path extraction.
+
+    Returns:
+        accepted_path: LongTensor (L,) root-inclusive accepted node indices.
+        accepted_len: Python int accepted draft-token count; this is the
+            single permitted host sync.
+        correction: 0-d LongTensor target argmax at the last accepted node.
+    """
+    device = tree_tokens.device
+    num_nodes = tree_tokens.shape[0]
+    greedy_targets = greedy_targets.squeeze(0) if greedy_targets.dim() == 2 else greedy_targets
+
+    if num_nodes <= 1:
+        return torch.zeros(1, dtype=torch.long, device=device), 0, greedy_targets[0]
+
+    if max_depth is None:
+        max_depth = num_nodes - 1
+
+    node_ids = torch.arange(num_nodes, device=device)
+    safe_parents = parent_indices.clamp(min=0, max=num_nodes - 1)
+    valid_parent = (parent_indices >= 0) & (parent_indices < num_nodes)
+
+    same_parent = parent_indices[:, None] == parent_indices[None, :]
+    same_token = tree_tokens[:, None] == tree_tokens[None, :]
+    later_node = node_ids[None, :] > node_ids[:, None]
+    overwritten = (same_parent & same_token & later_node).any(dim=1)
+
+    match = torch.ones(num_nodes, dtype=torch.bool, device=device)
+    match[1:] = (
+        valid_parent[1:]
+        & ~overwritten[1:]
+        & (tree_tokens[1:] == greedy_targets[safe_parents[1:]])
+    )
+
+    prefix_match = match.clone()
+    jump = safe_parents.clone()
+    for _ in range(max(1, max_depth.bit_length())):
+        prefix_match = prefix_match & prefix_match[jump]
+        jump = jump[jump]
+
+    score = torch.where(prefix_match, depths, torch.full_like(depths, -1))
+    best_node = torch.argmax(score)
+    accepted_depth = depths[best_node]
+    correction = greedy_targets[best_node]
+
+    path_buf = torch.zeros(max_depth + 1, dtype=torch.long, device=device)
+    current = best_node.unsqueeze(0)
+    for depth in range(max_depth, -1, -1):
+        path_buf[depth : depth + 1] = current
+        current = safe_parents[current]
+
+    accepted_len = int(accepted_depth.item())
+    valid_start = max_depth - accepted_len
+    accepted_path = path_buf[valid_start : max_depth + 1].contiguous()
+    return accepted_path, accepted_len, correction
+
+
 def tree_accept(
     tree: DraftTree,
     target_logits: torch.Tensor,  # (1, N, vocab_size)
