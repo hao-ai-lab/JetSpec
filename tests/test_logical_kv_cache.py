@@ -47,15 +47,15 @@ def test_reserve_logical_slots_is_block_aligned_and_invisible_to_seq_tables():
 
     node_blks, round_blocks = cache.reserve_logical_slots(6)
 
-    assert node_blks.shape == (3, 6)
+    # LAYER-SHARED contract: one (n_nodes,) row + one flat id list serve every
+    # layer (each layer writes the same ids in its own pool tensor).
+    assert node_blks.shape == (6,)
     assert node_blks.dtype == torch.int64
-    assert len(round_blocks) == 3
-    assert all(len(blocks) == 2 for blocks in round_blocks)
-    for layer_idx, blocks in enumerate(round_blocks):
-        expected = torch.tensor(blocks, dtype=torch.int64).repeat_interleave(4)[:6]
-        assert torch.equal(node_blks[layer_idx].cpu(), expected)
-        assert torch.equal(node_blks[layer_idx, 0:4], node_blks[layer_idx, 0].expand(4))
-        assert node_blks[layer_idx, 4] == node_blks[layer_idx, 5]
+    assert len(round_blocks) == 2
+    expected = torch.tensor(round_blocks, dtype=torch.int64).repeat_interleave(4)[:6]
+    assert torch.equal(node_blks.cpu(), expected)
+    assert torch.equal(node_blks[0:4], node_blks[0].expand(4))
+    assert node_blks[4] == node_blks[5]
 
     assert cache.block_table == before_tables
     assert cache._seq_filled[cache._default_seq_id] == before_filled
@@ -65,7 +65,7 @@ def test_reserve_logical_slots_is_block_aligned_and_invisible_to_seq_tables():
 def test_release_round_blocks_reuses_freed_logical_blocks():
     cache = _seed_cache(num_layers=2, prompt_len=4, block_size=4)
     _, round_blocks = cache.reserve_logical_slots(5)
-    released = sorted(block for blocks in round_blocks for block in blocks)
+    released = sorted(round_blocks)
 
     cache.release_round_blocks(round_blocks, freed_idx=[0, 1])
     reused = sorted(int(block) for block in cache.allocate(len(released)).tolist())
@@ -98,18 +98,20 @@ def test_reserved_capacity_covers_worst_case_logical_decode_without_growth():
     prompt_len = 5
     max_new_tokens = 6
     bmax = 8
-    total_tokens = prompt_len + block_size * (max_new_tokens + block_size) + bmax + block_size
+    extra_shared = max_new_tokens + block_size + (bmax + block_size - 1) // block_size + 1
     cache = _seed_cache(num_layers=2, prompt_len=prompt_len, block_size=block_size)
-    cache.reserve_capacity(total_tokens=total_tokens, block_table_tokens=prompt_len + max_new_tokens + bmax)
+    cache.reserve_capacity(total_tokens=prompt_len,
+                           block_table_tokens=prompt_len + max_new_tokens + bmax,
+                           extra_shared_blocks=extra_shared)
     cache.freeze_pool()
 
-    # Worst-case retained-fragment pattern: each round keeps one block per layer and
+    # Worst-case retained-fragment pattern: each round keeps one SHARED block and
     # releases the rest. A frozen pool must have been sized so no late growth occurs.
     for _ in range(max_new_tokens + block_size):
         _, round_blocks = cache.reserve_logical_slots(bmax)
         cache.release_round_blocks(round_blocks, freed_idx=[1])
 
-    assert cache._num_blocks == 2 * (cache._blocks_for(total_tokens) + 1)
+    assert cache._num_blocks == 2 * (cache._blocks_for(prompt_len) + 1) + extra_shared
 
 
 def test_slot_commit_overlap_uses_copy_before_write_semantics():

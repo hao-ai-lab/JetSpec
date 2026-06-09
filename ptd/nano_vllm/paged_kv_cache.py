@@ -168,7 +168,8 @@ class PagedKVCache(Cache):
                 [self._vpool[layer_idx], torch.zeros(shape, dtype=self.dtype, device=self.device)], dim=0)
         self._free_blocks.extend(range(old, self._num_blocks))
 
-    def reserve_capacity(self, total_tokens: int, block_table_tokens: Optional[int] = None) -> None:
+    def reserve_capacity(self, total_tokens: int, block_table_tokens: Optional[int] = None,
+                         extra_shared_blocks: int = 0) -> None:
         """Pre-grow the (single-seq) pool ONCE to hold `total_tokens`, so the pool
         tensors' block-count dim is shape-stable for the rest of the run.
 
@@ -194,7 +195,12 @@ class PagedKVCache(Cache):
 
         `block_table_tokens` decouples the kernel-visible block-table width from
         the larger physical pool reservation used by logical-KV no-gather decode.
-        Leaving it `None` preserves the legacy one-argument behavior exactly."""
+        Leaving it `None` preserves the legacy one-argument behavior exactly.
+
+        `extra_shared_blocks` adds block IDS that are NOT multiplied by num_layers:
+        the logical-KV round/retained blocks are layer-shared (one id serves every
+        layer's pool tensor — see `reserve_logical_slots`), so sizing them through
+        `total_tokens` would over-reserve ~num_layers-fold (the G2 OOM)."""
         if not self._is_single_seq or self._num_heads is None:
             return
         block_table_tokens = total_tokens if block_table_tokens is None else block_table_tokens
@@ -204,7 +210,7 @@ class PagedKVCache(Cache):
         # Remember the per-layer reservation so the engine can pin the compiled stack's
         # block_table column count to it (A3-BUCKET shape stability). Never shrinks.
         self._reserved_per_layer = max(getattr(self, "_reserved_per_layer", 0), table_per_layer)
-        need_blocks = num_layers * per_layer
+        need_blocks = num_layers * per_layer + extra_shared_blocks
         if need_blocks > self._num_blocks:
             self._grow_pool(need_blocks - self._num_blocks)
 
@@ -452,43 +458,40 @@ class PagedKVCache(Cache):
         seq_lens_k = torch.tensor([past_len + n_nodes], device=dev, dtype=torch.int32)
         return block_tables, node_blks, node_offs, seq_lens_k
 
-    def reserve_logical_slots(self, n_nodes: int) -> tuple[torch.Tensor, list[list[int]]]:
-        """Reserve block-aligned, per-layer physical slots for a logical-KV round.
+    def reserve_logical_slots(self, n_nodes: int) -> tuple[torch.Tensor, list[int]]:
+        """Reserve block-aligned, LAYER-SHARED physical slots for a logical-KV round.
 
         Unlike `reserve_tree_slots`, this does not extend block tables, does not
         incref blocks, and does not update `_seq_filled`: the engine owns these
-        transient round blocks and releases rejected block groups explicitly."""
+        transient round blocks and releases rejected block groups explicitly.
+
+        LAYER-SHARED is load-bearing for memory: every layer writes the SAME block
+        ids (each in its own pool tensor — no conflict; per-layer ids are only
+        needed by append/gather's independent per-layer fill states, which this
+        path bypasses). A block id's bytes exist in every layer's pool tensor, so
+        per-layer ids would multiply the retained-block id count — and therefore
+        the no-compaction pool reservation — by num_layers (~36x): O(gen_len *
+        layers^2) bytes ≈ 174 GB at max_new=2048, the G2 OOM. Shared ids keep it
+        O(gen_len * layers) ≈ a few GB. Returns (node_blks (n_nodes,) GPU,
+        round_blocks list[m] host ids shared by all layers)."""
         dev = self.device
-        layer_ids = sorted(self._kpool.keys())
-        per_layer = self._blocks_for(n_nodes)
-        total = per_layer * len(layer_ids)
-        all_new = [int(b) for b in self.allocate(total).tolist()] if total else []
-        rows, round_blocks = [], []
-        cursor = 0
-        for _layer_idx in layer_ids:
-            blocks = all_new[cursor:cursor + per_layer]
-            cursor += per_layer
-            round_blocks.append(blocks)
-            row = torch.tensor(blocks, device=dev, dtype=torch.long).repeat_interleave(self._block_size)[:n_nodes]
-            rows.append(row)
-        if not rows:
-            node_blks = torch.empty((0, n_nodes), dtype=torch.long, device=dev)
-        else:
-            node_blks = torch.stack(rows, dim=0)
+        m = self._blocks_for(n_nodes)
+        round_blocks = [int(b) for b in self.allocate(m).tolist()] if m else []
+        node_blks = torch.tensor(round_blocks, device=dev, dtype=torch.long) \
+            .repeat_interleave(self._block_size)[:n_nodes]
         return node_blks, round_blocks
 
-    def release_round_blocks(self, round_blocks: list[list[int]], freed_idx: list[int]) -> None:
+    def release_round_blocks(self, round_blocks: list[int], freed_idx: list[int]) -> None:
         """Return rejected logical-KV round blocks directly to the free pool."""
         freed = []
-        for blocks in round_blocks:
-            for idx in freed_idx:
-                if idx < 0 or idx >= len(blocks):
-                    raise IndexError(f"freed_idx {idx} out of range for {len(blocks)} blocks")
-                block_id = int(blocks[idx])
-                if block_id in self._block_refcounts:
-                    raise RuntimeError(f"logical round block {block_id} was unexpectedly refcounted")
-                if block_id not in self._free_blocks:
-                    freed.append(block_id)
+        for idx in freed_idx:
+            if idx < 0 or idx >= len(round_blocks):
+                raise IndexError(f"freed_idx {idx} out of range for {len(round_blocks)} blocks")
+            block_id = int(round_blocks[idx])
+            if block_id in self._block_refcounts:
+                raise RuntimeError(f"logical round block {block_id} was unexpectedly refcounted")
+            if block_id not in self._free_blocks:
+                freed.append(block_id)
         self._free_blocks = sorted(set(self._free_blocks).union(freed))
 
     def prefix_block_tables(self, width: int, seq_id: Optional[int] = None) -> list[torch.Tensor]:

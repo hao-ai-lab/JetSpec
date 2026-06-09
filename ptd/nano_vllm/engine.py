@@ -477,10 +477,17 @@ class NanoEngine:
                 # later silent `_grow_pool` (a torch.cat = pool relocation under live
                 # CUDA graphs) into a loud error.
                 prompt_len = committed.shape[1]
+                # Pool = the prefix (per-layer ids, via total_tokens) + the no-compaction
+                # worst case as LAYER-SHARED ids (every committed token pinning its own
+                # retained block, + one in-flight round) — shared because
+                # reserve_logical_slots hands every layer the same block ids; sizing
+                # this through total_tokens would multiply it ~num_layers-fold (174GB
+                # at max_new=2048, the G2 OOM). Width keeps the kernel-visible bound.
                 cache.reserve_capacity(
-                    prompt_len + self.block_size * (sp.max_new_tokens + block_size)
-                    + Bmax + self.block_size,
+                    prompt_len,
                     block_table_tokens=prompt_len + sp.max_new_tokens + Bmax,
+                    extra_shared_blocks=(sp.max_new_tokens + block_size
+                                         + (Bmax + self.block_size - 1) // self.block_size + 1),
                 )
                 cache.freeze_pool()
                 nlayers_lk = self.model.config.num_hidden_layers
@@ -488,13 +495,14 @@ class NanoEngine:
                 # Address-stable for the decode: graphs/compiled calls read these in
                 # place (the pools' "REUSED IN PLACE" contract); the engine mutates
                 # them between replays. Window = committed-after-prompt + this round's
-                # B in-flight nodes; starts is write-once at prompt_len.
-                slots_buf = torch.zeros((nlayers_lk, max_slots), dtype=torch.long,
+                # B in-flight nodes; starts is write-once at prompt_len. ONE row shared
+                # by all layers (layer-shared slot ids).
+                slots_buf = torch.zeros((1, max_slots), dtype=torch.long,
                                         device=self.device)
                 starts_buf = torch.tensor([prompt_len], dtype=torch.int32,
                                           device=self.device)
                 lens_buf = torch.zeros((1,), dtype=torch.int32, device=self.device)
-                slots_rows = [slots_buf[i].view(1, -1) for i in range(nlayers_lk)]
+                slots_rows = [slots_buf] * nlayers_lk
                 wlen = 0
                 bts0 = cache.prefix_block_tables(cache.reserved_block_table_width)
                 node_offs0 = {}   # bucket B -> (B,) arange % cache-block-size
@@ -578,8 +586,8 @@ class NanoEngine:
                             node_offs0[B] = offs
                         slots_buf[:, wlen:wlen + B] = nb_lk * self.block_size + offs
                         lens_buf.fill_(wlen + B)
-                        node_blks = [nb_lk[i] for i in range(nb_lk.shape[0])]
-                        node_offs = [offs] * len(node_blks)
+                        node_blks = [nb_lk] * len(bts0)   # layer-shared ids, one row
+                        node_offs = [offs] * len(bts0)
                         bts = bts0
                         slk = torch.tensor([past_len + B], device=self.device,
                                            dtype=torch.int32)
@@ -700,7 +708,7 @@ class NanoEngine:
                 # DtoH, same data the round syncs anyway.
                 path_list = path_t.tolist()
                 kept_j = {p // self.block_size for p in path_list}
-                freed_idx = [j for j in range(len(round_blocks[0]))
+                freed_idx = [j for j in range(len(round_blocks))
                              if j not in kept_j]
                 cache.release_round_blocks(round_blocks, freed_idx)
                 wlen += len(path_list)
