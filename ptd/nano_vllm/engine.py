@@ -81,6 +81,10 @@ def _bucket_for_n(n: int) -> int:
     return ((n + step - 1) // step) * step
 
 
+def _round_session_capacity(prompt_len: int) -> int:
+    return ((int(prompt_len) + 255) // 256) * 256
+
+
 class _LogicalRoundBuffers:
     """Per-decode logical-KV staging buffers for round metadata.
 
@@ -110,6 +114,12 @@ class _LogicalRoundBuffers:
 
     def logical_bind(self):
         return self.slot_rows, self.starts, self.lens
+
+    def reset(self, prompt_len: int):
+        self.starts.fill_(int(prompt_len))
+        self.lens.zero_()
+        self.seq_lens_k.zero_()
+        self.slots.zero_()
 
     def node_offsets(self, B: int):
         B = int(B)
@@ -237,6 +247,7 @@ class NanoEngine:
             self.compiled_ar = CompiledVerifyStack(self.model, block_size=self.block_size)
             self._use_cudagraph = attn_backend in _CUDAGRAPH_BACKENDS
             self._graphed_verify = {}                # (need_hidden, tap_set) -> GraphedVerify
+        self._tree_session = None
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -482,7 +493,8 @@ class NanoEngine:
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
-                      profile_table: dict = None, tree_diag: bool = False) -> dict:
+                      profile_table: dict = None, tree_diag: bool = False,
+                      session: bool = False, session_prompt_capacity: int = None) -> dict:
         """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
@@ -533,11 +545,78 @@ class NanoEngine:
         kernel = backend in _KERNEL_BACKENDS
         compiled = backend in _COMPILED_BACKENDS
         logical_kv = backend in _LOGICAL_KV_BACKENDS   # L5 no-gather (compiled-only)
+        Bmax = _bucket_for_n(budget)
+
+        tree_session = None
+        session_is_new = False
+        if session:
+            session_tag = {
+                "block_size": int(block_size),
+                "cache_block_size": int(self.block_size),
+                "dtype": str(self.dtype),
+                "need_hidden": bool(need_hidden),
+                "budget_bucket": int(Bmax),
+                "max_new_tokens": int(sp.max_new_tokens),
+                "attn_backend": backend,
+                "logical_kv": bool(logical_kv),
+            }
+            existing_session = getattr(self, "_tree_session", None)
+            if existing_session is None:
+                prompt_capacity = (
+                    _round_session_capacity(prompt_len)
+                    if session_prompt_capacity is None
+                    else int(session_prompt_capacity)
+                )
+                if prompt_capacity <= 0:
+                    raise ValueError(
+                        f"session_prompt_capacity must be positive; got {prompt_capacity}"
+                    )
+                if prompt_len > prompt_capacity:
+                    raise ValueError(
+                        f"tree session prompt_len mismatch: prompt_len={prompt_len} > "
+                        f"session_prompt_capacity={prompt_capacity}"
+                    )
+                tree_session = {
+                    "prompt_capacity": prompt_capacity,
+                    "tag": session_tag,
+                    "cache": None,
+                    "round_bufs": None,
+                }
+                session_is_new = True
+            else:
+                prompt_capacity = int(existing_session["prompt_capacity"])
+                mismatches = []
+                if session_prompt_capacity is not None:
+                    requested_capacity = int(session_prompt_capacity)
+                    if requested_capacity != prompt_capacity:
+                        mismatches.append(
+                            f"session_prompt_capacity mismatch: expected "
+                            f"{prompt_capacity}, got {requested_capacity}"
+                        )
+                if prompt_len > prompt_capacity:
+                    mismatches.append(
+                        f"prompt_len mismatch: prompt_len={prompt_len} > "
+                        f"session_prompt_capacity={prompt_capacity}"
+                    )
+                stored_tag = existing_session["tag"]
+                for name, value in session_tag.items():
+                    expected = stored_tag.get(name)
+                    if expected != value:
+                        mismatches.append(
+                            f"{name} mismatch: expected {expected}, got {value}"
+                        )
+                if mismatches:
+                    raise ValueError("tree session mismatch: " + "; ".join(mismatches))
+                tree_session = existing_session
 
         # --- prefill: populate the persistent paged cache with the prompt's KV ---
-        cache = PagedKVCache(
-            block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
-        )
+        if session and not session_is_new:
+            cache = tree_session["cache"]
+            cache.reset()
+        else:
+            cache = PagedKVCache(
+                block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
+            )
         if kernel:
             # Prefill runs on the kernel too (single seq 0, qq_bias=None -> pure
             # causal over the prompt: context_len = seq_len - S = 0).
@@ -566,7 +645,7 @@ class NanoEngine:
             target_hidden_buf[:, :target_hidden_len, :].copy_(full_hidden)
             target_hidden = target_hidden_buf[:, :target_hidden_len, :]
         if compiled:
-            if getattr(self, "_use_cudagraph", False) and _bucket_for_n(budget) > _TREE_BUCKETS[-1]:
+            if getattr(self, "_use_cudagraph", False) and Bmax > _TREE_BUCKETS[-1]:
                 # A3-GRAPH's GraphedVerify staging buffers are sized to the largest
                 # STATIC bucket (`_TREE_BUCKETS[-1]`); a budget whose bucket exceeds it
                 # can't be replayed (replay would copy an oversized tree into the fixed
@@ -587,7 +666,9 @@ class NanoEngine:
             # raises mid-decode). After this only the `seq_lens_k` value changes per round;
             # every pool/block-table shape stays fixed -> recompiles stop after the bucket
             # set is traced.
-            Bmax = _bucket_for_n(budget)
+        if compiled or session:
+            reserve_prompt_len = tree_session["prompt_capacity"] if session else prompt_len
+            should_reserve = (not session) or session_is_new
             if logical_kv:
                 # L5 no-gather: without gather's compaction, every committed token can
                 # in the worst case pin its own retained block, so the POOL must be
@@ -603,13 +684,14 @@ class NanoEngine:
                 # reserve_logical_slots hands every layer the same block ids; sizing
                 # this through total_tokens would multiply it ~num_layers-fold (174GB
                 # at max_new=2048, the G2 OOM). Width keeps the kernel-visible bound.
-                cache.reserve_capacity(
-                    prompt_len,
-                    block_table_tokens=prompt_len + sp.max_new_tokens + Bmax,
-                    extra_shared_blocks=(sp.max_new_tokens + block_size
-                                         + (Bmax + self.block_size - 1) // self.block_size + 1),
-                )
-                cache.freeze_pool()
+                if should_reserve:
+                    cache.reserve_capacity(
+                        reserve_prompt_len,
+                        block_table_tokens=reserve_prompt_len + sp.max_new_tokens + Bmax,
+                        extra_shared_blocks=(sp.max_new_tokens + block_size
+                                             + (Bmax + self.block_size - 1) // self.block_size + 1),
+                    )
+                    cache.freeze_pool()
                 nlayers_lk = self.model.config.num_hidden_layers
                 max_slots = sp.max_new_tokens + block_size + Bmax
                 # Address-stable for the decode: graphs/compiled calls read these in
@@ -617,11 +699,17 @@ class NanoEngine:
                 # them between replays. Window = committed-after-prompt + this round's
                 # B in-flight nodes; starts is write-once at prompt_len. ONE row shared
                 # by all layers (layer-shared slot ids).
-                round_bufs = _LogicalRoundBuffers(
-                    max_slots=max_slots, prompt_len=prompt_len, nlayers=nlayers_lk,
-                    hidden_size=self.model.config.hidden_size, block_size=self.block_size,
-                    device=self.device, dtype=self.dtype,
-                )
+                if session and not session_is_new:
+                    round_bufs = tree_session["round_bufs"]
+                    round_bufs.reset(prompt_len)
+                else:
+                    round_bufs = _LogicalRoundBuffers(
+                        max_slots=max_slots, prompt_len=prompt_len, nlayers=nlayers_lk,
+                        hidden_size=self.model.config.hidden_size, block_size=self.block_size,
+                        device=self.device, dtype=self.dtype,
+                    )
+                    if session:
+                        tree_session["round_bufs"] = round_bufs
                 slots_rows, starts_buf, lens_buf = round_bufs.logical_bind()
                 wlen = 0
                 bts0 = cache.prefix_block_tables(cache.reserved_block_table_width)
@@ -629,7 +717,13 @@ class NanoEngine:
                 k_pools0 = [cache.pool(i)[0] for i in range(nlayers_lk)]
                 v_pools0 = [cache.pool(i)[1] for i in range(nlayers_lk)]
             else:
-                cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + Bmax)
+                if should_reserve:
+                    cache.reserve_capacity(reserve_prompt_len + sp.max_new_tokens + Bmax)
+                if session:
+                    cache.freeze_pool()
+        if session and session_is_new:
+            tree_session["cache"] = cache
+            self._tree_session = tree_session
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed_buf[:, committed_len:committed_len + 1].copy_(first_tok.view(1, 1))
