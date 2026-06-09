@@ -115,6 +115,114 @@ def format_metrics_report(
     return "\n".join(lines) + "\n"
 
 
+class DraftRoundTopKRecorder:
+    def __init__(self, drafter, max_rounds: int):
+        self.drafter = drafter
+        self.max_rounds = int(max_rounds)
+        self.records: list[dict] = []
+
+    def __getattr__(self, name):
+        return getattr(self.drafter, name)
+
+    def reset(self):
+        self.records.clear()
+
+    def propose_logits(
+        self,
+        context_ids: torch.Tensor,
+        depth: int,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        logits = self.drafter.propose_logits(
+            context_ids,
+            depth,
+            target_hidden=target_hidden,
+            **kwargs,
+        )
+        if len(self.records) < self.max_rounds:
+            # generate_tree passes the same committed root to the tree builder
+            # immediately after this call, so the wrapper can record it exactly.
+            root_token = int(context_ids[0, -1].detach().cpu().item())
+            self.records.append({
+                "root_token": root_token,
+                "draft_logits": logits.detach().float().cpu().clone(),
+            })
+        return logits
+
+
+def format_draft_round_dump(
+    records: list[dict],
+    accept_lengths: list[int],
+    *,
+    tree_width: int,
+) -> str:
+    lines = []
+    for round_index, record in enumerate(records):
+        accepted_len = int(accept_lengths[round_index])
+        logits = record["draft_logits"]
+        logprobs = torch.log_softmax(logits, dim=-1)
+        topk_lp, topk_tok = torch.topk(logprobs, tree_width, dim=-1)
+        lines.append(
+            f"[ROUND {round_index}] root_token={record['root_token']} "
+            f"accepted_len={accepted_len}"
+        )
+        for depth in range(logits.shape[1]):
+            toks = ",".join(str(int(v)) for v in topk_tok[0, depth].tolist())
+            lines.append(f"[ROUND {round_index}] topk_tok[{depth}]={toks}")
+        for depth in range(logits.shape[1]):
+            vals = ",".join(f"{float(v):.6f}" for v in topk_lp[0, depth].tolist())
+            lines.append(f"[ROUND {round_index}] topk_lp[{depth}]={vals}")
+    return ("\n".join(lines) + "\n") if lines else ""
+
+
+def run_tree_diag_measurement(
+    eng,
+    prompts: list,
+    drafter,
+    tree_kwargs: dict,
+    *,
+    block_size: int,
+    tree_width: int,
+    dump_first_rounds: int = 0,
+) -> tuple[dict, str]:
+    all_accept_lengths: list[int] = []
+    tree_nodes_per_depth = [0] * block_size
+    output_tokens = 0
+    dump_text = ""
+    recorder = (
+        DraftRoundTopKRecorder(drafter, dump_first_rounds)
+        if dump_first_rounds > 0 else None
+    )
+
+    for prompt_index, prompt in enumerate(prompts):
+        prompt_drafter = drafter
+        if prompt_index == 0 and recorder is not None:
+            recorder.reset()
+            prompt_drafter = recorder
+        out = eng.generate_tree(prompt, prompt_drafter, **tree_kwargs)
+        output_tokens += len(out["token_ids"])
+        all_accept_lengths.extend(out["accept_lengths"])
+        for depth, count in enumerate(out["tree_nodes_per_depth"]):
+            if depth < block_size:
+                tree_nodes_per_depth[depth] += int(count)
+        if prompt_index == 0 and recorder is not None:
+            dump_text = format_draft_round_dump(
+                recorder.records,
+                out["accept_lengths"],
+                tree_width=tree_width,
+            )
+
+    metrics = summarize_tree_diag(
+        accept_lengths=all_accept_lengths,
+        tree_nodes_per_depth=tree_nodes_per_depth,
+        output_tokens=output_tokens,
+        num_samples=len(prompts),
+        block_size=block_size,
+    )
+    return metrics, dump_text
+
+
 def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[str]:
     from datasets import load_dataset
 
@@ -172,6 +280,8 @@ def parse_args():
                     help="reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
                     choices=["gsm8k", "math500", "humaneval", "aime"])
+    ap.add_argument("--dump-first-rounds", type=int, default=0,
+                    help="dump drafter top-k tokens/logprobs for the first K rounds of the first prompt")
     return ap.parse_args()
 
 
@@ -209,26 +319,19 @@ def main():
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
     torch.cuda.synchronize()
 
-    all_accept_lengths: list[int] = []
-    tree_nodes_per_depth = [0] * block_size
-    output_tokens = 0
-    for prompt in prompts:
-        out = eng.generate_tree(prompt, drafter, **tree_kwargs)
-        output_tokens += len(out["token_ids"])
-        all_accept_lengths.extend(out["accept_lengths"])
-        for depth, count in enumerate(out["tree_nodes_per_depth"]):
-            if depth < block_size:
-                tree_nodes_per_depth[depth] += int(count)
-    torch.cuda.synchronize()
-
-    metrics = summarize_tree_diag(
-        accept_lengths=all_accept_lengths,
-        tree_nodes_per_depth=tree_nodes_per_depth,
-        output_tokens=output_tokens,
-        num_samples=len(prompts),
+    metrics, dump_text = run_tree_diag_measurement(
+        eng,
+        prompts,
+        drafter,
+        tree_kwargs,
         block_size=block_size,
+        tree_width=args.tree_width,
+        dump_first_rounds=args.dump_first_rounds,
     )
+    torch.cuda.synchronize()
     metrics["prompt_set"] = args.prompt_set
+    if dump_text:
+        print(dump_text, end="")
     print(format_metrics_report(
         metrics,
         attention_backend=backend,

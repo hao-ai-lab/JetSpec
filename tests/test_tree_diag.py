@@ -5,6 +5,23 @@ from ptd.draft import RandomTreeDrafter
 from tests.test_nano_tree import PROMPT, SP, _tiny_model, _tiny_nano
 
 
+class _DeterministicTreeDrafter:
+    def __init__(self, vocab_size: int):
+        self.vocab_size = vocab_size
+        self.calls = []
+
+    def propose_logits(self, context_ids, depth, target_hidden=None, **kwargs):
+        call_index = len(self.calls)
+        logits = torch.arange(
+            depth * self.vocab_size,
+            dtype=torch.float32,
+            device=context_ids.device,
+        ).view(1, depth, self.vocab_size)
+        logits = logits + (call_index * 100.0)
+        self.calls.append(logits.detach().cpu().clone())
+        return logits
+
+
 def test_tree_diag_metrics_formula_and_report_format():
     from bench.tree_diag import format_metrics_report, summarize_tree_diag
 
@@ -82,3 +99,65 @@ def test_generate_tree_diag_flag_preserves_tokens_and_counts_tree_depths():
     assert len(diag["tree_nodes_per_depth"]) == 4
     assert diag["tree_nodes_per_depth"][0] == diag["rounds"]
     assert sum(diag["tree_nodes_per_depth"]) == sum(diag["tree_sizes"])
+
+
+def test_dump_first_rounds_records_drafter_topk_without_changing_metrics():
+    from bench.tree_diag import run_tree_diag_measurement
+
+    model = _tiny_model(0)
+    tree_kwargs = dict(
+        block_size=3,
+        tree_width=2,
+        budget=7,
+        sampling_params=SP,
+        return_stats=True,
+        tree_diag=True,
+    )
+
+    plain_drafter = _DeterministicTreeDrafter(model.config.vocab_size)
+    plain_metrics, plain_dump = run_tree_diag_measurement(
+        _tiny_nano(model),
+        [PROMPT],
+        plain_drafter,
+        tree_kwargs,
+        block_size=3,
+        tree_width=2,
+        dump_first_rounds=0,
+    )
+
+    dump_drafter = _DeterministicTreeDrafter(model.config.vocab_size)
+    dump_metrics, dump_text = run_tree_diag_measurement(
+        _tiny_nano(model),
+        [PROMPT],
+        dump_drafter,
+        tree_kwargs,
+        block_size=3,
+        tree_width=2,
+        dump_first_rounds=2,
+    )
+
+    assert plain_dump == ""
+    assert dump_metrics == plain_metrics
+    assert dump_text.count("[ROUND 0] root_token=") == 1
+    assert dump_text.count("[ROUND 1] root_token=") == 1
+    assert "[ROUND 2]" not in dump_text
+
+    lines = dump_text.strip().splitlines()
+    depth_count = dump_drafter.calls[0].shape[1]
+    per_round_lines = 1 + depth_count + depth_count
+    assert len(lines) == 2 * per_round_lines
+    for round_index in range(2):
+        base = round_index * per_round_lines
+        assert lines[base].startswith(f"[ROUND {round_index}] root_token=")
+        assert " accepted_len=" in lines[base]
+        logprobs = torch.log_softmax(dump_drafter.calls[round_index], dim=-1)
+        topk_lp, topk_tok = torch.topk(logprobs, 2, dim=-1)
+        for depth in range(depth_count):
+            tok_values = ",".join(str(int(v)) for v in topk_tok[0, depth].tolist())
+            lp_values = ",".join(f"{float(v):.6f}" for v in topk_lp[0, depth].tolist())
+            assert lines[base + 1 + depth] == (
+                f"[ROUND {round_index}] topk_tok[{depth}]={tok_values}"
+            )
+            assert lines[base + 1 + depth_count + depth] == (
+                f"[ROUND {round_index}] topk_lp[{depth}]={lp_values}"
+            )
