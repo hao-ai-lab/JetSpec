@@ -482,7 +482,7 @@ class NanoEngine:
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
-                      profile_table: dict = None) -> dict:
+                      profile_table: dict = None, tree_diag: bool = False) -> dict:
         """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
@@ -517,6 +517,10 @@ class NanoEngine:
         need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
+        tree_diag_bins = (
+            torch.zeros(block_size, dtype=torch.long, device=self.device)
+            if tree_diag else None
+        )
         target_hidden = None
 
         backend = getattr(self, "attn_backend", "sdpa")
@@ -616,7 +620,14 @@ class NanoEngine:
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
-            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+            out = {
+                "token_ids": new_ids,
+                "text": self.tokenizer.decode(new_ids, skip_special_tokens=True),
+                "tpf": 0.0,
+            }
+            if tree_diag_bins is not None:
+                out["tree_nodes_per_depth"] = tree_diag_bins.cpu().tolist()
+            return out
 
         # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
         # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
@@ -626,6 +637,8 @@ class NanoEngine:
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
+            if tree_diag_bins is not None:
+                tree_diag_bins += torch.bincount(tree.depth, minlength=block_size)[:block_size]
             # logical path: the cache's seq bookkeeping stays frozen at prompt_len
             # (no append/gather advances it); the engine-tracked window length is
             # the source of truth. Same VALUE as the gather path's get_seq_length()
@@ -858,6 +871,8 @@ class NanoEngine:
             out["accept_lengths"] = accept_lengths   # per-round (acc+1)
             out["tree_sizes"] = tree_sizes           # per-round node count
             out["rounds"] = rounds
+        if tree_diag_bins is not None:
+            out["tree_nodes_per_depth"] = tree_diag_bins.cpu().tolist()
         return out
 
     @torch.inference_mode()
