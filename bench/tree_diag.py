@@ -146,6 +146,8 @@ def parse_args():
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", type=str, default="crossproduct")
     ap.add_argument("--drafter", choices=("eager", "compiled", "graphed"), default="eager")
+    ap.add_argument("--session", action="store_true",
+                    help="reuse the tree session (pool + captured graphs) across prompts")
     return ap.parse_args()
 
 
@@ -173,6 +175,8 @@ def main():
         return_stats=True,
         tree_diag=True,
     )
+    if args.session:
+        tree_kwargs["session"] = True
 
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
