@@ -81,6 +81,107 @@ def _bucket_for_n(n: int) -> int:
     return ((n + step - 1) // step) * step
 
 
+class _LogicalRoundBuffers:
+    """Per-decode logical-KV staging buffers for round metadata.
+
+    The logical-KV path mutates these buffers in place between verify calls. They
+    are intentionally engine-local: legacy gather backends keep using the old
+    allocation path and remain byte-identical oracles.
+    """
+
+    def __init__(self, *, max_slots: int, prompt_len: int, nlayers: int,
+                 hidden_size: int, block_size: int, device, dtype):
+        self.device = torch.device(device)
+        self.dtype = dtype
+        self.block_size = int(block_size)
+        self.hidden_size = int(hidden_size)
+        self.slots = torch.zeros((1, max_slots), dtype=torch.long, device=self.device)
+        self.starts = torch.tensor([prompt_len], dtype=torch.int32, device=self.device)
+        self.lens = torch.zeros((1,), dtype=torch.int32, device=self.device)
+        self.slot_rows = [self.slots] * int(nlayers)
+        self.seq_lens_k = torch.zeros((1,), dtype=torch.int32, device=self.device)
+        self._seq_step = {}
+        self._pos = {}
+        self._qq_bias = {}
+        self._dummy = {}
+        self._cu = {}
+        self._node_offsets = {}
+        self._slot_stage = {}
+
+    def logical_bind(self):
+        return self.slot_rows, self.starts, self.lens
+
+    def node_offsets(self, B: int):
+        B = int(B)
+        offs = self._node_offsets.get(B)
+        if offs is None:
+            offs = torch.arange(B, device=self.device, dtype=torch.long) % self.block_size
+            self._node_offsets[B] = offs
+        return offs
+
+    def stage_slots(self, wlen: int, node_blks: torch.Tensor, B: int):
+        B = int(B)
+        offs = self.node_offsets(B)
+        slot_stage = self._slot_stage.get(B)
+        if slot_stage is None:
+            slot_stage = torch.empty((B,), dtype=torch.long, device=self.device)
+            self._slot_stage[B] = slot_stage
+        slot_stage.copy_(node_blks[:B])
+        slot_stage.mul_(self.block_size)
+        slot_stage.add_(offs)
+        self.slots[:, wlen:wlen + B].copy_(slot_stage.view(1, B))
+
+    def fill_lengths(self, wlen: int, past_len: int, B: int):
+        self.lens.fill_(int(wlen) + int(B))
+        self.seq_lens_k.fill_(int(past_len) + int(B))
+        return self.seq_lens_k
+
+    def stage_tree_inputs(self, seq_step: torch.Tensor, depth, ancestor_mask: torch.Tensor,
+                          past_len: int, N: int, B: int):
+        B = int(B)
+        N = int(N)
+        seq_step_b = self._seq_step.get(B)
+        if seq_step_b is None:
+            seq_step_b = torch.zeros((1, B), dtype=torch.long, device=self.device)
+            self._seq_step[B] = seq_step_b
+        else:
+            seq_step_b.zero_()
+        seq_step_b[:, :N].copy_(seq_step[:, :N])
+
+        pos_b = self._pos.get(B)
+        if pos_b is None:
+            pos_b = torch.empty((1, B), dtype=torch.long, device=self.device)
+            self._pos[B] = pos_b
+        depth_t = depth if torch.is_tensor(depth) else torch.as_tensor(depth)
+        if depth_t.device != self.device or depth_t.dtype != torch.long:
+            depth_t = depth_t.to(device=self.device, dtype=torch.long)
+        pos_b[:, :N].copy_(depth_t[:N].view(1, N))
+        pos_b[:, :N].add_(int(past_len))
+        if B > N:
+            pos_b[:, N:B].copy_(pos_b[:, N - 1:N].expand(1, B - N))
+
+        qq_bias_b = self._qq_bias.get(B)
+        if qq_bias_b is None:
+            qq_bias_b = torch.empty((B, B), dtype=torch.float32, device=self.device)
+            self._qq_bias[B] = qq_bias_b
+        qq_bias_b.fill_(float("-inf"))
+        anc = ancestor_mask
+        if anc.device != self.device or anc.dtype != torch.bool:
+            anc = anc.to(device=self.device, dtype=torch.bool)
+        qq_bias_b[:N, :N].masked_fill_(anc[:N, :N], 0.0)
+
+        dummy = self._dummy.get(B)
+        if dummy is None:
+            dummy = torch.zeros((1, B, self.hidden_size), dtype=self.dtype,
+                                device=self.device)
+            self._dummy[B] = dummy
+        cu = self._cu.get(B)
+        if cu is None:
+            cu = torch.tensor([0, B], dtype=torch.int32, device=self.device)
+            self._cu[B] = cu
+        return seq_step_b, pos_b, qq_bias_b, dummy, cu
+
+
 class NanoEngine:
     def __init__(
         self,
@@ -497,15 +598,17 @@ class NanoEngine:
                 # them between replays. Window = committed-after-prompt + this round's
                 # B in-flight nodes; starts is write-once at prompt_len. ONE row shared
                 # by all layers (layer-shared slot ids).
-                slots_buf = torch.zeros((1, max_slots), dtype=torch.long,
-                                        device=self.device)
-                starts_buf = torch.tensor([prompt_len], dtype=torch.int32,
-                                          device=self.device)
-                lens_buf = torch.zeros((1,), dtype=torch.int32, device=self.device)
-                slots_rows = [slots_buf] * nlayers_lk
+                round_bufs = _LogicalRoundBuffers(
+                    max_slots=max_slots, prompt_len=prompt_len, nlayers=nlayers_lk,
+                    hidden_size=self.model.config.hidden_size, block_size=self.block_size,
+                    device=self.device, dtype=self.dtype,
+                )
+                slots_rows, starts_buf, lens_buf = round_bufs.logical_bind()
                 wlen = 0
                 bts0 = cache.prefix_block_tables(cache.reserved_block_table_width)
-                node_offs0 = {}   # bucket B -> (B,) arange % cache-block-size
+                # Pool tensors are round-invariant after reserve_capacity/freeze_pool.
+                k_pools0 = [cache.pool(i)[0] for i in range(nlayers_lk)]
+                v_pools0 = [cache.pool(i)[1] for i in range(nlayers_lk)]
             else:
                 cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + Bmax)
         first_tok = sample(logits[:, -1:, :], sp.temperature)
@@ -531,18 +634,25 @@ class NanoEngine:
                 else cache.get_seq_length()                            # == committed.shape[1] - 1
             # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.
             seq_step = tree.token_ids.view(1, -1)                      # (1, N)
-            depths = tree.depth.tolist()
-            posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
-            cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
+            if logical_kv:
+                posN = None
+                cache_pos = None
+            else:
+                depths = tree.depth.tolist()
+                posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
+                cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
             if kernel:
                 # Kernel path: prefix [0, past_len) is always-visible (handled by the
                 # kernel); the N tree nodes attend per the ancestor mask folded in as
                 # the fp32 (0/-inf) qq_bias. No dense 4D mask — attention_mask=None.
                 anc = build_ancestor_matrix(tree).to(device=self.device, dtype=torch.bool)
-                qq_bias = torch.where(
-                    anc, torch.zeros((), dtype=torch.float32, device=self.device),
-                    torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
-                )
+                if logical_kv:
+                    qq_bias = None
+                else:
+                    qq_bias = torch.where(
+                        anc, torch.zeros((), dtype=torch.float32, device=self.device),
+                        torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
+                    )
                 if compiled:
                     # A3-INT/A3-HIDDEN compiled verify: bypass model.__call__ + the
                     # per-layer Python and run the fused read-only stack. Reserve this
@@ -567,8 +677,12 @@ class NanoEngine:
                     # blocks (incl. the transient pad slots), so the pad KV never
                     # survives the round.
                     B = _bucket_for_n(N)
-                    seq_step_b, posN_b, qq_bias_b = self._pad_tree_to_bucket(
-                        seq_step, posN, qq_bias, N, B)
+                    if logical_kv:
+                        seq_step_b, posN_b, qq_bias_b, dummy, cu = round_bufs.stage_tree_inputs(
+                            seq_step, tree.depth, anc, past_len, N, B)
+                    else:
+                        seq_step_b, posN_b, qq_bias_b = self._pad_tree_to_bucket(
+                            seq_step, posN, qq_bias, N, B)
                     # Pin the block_table width too (the second compiled-stack shape guard
                     # besides the pool) — reserve_capacity fixed the per-layer reservation.
                     if logical_kv:
@@ -580,27 +694,26 @@ class NanoEngine:
                         # persisted_len + qlen pattern). Block tables stay the frozen
                         # prefill ones (values ignored for window positions).
                         nb_lk, round_blocks = cache.reserve_logical_slots(B)
-                        offs = node_offs0.get(B)
-                        if offs is None:
-                            offs = torch.arange(B, device=self.device) % self.block_size
-                            node_offs0[B] = offs
-                        slots_buf[:, wlen:wlen + B] = nb_lk * self.block_size + offs
-                        lens_buf.fill_(wlen + B)
+                        offs = round_bufs.node_offsets(B)
+                        round_bufs.stage_slots(wlen, nb_lk, B)
                         node_blks = [nb_lk] * len(bts0)   # layer-shared ids, one row
                         node_offs = [offs] * len(bts0)
                         bts = bts0
-                        slk = torch.tensor([past_len + B], device=self.device,
-                                           dtype=torch.int32)
+                        slk = round_bufs.fill_lengths(wlen, past_len, B)
                     else:
                         bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
                             0, B, past_len, block_table_width=cache.reserved_block_table_width)
-                    dummy = torch.zeros(1, B, self.model.config.hidden_size,
-                                        device=self.device, dtype=self.dtype)
+                        dummy = torch.zeros(1, B, self.model.config.hidden_size,
+                                            device=self.device, dtype=self.dtype)
+                        cu = torch.tensor([0, B], device=self.device, dtype=torch.int32)
                     cos, sin = self.model.model.rotary_emb(dummy, posN_b)
-                    cu = torch.tensor([0, B], device=self.device, dtype=torch.int32)
                     nlayers = self.model.config.num_hidden_layers
-                    k_pools = [cache.pool(i)[0] for i in range(nlayers)]
-                    v_pools = [cache.pool(i)[1] for i in range(nlayers)]
+                    if logical_kv:
+                        k_pools = k_pools0
+                        v_pools = v_pools0
+                    else:
+                        k_pools = [cache.pool(i)[0] for i in range(nlayers)]
+                        v_pools = [cache.pool(i)[1] for i in range(nlayers)]
                     use_graph = getattr(self, "_use_cudagraph", False)
                     # L5: the logical metadata rides every verify call on the no-gather
                     # path. The graphed path binds the buffers IN PLACE at construction
@@ -697,8 +810,8 @@ class NanoEngine:
                 # rewritten — copy the accepted entries (advanced indexing copies, so
                 # the overlapping write-back is safe; path_t[0]=0 maps wlen->wlen) down
                 # to the committed region, then advance the window. O(acc+1) work.
-                kept = slots_buf[:, wlen + path_t]
-                slots_buf[:, wlen:wlen + int(kept.shape[1])] = kept
+                kept = round_bufs.slots[:, wlen + path_t]
+                round_bufs.slots[:, wlen:wlen + int(kept.shape[1])] = kept
                 # Free policy: a round's reservation is block-aligned, so block j of
                 # EVERY layer holds exactly nodes [16j, 16j+16) of THIS round — a block
                 # survives iff it holds an accepted node; pure-rejected (incl. pad)
