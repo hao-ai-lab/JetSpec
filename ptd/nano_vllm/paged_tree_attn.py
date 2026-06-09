@@ -58,12 +58,16 @@ def _kernel_paged_tree_attn(
     key_cache_ptr,        # [num_blocks, block_size, Hkv, D]
     value_cache_ptr,      # [num_blocks, block_size, Hkv, D]
     block_tables_ptr,     # [num_seqs, max_blocks]
+    logical_kv_slots_ptr,  # [num_seqs, max_logical_slots] or unused
+    logical_kv_starts_ptr,  # [num_seqs] or unused
+    logical_kv_lens_ptr,  # [num_seqs] or unused
     seq_lens_ptr,         # [num_seqs]
     qq_bias_ptr,          # [total_q, total_q] or unused
     scale,                # float32
     num_query_heads: tl.constexpr,
     num_queries_per_kv: tl.constexpr,
     block_table_stride: tl.int64,
+    logical_kv_slots_stride: tl.int64,
     query_stride_0: tl.int64,
     query_stride_1: tl.int64,
     output_stride_0: tl.int64,
@@ -74,6 +78,7 @@ def _kernel_paged_tree_attn(
     HEAD_SIZE: tl.constexpr,
     HEAD_SIZE_PADDED: tl.constexpr,
     USE_QQ_BIAS: tl.constexpr,
+    USE_LOGICAL_KV_SLOTS: tl.constexpr,
     stride_k_cache_0: tl.int64,
     stride_k_cache_1: tl.int64,
     stride_k_cache_2: tl.int64,
@@ -128,6 +133,7 @@ def _kernel_paged_tree_attn(
     )
 
     block_table_offset = seq_idx * block_table_stride
+    logical_kv_slots_offset = seq_idx * logical_kv_slots_stride
 
     M = tl.full([BLOCK_M], float("-inf"), dtype=tl.float32)
     L = tl.full([BLOCK_M], 1.0, dtype=tl.float32)
@@ -154,22 +160,49 @@ def _kernel_paged_tree_attn(
     for j in range(0, num_tiles):
         seq_offset = j * TILE_SIZE + offs_t
         tile_mask = seq_offset < max_seq_prefix_len
+        physical_offset = seq_offset % BLOCK_SIZE
 
-        physical_block_idx = tl.load(
+        if USE_LOGICAL_KV_SLOTS:
+            logical_kv_len = tl.load(logical_kv_lens_ptr + seq_idx)
+            logical_kv_start = tl.load(logical_kv_starts_ptr + seq_idx)
+            logical_kv_end = logical_kv_start + logical_kv_len
+            use_logical_kv = (seq_offset >= logical_kv_start) & (
+                seq_offset < logical_kv_end
+            )
+            logical_kv_idx = seq_offset - logical_kv_start
+            logical_kv_slot = tl.load(
+                logical_kv_slots_ptr + logical_kv_slots_offset + logical_kv_idx,
+                mask=tile_mask & use_logical_kv,
+                other=0,
+            ).to(tl.int64)
+            physical_offset = tl.where(
+                use_logical_kv,
+                logical_kv_slot % BLOCK_SIZE,
+                physical_offset,
+            )
+
+        block_table_block_idx = tl.load(
             block_tables_ptr + block_table_offset + seq_offset // BLOCK_SIZE
         ).to(tl.int64)
+        physical_block_idx = block_table_block_idx
+        if USE_LOGICAL_KV_SLOTS:
+            physical_block_idx = tl.where(
+                use_logical_kv,
+                logical_kv_slot // BLOCK_SIZE,
+                block_table_block_idx,
+            )
 
         v_offset = (
             physical_block_idx[:, None] * stride_v_cache_0
             + kv_head_idx * stride_v_cache_2
             + offs_d[None, :] * stride_v_cache_3
-            + (seq_offset % BLOCK_SIZE)[:, None] * stride_v_cache_1
+            + physical_offset[:, None] * stride_v_cache_1
         )
         k_offset = (
             physical_block_idx[None, :] * stride_k_cache_0
             + kv_head_idx * stride_k_cache_2
             + offs_d[:, None] * stride_k_cache_3
-            + (seq_offset % BLOCK_SIZE)[None, :] * stride_k_cache_1
+            + physical_offset[None, :] * stride_k_cache_1
         )
 
         # K : (HEAD_SIZE, TILE_SIZE) — other=0.0 guards the tail past seq_len so a
@@ -250,6 +283,9 @@ def paged_tree_attn(
     scale: float,               # head_dim ** -0.5
     num_queries_per_kv: int,    # Hq // Hkv
     block_size: int,
+    logical_kv_slots: Optional[torch.Tensor] = None,  # (num_seqs, max_logical_slots) physical slot ids
+    logical_kv_starts: Optional[torch.Tensor] = None,  # (num_seqs,) first logical key pos to remap
+    logical_kv_lens: Optional[torch.Tensor] = None,  # (num_seqs,) number of logical key positions
 ) -> torch.Tensor:
     """Tree attention over a paged K/V pool; returns (total_q, Hq, D), q's dtype.
 
@@ -257,12 +293,26 @@ def paged_tree_attn(
     ``[0, seq_lens_k[s])`` pulled from the pool via ``block_table[s]``. Prefix
     keys are always visible; the per-node tree mask over the query section comes
     from ``qq_bias`` (additive -inf/0). Decode is the ``Nq_s == 1`` / ``qq_bias
-    is None`` case (single query attends to its full prefix + self)."""
+    is None`` case (single query attends to its full prefix + self).
+
+    ``logical_kv_slots`` optionally remaps a contiguous per-seq key range
+    ``[logical_kv_starts[s], logical_kv_starts[s] + logical_kv_lens[s])`` to
+    absolute physical pool slots; ``None`` keeps the legacy block-table path."""
     total_q, num_query_heads, head_size = q.shape
     num_seqs = seq_lens_k.shape[0]
 
     out = torch.empty_like(q)
     use_qq_bias = qq_bias is not None
+    use_logical_kv_slots = logical_kv_slots is not None
+    if use_logical_kv_slots:
+        assert logical_kv_starts is not None
+        assert logical_kv_lens is not None
+        assert logical_kv_slots.ndim == 2
+        assert logical_kv_starts.ndim == 1
+        assert logical_kv_lens.ndim == 1
+        assert logical_kv_slots.shape[0] == num_seqs
+        assert logical_kv_starts.shape[0] == num_seqs
+        assert logical_kv_lens.shape[0] == num_seqs
 
     BLOCK_M = 16 if num_queries_per_kv <= 16 else triton.next_power_of_2(num_queries_per_kv)
     BLOCK_Q = BLOCK_M // num_queries_per_kv
@@ -278,12 +328,16 @@ def paged_tree_attn(
         key_cache_ptr=k_pool,
         value_cache_ptr=v_pool,
         block_tables_ptr=block_table,
+        logical_kv_slots_ptr=logical_kv_slots,
+        logical_kv_starts_ptr=logical_kv_starts,
+        logical_kv_lens_ptr=logical_kv_lens,
         seq_lens_ptr=seq_lens_k,
         qq_bias_ptr=qq_bias,
         scale=scale,
         num_query_heads=num_query_heads,
         num_queries_per_kv=num_queries_per_kv,
         block_table_stride=block_table.stride(0),
+        logical_kv_slots_stride=logical_kv_slots.stride(0) if use_logical_kv_slots else 0,
         query_stride_0=q.stride(0),
         query_stride_1=q.stride(1),
         output_stride_0=out.stride(0),
@@ -294,6 +348,7 @@ def paged_tree_attn(
         HEAD_SIZE=head_size,
         HEAD_SIZE_PADDED=triton.next_power_of_2(head_size),
         USE_QQ_BIAS=use_qq_bias,
+        USE_LOGICAL_KV_SLOTS=use_logical_kv_slots,
         stride_k_cache_0=k_pool.stride(0),
         stride_k_cache_1=k_pool.stride(1),
         stride_k_cache_2=k_pool.stride(2),

@@ -35,13 +35,23 @@ def _inputs(with_bias: bool):
     return q, k_pool, v_pool, block_table, cu_seqlens_q, seq_lens_k, qq_bias
 
 
+def _logical_inputs():
+    logical_kv_slots = torch.arange(12, dtype=torch.int64).repeat(3, 1)
+    logical_kv_starts = torch.zeros(3, dtype=torch.int32)
+    logical_kv_lens = torch.tensor([10, 11, 12], dtype=torch.int32)
+    return logical_kv_slots, logical_kv_starts, logical_kv_lens
+
+
 def test_op_registered():
     """The op is registered under ``ptd::paged_tree_attn`` with the typed schema
-    (``Tensor? qq_bias`` expresses the decode/None case directly)."""
+    (``Tensor?`` expresses the decode/logical-slot None cases directly)."""
     assert hasattr(torch.ops.ptd, "paged_tree_attn")
     schema = str(paged_tree_attn._opoverload._schema)
     assert "ptd::paged_tree_attn" in schema
     assert "Tensor? qq_bias" in schema  # Optional bias, no bool flag / op split
+    assert "Tensor? logical_kv_slots=None" in schema
+    assert "Tensor? logical_kv_starts=None" in schema
+    assert "Tensor? logical_kv_lens=None" in schema
 
 
 @pytest.mark.parametrize("with_bias", [True, False])
@@ -60,9 +70,32 @@ def test_fake_kernel_shape_dtype(with_bias):
     assert out.device.type == "meta"
 
 
+@pytest.mark.parametrize("with_bias", [True, False])
+def test_fake_kernel_accepts_explicit_logical_kv_args(with_bias):
+    """The appended logical-KV args are optional tensor args: explicit tensors
+    propagate through the fake impl, while legacy omitted args remain valid."""
+    q, k_pool, v_pool, block_table, cu, seq_lens_k, qq_bias = _inputs(with_bias)
+    logical_kv_slots = torch.arange(24, dtype=torch.int64).reshape(3, 8)
+    logical_kv_starts = torch.tensor([1, 2, 3], dtype=torch.int32)
+    logical_kv_lens = torch.tensor([4, 5, 6], dtype=torch.int32)
+    bias_m = qq_bias.to("meta") if qq_bias is not None else None
+
+    out = torch.ops.ptd.paged_tree_attn(
+        q.to("meta"), k_pool.to("meta"), v_pool.to("meta"), block_table.to("meta"),
+        cu.to("meta"), seq_lens_k.to("meta"), bias_m, SCALE, NQPKV, BLOCK_SIZE,
+        logical_kv_slots.to("meta"), logical_kv_starts.to("meta"),
+        logical_kv_lens.to("meta"),
+    )
+
+    assert out.shape == (TOTAL_Q, HQ, D)
+    assert out.dtype == q.dtype
+    assert out.device.type == "meta"
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="opcheck runs the real triton op")
 @pytest.mark.parametrize("with_bias", [True, False])
-def test_opcheck_full(with_bias):
+@pytest.mark.parametrize("with_logical", [False, True])
+def test_opcheck_full(with_bias, with_logical):
     """Full ``torch.library.opcheck`` (schema, fake-tensor, aot-dispatch) on CUDA.
 
     Every opcheck utility *executes* the real op, which forwards to triton, so
@@ -73,6 +106,9 @@ def test_opcheck_full(with_bias):
         t.cuda() if isinstance(t, torch.Tensor) else t for t in _inputs(with_bias)
     ]
     args = (*on_cuda, SCALE, NQPKV, BLOCK_SIZE)
+    if with_logical:
+        logical_cuda = tuple(t.cuda() for t in _logical_inputs())
+        args = (*args, *logical_cuda)
     torch.library.opcheck(paged_tree_attn, args)
 
 
@@ -94,6 +130,45 @@ def test_fullgraph_traces_past_op(with_bias):
     out = compiled(
         q.to("meta"), k_pool.to("meta"), v_pool.to("meta"), block_table.to("meta"),
         cu.to("meta"), seq_lens_k.to("meta"), bias_m,
+    )
+    assert out.shape == (TOTAL_Q, HQ, D)
+    assert out.dtype == q.dtype
+
+
+@pytest.mark.parametrize("with_bias", [True, False])
+def test_fullgraph_traces_with_logical_kv_args(with_bias):
+    """The expanded schema stays traceable when the logical-slot tensors are
+    present, which is what the later engine/cudagraph integration will call."""
+    def fn(
+        q,
+        k_pool,
+        v_pool,
+        block_table,
+        cu,
+        seq_lens_k,
+        qq_bias,
+        logical_kv_slots,
+        logical_kv_starts,
+        logical_kv_lens,
+    ):
+        out = torch.ops.ptd.paged_tree_attn(
+            q, k_pool, v_pool, block_table, cu, seq_lens_k,
+            qq_bias, SCALE, NQPKV, BLOCK_SIZE,
+            logical_kv_slots, logical_kv_starts, logical_kv_lens,
+        )
+        return out * 2.0
+
+    compiled = torch.compile(fn, fullgraph=True)
+    q, k_pool, v_pool, block_table, cu, seq_lens_k, qq_bias = _inputs(with_bias)
+    logical_kv_slots = torch.arange(24, dtype=torch.int64).reshape(3, 8)
+    logical_kv_starts = torch.tensor([1, 2, 3], dtype=torch.int32)
+    logical_kv_lens = torch.tensor([4, 5, 6], dtype=torch.int32)
+    bias_m = qq_bias.to("meta") if qq_bias is not None else None
+    out = compiled(
+        q.to("meta"), k_pool.to("meta"), v_pool.to("meta"), block_table.to("meta"),
+        cu.to("meta"), seq_lens_k.to("meta"), bias_m,
+        logical_kv_slots.to("meta"), logical_kv_starts.to("meta"),
+        logical_kv_lens.to("meta"),
     )
     assert out.shape == (TOTAL_Q, HQ, D)
     assert out.dtype == q.dtype
