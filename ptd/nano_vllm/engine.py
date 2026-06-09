@@ -510,6 +510,8 @@ class NanoEngine:
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
+        prompt_len = committed.shape[1]
+        commit_capacity = prompt_len + sp.max_new_tokens + block_size
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.dtype
@@ -547,8 +549,22 @@ class NanoEngine:
             committed, cache, pos,
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
         )
+        committed_buf = torch.empty(
+            (1, commit_capacity), dtype=committed.dtype, device=committed.device
+        )
+        committed_buf[:, :prompt_len].copy_(committed)
+        committed_len = prompt_len
+        target_hidden_buf = None
+        target_hidden_len = 0
         if full_hidden is not None:
-            target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
+            target_hidden_buf = torch.empty(
+                (1, commit_capacity, full_hidden.shape[-1]),
+                dtype=full_hidden.dtype,
+                device=full_hidden.device,
+            )
+            target_hidden_len = full_hidden.shape[1]
+            target_hidden_buf[:, :target_hidden_len, :].copy_(full_hidden)
+            target_hidden = target_hidden_buf[:, :target_hidden_len, :]
         if compiled:
             if getattr(self, "_use_cudagraph", False) and _bucket_for_n(budget) > _TREE_BUCKETS[-1]:
                 # A3-GRAPH's GraphedVerify staging buffers are sized to the largest
@@ -581,7 +597,6 @@ class NanoEngine:
                 # staging and must not inflate with the pool). freeze_pool() turns any
                 # later silent `_grow_pool` (a torch.cat = pool relocation under live
                 # CUDA graphs) into a loud error.
-                prompt_len = committed.shape[1]
                 # Pool = the prefix (per-layer ids, via total_tokens) + the no-compaction
                 # worst case as LAYER-SHARED ids (every committed token pinning its own
                 # retained block, + one in-flight round) — shared because
@@ -617,7 +632,9 @@ class NanoEngine:
                 cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + Bmax)
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
-        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
+        committed_buf[:, committed_len:committed_len + 1].copy_(first_tok.view(1, 1))
+        committed_len += 1
+        committed = committed_buf[:, :committed_len]       # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
             out = {
@@ -850,15 +867,26 @@ class NanoEngine:
             if new_hidden is not None:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
-                target_hidden = torch.cat([target_hidden, new_hidden[:, path_t, :]], dim=1)
-            accepted = tree.token_ids[path_t[1:]] if acc > 0 \
-                else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
-            block = torch.cat([accepted, corr_t.reshape(1)])
-            committed = torch.cat([committed, block.view(1, -1)], dim=1)
+                hidden_append = new_hidden[:, path_t, :]
+                hidden_end = target_hidden_len + hidden_append.shape[1]
+                target_hidden_buf[:, target_hidden_len:hidden_end, :].copy_(hidden_append)
+                target_hidden_len = hidden_end
+                target_hidden = target_hidden_buf[:, :target_hidden_len, :]
+            commit_start = committed_len
+            if acc > 0:
+                accepted = tree.token_ids[path_t[1:]]
+                accepted_len = accepted.numel()
+                committed_buf[:, committed_len:committed_len + accepted_len].copy_(
+                    accepted.view(1, -1)
+                )
+                committed_len += accepted_len
+            committed_buf[0, committed_len] = corr_t
+            committed_len += 1
+            committed = committed_buf[:, :committed_len]
             rounds += 1
-            accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
+            accept_lengths.append(committed_len - commit_start)   # acc + 1, matches reference accept-len
             tree_sizes.append(int(N))
-            for t in block.tolist():
+            for t in committed_buf[0, commit_start:committed_len].tolist():
                 new_ids.append(int(t))
                 if int(t) in self.eos_token_ids:
                     break
