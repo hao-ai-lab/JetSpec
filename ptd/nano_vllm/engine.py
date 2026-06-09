@@ -51,10 +51,21 @@ _TREE_BUCKETS = (64, 128, 192, 256)
 #     (A3-GRAPH), collapsing the per-kernel launch storm that compile can't remove at
 #     B=1. It is opt-in: "triton_paged_tree_compiled" stays the compiled-non-graph oracle
 #     (byte-for-byte unchanged), so the cudagraph path can be diffed against it.
+#   - `_LOGICAL_KV_BACKENDS` (L5 no-gather): supersets of compiled/cudagraph that
+#     keep committed tree KV where the verify wrote it and pass per-layer logical
+#     slot maps to the kernel instead of running the O(context) per-round
+#     `cache.gather`. The gather-path backends stay byte-identical oracles.
 _KERNEL_BACKENDS = ("triton_paged_tree", "triton_paged_tree_compiled",
-                    "triton_paged_tree_cudagraph")
-_COMPILED_BACKENDS = ("triton_paged_tree_compiled", "triton_paged_tree_cudagraph")
-_CUDAGRAPH_BACKENDS = ("triton_paged_tree_cudagraph",)
+                    "triton_paged_tree_cudagraph",
+                    "triton_paged_tree_compiled_nogather",
+                    "triton_paged_tree_cudagraph_nogather")
+_COMPILED_BACKENDS = ("triton_paged_tree_compiled", "triton_paged_tree_cudagraph",
+                      "triton_paged_tree_compiled_nogather",
+                      "triton_paged_tree_cudagraph_nogather")
+_CUDAGRAPH_BACKENDS = ("triton_paged_tree_cudagraph",
+                       "triton_paged_tree_cudagraph_nogather")
+_LOGICAL_KV_BACKENDS = ("triton_paged_tree_compiled_nogather",
+                        "triton_paged_tree_cudagraph_nogather")
 
 
 def _bucket_for_n(n: int) -> int:
@@ -313,7 +324,7 @@ class NanoEngine:
         return stack
 
     def _get_graphed_verify(self, stack, paged_cache, block_table_width,
-                            need_hidden, target_layer_ids):
+                            need_hidden, target_layer_ids, logical_kv_bind=None):
         """Lazily build (and cache) the per-bucket `GraphedVerify` wrapping `stack`
         (A3-GRAPH). Built on first use because it needs the LIVE post-`reserve_capacity`
         k/v pools + the pinned block-table width, which only exist once `generate_tree`
@@ -343,7 +354,11 @@ class NanoEngine:
         # changed (new prompt / new reserve_capacity), the cached graphs read stale
         # addresses, so rebuild (and drop the old GraphedVerify so its pool refs free).
         pool0 = paged_cache.pool(0)[0]
-        tag = (id(pool0), int(block_table_width))
+        # L5: the logical slot buffers are graph-read addresses too — a new decode's
+        # fresh buffers make old graphs semantically incompatible (not just
+        # address-stale), so they join the rebuild tag.
+        lk_tag = id(logical_kv_bind[0][0]) if logical_kv_bind is not None else None
+        tag = (id(pool0), int(block_table_width), lk_tag)
         gv = cache.get(key)
         if gv is None or gv.pool_tag != tag:
             nlayers = self.model.config.num_hidden_layers
@@ -355,6 +370,7 @@ class NanoEngine:
                 hidden_size=self.model.config.hidden_size,
                 device=torch.device(self.device), dtype=self.dtype,
                 buckets=_TREE_BUCKETS,
+                logical_kv_bind=logical_kv_bind,
             )
             gv.pool_tag = tag
             cache[key] = gv
@@ -409,6 +425,7 @@ class NanoEngine:
         # extra step of swapping the verify forward for the compiled read-only stack.
         kernel = backend in _KERNEL_BACKENDS
         compiled = backend in _COMPILED_BACKENDS
+        logical_kv = backend in _LOGICAL_KV_BACKENDS   # L5 no-gather (compiled-only)
 
         # --- prefill: populate the persistent paged cache with the prompt's KV ---
         cache = PagedKVCache(
@@ -449,7 +466,40 @@ class NanoEngine:
             # raises mid-decode). After this only the `seq_lens_k` value changes per round;
             # every pool/block-table shape stays fixed -> recompiles stop after the bucket
             # set is traced.
-            cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + _bucket_for_n(budget))
+            Bmax = _bucket_for_n(budget)
+            if logical_kv:
+                # L5 no-gather: without gather's compaction, every committed token can
+                # in the worst case pin its own retained block, so the POOL must be
+                # sized for prompt + 16*(max_new + tree_depth) + Bmax tokens — while
+                # the kernel-visible block-table WIDTH keeps today's (much smaller)
+                # prompt + max_new + Bmax bound (it drives the dynamo guard + graph
+                # staging and must not inflate with the pool). freeze_pool() turns any
+                # later silent `_grow_pool` (a torch.cat = pool relocation under live
+                # CUDA graphs) into a loud error.
+                prompt_len = committed.shape[1]
+                cache.reserve_capacity(
+                    prompt_len + self.block_size * (sp.max_new_tokens + block_size)
+                    + Bmax + self.block_size,
+                    block_table_tokens=prompt_len + sp.max_new_tokens + Bmax,
+                )
+                cache.freeze_pool()
+                nlayers_lk = self.model.config.num_hidden_layers
+                max_slots = sp.max_new_tokens + block_size + Bmax
+                # Address-stable for the decode: graphs/compiled calls read these in
+                # place (the pools' "REUSED IN PLACE" contract); the engine mutates
+                # them between replays. Window = committed-after-prompt + this round's
+                # B in-flight nodes; starts is write-once at prompt_len.
+                slots_buf = torch.zeros((nlayers_lk, max_slots), dtype=torch.long,
+                                        device=self.device)
+                starts_buf = torch.tensor([prompt_len], dtype=torch.int32,
+                                          device=self.device)
+                lens_buf = torch.zeros((1,), dtype=torch.int32, device=self.device)
+                slots_rows = [slots_buf[i].view(1, -1) for i in range(nlayers_lk)]
+                wlen = 0
+                bts0 = cache.prefix_block_tables(cache.reserved_block_table_width)
+                node_offs0 = {}   # bucket B -> (B,) arange % cache-block-size
+            else:
+                cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + Bmax)
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
@@ -465,7 +515,12 @@ class NanoEngine:
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
-            past_len = cache.get_seq_length()                          # == committed.shape[1] - 1
+            # logical path: the cache's seq bookkeeping stays frozen at prompt_len
+            # (no append/gather advances it); the engine-tracked window length is
+            # the source of truth. Same VALUE as the gather path's get_seq_length()
+            # (== committed.shape[1] - 1), so posN/RoPE are identical either way.
+            past_len = (prompt_len + wlen) if logical_kv \
+                else cache.get_seq_length()                            # == committed.shape[1] - 1
             # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.
             seq_step = tree.token_ids.view(1, -1)                      # (1, N)
             depths = tree.depth.tolist()
@@ -508,8 +563,29 @@ class NanoEngine:
                         seq_step, posN, qq_bias, N, B)
                     # Pin the block_table width too (the second compiled-stack shape guard
                     # besides the pool) — reserve_capacity fixed the per-layer reservation.
-                    bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
-                        0, B, past_len, block_table_width=cache.reserved_block_table_width)
+                    if logical_kv:
+                        # L5: block-aligned transient reservation — no block-table
+                        # extension, no incref; nodes live at arbitrary pool slots the
+                        # kernel reaches through the logical window. Stage this round's
+                        # slots at window positions [wlen, wlen+B); the window length
+                        # covers committed + in-flight nodes (the fork's
+                        # persisted_len + qlen pattern). Block tables stay the frozen
+                        # prefill ones (values ignored for window positions).
+                        nb_lk, round_blocks = cache.reserve_logical_slots(B)
+                        offs = node_offs0.get(B)
+                        if offs is None:
+                            offs = torch.arange(B, device=self.device) % self.block_size
+                            node_offs0[B] = offs
+                        slots_buf[:, wlen:wlen + B] = nb_lk * self.block_size + offs
+                        lens_buf.fill_(wlen + B)
+                        node_blks = [nb_lk[i] for i in range(nb_lk.shape[0])]
+                        node_offs = [offs] * len(node_blks)
+                        bts = bts0
+                        slk = torch.tensor([past_len + B], device=self.device,
+                                           dtype=torch.int32)
+                    else:
+                        bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
+                            0, B, past_len, block_table_width=cache.reserved_block_table_width)
                     dummy = torch.zeros(1, B, self.model.config.hidden_size,
                                         device=self.device, dtype=self.dtype)
                     cos, sin = self.model.model.rotary_emb(dummy, posN_b)
@@ -518,6 +594,15 @@ class NanoEngine:
                     k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                     v_pools = [cache.pool(i)[1] for i in range(nlayers)]
                     use_graph = getattr(self, "_use_cudagraph", False)
+                    # L5: the logical metadata rides every verify call on the no-gather
+                    # path. The graphed path binds the buffers IN PLACE at construction
+                    # (like the pools — the engine mutates them before replay), so
+                    # replay's signature is unchanged; the direct path passes them as
+                    # kwargs each call.
+                    lk_kwargs = dict(
+                        logical_kv_slots=slots_rows, logical_kv_starts=starts_buf,
+                        logical_kv_lens=lens_buf) if logical_kv else {}
+                    lk_bind = (slots_rows, starts_buf, lens_buf) if logical_kv else None
                     if need_hidden:
                         stack = self._get_compiled_verify_hidden(target_layer_ids)
                         if use_graph:
@@ -528,14 +613,15 @@ class NanoEngine:
                             # inside replay, token-identical to the direct stack call.
                             gv = self._get_graphed_verify(
                                 stack, cache, cache.reserved_block_table_width,
-                                need_hidden=True, target_layer_ids=target_layer_ids)
+                                need_hidden=True, target_layer_ids=target_layer_ids,
+                                logical_kv_bind=lk_bind)
                             logits, new_hidden = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
                                 qq_bias_b, node_blks, node_offs, N)
                         else:
                             logits, new_hidden = stack(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs,
+                                qq_bias_b, node_blks, node_offs, **lk_kwargs,
                             )
                             logits = logits[:, :N, :]            # drop the B-N pad rows
                             new_hidden = new_hidden[:, :N, :]
@@ -544,14 +630,15 @@ class NanoEngine:
                             gv = self._get_graphed_verify(
                                 self.compiled_verify, cache,
                                 cache.reserved_block_table_width,
-                                need_hidden=False, target_layer_ids=None)
+                                need_hidden=False, target_layer_ids=None,
+                                logical_kv_bind=lk_bind)
                             logits = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
                                 qq_bias_b, node_blks, node_offs, N)
                         else:
                             logits = self.compiled_verify(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs,
+                                qq_bias_b, node_blks, node_offs, **lk_kwargs,
                             )
                             logits = logits[:, :N, :]            # drop the B-N pad rows
                         new_hidden = None
@@ -596,14 +683,36 @@ class NanoEngine:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
                 path_t = torch.tensor(accepted_path, device=self.device)
                 corr_t = torch.tensor(correction, device=self.device)
-            # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
-            # rejected branches' KV. path_t = [0(root), …acc nodes], tree-ordered;
-            # their cache slots are past_len + path -> contiguous positions after gather.
-            keep = torch.cat([
-                torch.arange(past_len, device=self.device),
-                past_len + path_t,
-            ])
-            cache.gather(keep)                    # cache length -> past_len + (acc + 1)
+            if logical_kv:
+                # L5 slot-commit (replaces the O(context) gather): the accepted nodes'
+                # KV stays at the slots the verify wrote; only the WINDOW MAP is
+                # rewritten — copy the accepted entries (advanced indexing copies, so
+                # the overlapping write-back is safe; path_t[0]=0 maps wlen->wlen) down
+                # to the committed region, then advance the window. O(acc+1) work.
+                kept = slots_buf[:, wlen + path_t]
+                slots_buf[:, wlen:wlen + int(kept.shape[1])] = kept
+                # Free policy: a round's reservation is block-aligned, so block j of
+                # EVERY layer holds exactly nodes [16j, 16j+16) of THIS round — a block
+                # survives iff it holds an accepted node; pure-rejected (incl. pad)
+                # blocks recycle now. Dead slots inside kept blocks leak until the
+                # per-decode cache drops (~bounded by reserve_capacity's formula).
+                # path_t is already on host for the EOS/commit step below — one small
+                # DtoH, same data the round syncs anyway.
+                path_list = path_t.tolist()
+                kept_j = {p // self.block_size for p in path_list}
+                freed_idx = [j for j in range(len(round_blocks[0]))
+                             if j not in kept_j]
+                cache.release_round_blocks(round_blocks, freed_idx)
+                wlen += len(path_list)
+            else:
+                # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
+                # rejected branches' KV. path_t = [0(root), …acc nodes], tree-ordered;
+                # their cache slots are past_len + path -> contiguous positions after gather.
+                keep = torch.cat([
+                    torch.arange(past_len, device=self.device),
+                    past_len + path_t,
+                ])
+                cache.gather(keep)                # cache length -> past_len + (acc + 1)
             if new_hidden is not None:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
