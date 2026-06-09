@@ -18,6 +18,7 @@ builds its own tree, one batched verify forward under a padded per-seq 4D ancest
 mask, per-seq accept + ref-count-safe gather), token-identical to running
 `generate_tree` on each prompt alone (the N2b lossless gate).
 """
+import os
 import torch
 from transformers import DynamicCache
 
@@ -66,6 +67,11 @@ _CUDAGRAPH_BACKENDS = ("triton_paged_tree_cudagraph",
                        "triton_paged_tree_cudagraph_nogather")
 _LOGICAL_KV_BACKENDS = ("triton_paged_tree_compiled_nogather",
                         "triton_paged_tree_cudagraph_nogather")
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def _bucket_for_n(n: int) -> int:
@@ -201,6 +207,7 @@ class NanoEngine:
         block_size: int = 16,
         attn_implementation: str = "sdpa",
         attn_backend: str = "sdpa",
+        fuse_gemms: bool = False,
     ):
         self.model, self.tokenizer = load_target(
             model_name_or_path, device, dtype, attn_implementation
@@ -216,6 +223,7 @@ class NanoEngine:
         # weights/format; only the interface HF dispatches to is replaced). Affects
         # N0/N1/N2a; N2b stays on SDPA regardless (see generate_tree_batch).
         self.attn_backend = attn_backend
+        self.fuse_gemms = bool(fuse_gemms) or _env_flag("NANO_FUSE_GEMMS")
         if attn_backend == "triton_paged_tree":
             from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
 
@@ -242,9 +250,13 @@ class NanoEngine:
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
-            self.compiled_verify = CompiledVerifyStack(self.model, block_size=self.block_size)
+            self.compiled_verify = CompiledVerifyStack(
+                self.model, block_size=self.block_size, fuse_gemms=self.fuse_gemms,
+            )
             self._compiled_verify_hidden = {}        # target_layer_ids -> stack
-            self.compiled_ar = CompiledVerifyStack(self.model, block_size=self.block_size)
+            self.compiled_ar = CompiledVerifyStack(
+                self.model, block_size=self.block_size, fuse_gemms=self.fuse_gemms,
+            )
             self._use_cudagraph = attn_backend in _CUDAGRAPH_BACKENDS
             self._graphed_verify = {}                # (need_hidden, tap_set) -> GraphedVerify
         self._tree_session = None
@@ -431,6 +443,7 @@ class NanoEngine:
             stack = CompiledVerifyStack(
                 self.model, block_size=self.block_size,
                 need_hidden=True, target_layer_ids=target_layer_ids,
+                fuse_gemms=getattr(self, "fuse_gemms", False),
             )
             cache[key] = stack
         return stack

@@ -48,13 +48,19 @@ def _add_compiled_backend(cudagraph: bool = False):
     calling the stack directly. The compiled-non-graph build (`cudagraph=False`) stays the
     untouched oracle the graph path is diffed against."""
     from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.nano_vllm.engine import _env_flag
 
     def build(model):
         eng = _tiny_nano(model, "triton_paged_tree")     # registers interface + flips impl
         eng.attn_backend = ("triton_paged_tree_cudagraph" if cudagraph
                             else "triton_paged_tree_compiled")
-        eng.compiled_verify = CompiledVerifyStack(model, block_size=eng.block_size)
-        eng.compiled_ar = CompiledVerifyStack(model, block_size=eng.block_size)
+        eng.fuse_gemms = _env_flag("NANO_FUSE_GEMMS")
+        eng.compiled_verify = CompiledVerifyStack(
+            model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
+        )
+        eng.compiled_ar = CompiledVerifyStack(
+            model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
+        )
         eng._compiled_verify_hidden = {}
         eng._use_cudagraph = cudagraph
         eng._graphed_verify = {}
@@ -245,6 +251,7 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
     FRESH pool seeded the same way, and compare the two taps over the same node rows.
     """
     from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.nano_vllm.engine import _env_flag
     from ptd.nano_vllm.paged_kv_cache import PagedKVCache
 
     model = _tiny_model(0)
@@ -284,8 +291,13 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
     bts, node_blks, node_offs, slk = cache_c.reserve_tree_slots(0, N, past_len)
     k_pools = [cache_c.pool(i)[0] for i in range(nlayers)]
     v_pools = [cache_c.pool(i)[1] for i in range(nlayers)]
-    stack = CompiledVerifyStack(model, block_size=eng.block_size,
-                                need_hidden=True, target_layer_ids=target_layer_ids)
+    stack = CompiledVerifyStack(
+        model,
+        block_size=eng.block_size,
+        need_hidden=True,
+        target_layer_ids=target_layer_ids,
+        fuse_gemms=_env_flag("NANO_FUSE_GEMMS"),
+    )
     _, comp_hidden = stack(seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
                            None, node_blks, node_offs)
 
