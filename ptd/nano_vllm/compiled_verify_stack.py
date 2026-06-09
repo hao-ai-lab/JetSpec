@@ -51,8 +51,28 @@ the real model handles), so it stays importable on a CPU/no-triton host — the
 `paged_tree_attn_op`, whose triton wrapper is itself lazily imported.
 """
 import torch
+import torch.nn.functional as F
 
 from ptd.nano_vllm.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (registers ptd::paged_tree_attn)
+
+
+def _cat_linear_params(modules):
+    """Build a fresh fused linear weight/bias tuple from separate projections."""
+    weight = torch.cat([module.weight.detach() for module in modules], dim=0).contiguous()
+    biases = [module.bias for module in modules]
+    if all(bias is None for bias in biases):
+        return weight, None
+    bias_parts = []
+    for module, bias in zip(modules, biases):
+        if bias is None:
+            bias_parts.append(torch.zeros(
+                module.weight.shape[0],
+                device=module.weight.device,
+                dtype=module.weight.dtype,
+            ))
+        else:
+            bias_parts.append(bias.detach())
+    return weight, torch.cat(bias_parts, dim=0).contiguous()
 
 
 class CompiledVerifyStack:
@@ -76,7 +96,7 @@ class CompiledVerifyStack:
     `need_hidden=True` stack for the DraftHead path."""
 
     def __init__(self, model, block_size: int, need_hidden: bool = False,
-                 target_layer_ids=None) -> None:
+                 target_layer_ids=None, fuse_gemms: bool = False) -> None:
         # apply_rotary_pos_emb is bound from the SAME module HF dispatches through,
         # so RoPE is bit-identical to the model's own forward.
         from transformers.models.qwen3.modeling_qwen3 import apply_rotary_pos_emb
@@ -96,6 +116,7 @@ class CompiledVerifyStack:
         self.num_queries_per_kv = self.num_heads_q // self.num_heads_kv   # nqpkv
         self.scaling = self.head_dim ** -0.5                              # head_dim ** -0.5
         self.block_size = int(block_size)
+        self.fuse_gemms = bool(fuse_gemms)
 
         # A3-HIDDEN: tapped-hidden variant constants. `need_hidden` and the tap set
         # are Python constants baked into the traced graph: `_stack` branches on
@@ -114,6 +135,30 @@ class CompiledVerifyStack:
         # last-layer tap silently mismatches `extract_context_feature` (accept_len
         # drop). Compile-time constant index.
         self._last_layer_idx = len(self.layers) - 1
+        if self.fuse_gemms:
+            # W13: construction-time fused projection tensors. The HF modules stay
+            # intact for eager/SDPA fallback paths; the compiled stack reads only these
+            # constants when fusion is enabled.
+            qkv_weights, qkv_biases = [], []
+            gate_up_weights, gate_up_biases = [], []
+            for layer in self.layers:
+                attn = layer.self_attn
+                weight, bias = _cat_linear_params((attn.q_proj, attn.k_proj, attn.v_proj))
+                qkv_weights.append(weight)
+                qkv_biases.append(bias)
+                mlp = layer.mlp
+                weight, bias = _cat_linear_params((mlp.gate_proj, mlp.up_proj))
+                gate_up_weights.append(weight)
+                gate_up_biases.append(bias)
+            self._fused_qkv_weights = tuple(qkv_weights)
+            self._fused_qkv_biases = tuple(qkv_biases)
+            self._fused_gate_up_weights = tuple(gate_up_weights)
+            self._fused_gate_up_biases = tuple(gate_up_biases)
+        else:
+            self._fused_qkv_weights = ()
+            self._fused_qkv_biases = ()
+            self._fused_gate_up_weights = ()
+            self._fused_gate_up_biases = ()
 
         # fullgraph=True so a graph break (e.g. an unexpected Python op leaking into
         # the trace) fails loudly rather than silently falling back to eager; the
@@ -135,6 +180,9 @@ class CompiledVerifyStack:
         qq_bias,          # (N, N) fp32 (-inf/0) or None
         node_blks,        # list[(N,) long]       per layer: reserved pool block id per node
         node_offs,        # list[(N,) long]       per layer: reserved pool offset per node
+        logical_kv_slots=None,    # list[(1, max_slots) int64] per layer, or None
+        logical_kv_starts=None,   # (1,) int32 shared, or None
+        logical_kv_lens=None,     # (1,) int32 shared, or None
     ):
         """Read-only Qwen3 forward over the N tree nodes -> `(1, N, V)` logits, or
         `(logits, target_hidden)` when `need_hidden` (A3-HIDDEN).
@@ -170,9 +218,18 @@ class CompiledVerifyStack:
             attn = layer.self_attn
             residual = hidden
             h = layer.input_layernorm(hidden)
-            q = attn.q_norm(attn.q_proj(h).view(hshape)).transpose(1, 2)    # (1, Hq, N, D)
-            k = attn.k_norm(attn.k_proj(h).view(hshape)).transpose(1, 2)    # (1, Hkv, N, D)
-            v = attn.v_proj(h).view(hshape).transpose(1, 2)                 # (1, Hkv, N, D)
+            if self.fuse_gemms:
+                q_out = Hq * Dh
+                kv_out = Hkv * Dh
+                qkv = F.linear(h, self._fused_qkv_weights[i], self._fused_qkv_biases[i])
+                q_raw, k_raw, v_raw = torch.split(qkv, (q_out, kv_out, kv_out), dim=-1)
+                q = attn.q_norm(q_raw.view(1, N, Hq, Dh)).transpose(1, 2)     # (1, Hq, N, D)
+                k = attn.k_norm(k_raw.view(1, N, Hkv, Dh)).transpose(1, 2)    # (1, Hkv, N, D)
+                v = v_raw.view(1, N, Hkv, Dh).transpose(1, 2)                 # (1, Hkv, N, D)
+            else:
+                q = attn.q_norm(attn.q_proj(h).view(hshape)).transpose(1, 2)  # (1, Hq, N, D)
+                k = attn.k_norm(attn.k_proj(h).view(hshape)).transpose(1, 2)  # (1, Hkv, N, D)
+                v = attn.v_proj(h).view(hshape).transpose(1, 2)               # (1, Hkv, N, D)
             q, k = self._apply_rotary_pos_emb(q, k, cos, sin)
             # Scatter this layer's node K/V into ITS reserved pool slots in graph.
             # Keeps k/v live (Inductor can't DCE the k/v projections) AND lands the
@@ -184,12 +241,24 @@ class CompiledVerifyStack:
             out = torch.ops.ptd.paged_tree_attn(
                 q_flat, k_pools[i], v_pools[i], block_tables[i], cu, seq_lens_k,
                 qq_bias, self.scaling, self.num_queries_per_kv, self.block_size,
+                logical_kv_slots[i] if logical_kv_slots is not None else None,
+                logical_kv_starts, logical_kv_lens,
             )
             attn_out = attn.o_proj(out.reshape(1, N, Hq * Dh))
             hidden = residual + attn_out
             residual = hidden
             h = layer.post_attention_layernorm(hidden)
-            hidden = residual + layer.mlp(h)
+            if self.fuse_gemms:
+                mlp = layer.mlp
+                gate_up = F.linear(
+                    h,
+                    self._fused_gate_up_weights[i],
+                    self._fused_gate_up_biases[i],
+                )
+                gate, up = gate_up.chunk(2, dim=-1)
+                hidden = residual + mlp.down_proj(mlp.act_fn(gate) * up)
+            else:
+                hidden = residual + layer.mlp(h)
             # Post-layer-`i` residual == extract_context_feature's hidden_states[i+1]
             # for every layer EXCEPT the last, whose HF entry is post-final-norm.
             if self.need_hidden and i in tap_set:
@@ -215,6 +284,9 @@ class CompiledVerifyStack:
         qq_bias,
         node_blks,
         node_offs,
+        logical_kv_slots=None,
+        logical_kv_starts=None,
+        logical_kv_lens=None,
     ):
         """Run the compiled verify stack. Args mirror `_stack`; returns `(1, N, V)`
         logits, or `(logits, target_hidden)` when this stack was built with
@@ -243,7 +315,11 @@ class CompiledVerifyStack:
         # table by runtime `seq_lens_k`, so a symbolic column count is safe.
         for t in block_tables:
             torch._dynamo.mark_dynamic(t, 1)
+        if logical_kv_slots is not None:
+            for t in logical_kv_slots:
+                torch._dynamo.mark_dynamic(t, 1)
         return self._compiled(
             input_ids, cos, sin, k_pools, v_pools, block_tables, cu, seq_lens_k,
             qq_bias, node_blks, node_offs,
+            logical_kv_slots, logical_kv_starts, logical_kv_lens,
         )

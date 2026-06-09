@@ -60,7 +60,7 @@ class GraphedVerify:
     """
 
     def __init__(self, stack, k_pools, v_pools, block_table_width, head_dim,
-                 hidden_size, device, dtype, buckets):
+                 hidden_size, device, dtype, buckets, logical_kv_bind=None):
         """Allocate persistent input-staging buffers sized to the largest bucket.
 
         `stack` is the built `CompiledVerifyStack` (its `__call__` runs the compiled
@@ -72,6 +72,11 @@ class GraphedVerify:
         self.stack = stack
         self.k_pools = k_pools
         self.v_pools = v_pools
+        # L5 (no-gather): per-layer logical slot rows + starts/lens, or None. These
+        # are REUSED IN PLACE like the pools — engine-owned, address-stable for the
+        # decode, mutated by the engine before each replay — NOT staged/copied. A new
+        # decode's fresh buffers change the engine-side pool_tag, forcing a rebuild.
+        self.logical_kv_bind = logical_kv_bind
         self.nlayers = len(k_pools)
         self.block_table_width = int(block_table_width)
         self.device = device
@@ -120,6 +125,7 @@ class GraphedVerify:
         reads land on the addresses the engine copies into each round (the reference
         `graph_vars['x'][:bs]` pattern). The k/v pools are passed whole (the stack indexes
         them by the staged node_blks/node_offs)."""
+        lk = self.logical_kv_bind
         return self.stack(
             self.g_input_ids[:, :B],
             self.g_cos[:, :B],
@@ -132,6 +138,9 @@ class GraphedVerify:
             self.g_qq_bias[:B, :B],
             [nb[:B] for nb in self.g_node_blks],
             [no[:B] for no in self.g_node_offs],
+            logical_kv_slots=lk[0] if lk is not None else None,
+            logical_kv_starts=lk[1] if lk is not None else None,
+            logical_kv_lens=lk[2] if lk is not None else None,
         )
 
     @torch.inference_mode()

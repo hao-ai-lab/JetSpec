@@ -6,7 +6,7 @@ Built on top of HF `transformers` (the target is a standard `AutoModelForCausalL
 
 ## Status
 
-**Shipped: paged, continuous-batched, lossless tree-speculative decode.** The `nano_vllm` engine does paged-KV, continuous-batched, lossless tree-spec decode via `torch.compile` + a CUDA-graph verify, with our own triton tree-attention kernel. The trained draft head is published at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`. On Qwen3-8B / gsm8k the verify-only `decode_cuda_speedup` is **7.31× (cudagraph backend)** vs the reference fork's **7.55×** — see [Results](#results). The HF + SDPA `ptd/engine` substrate remains the single-clone correctness reference (its plain offline Qwen3-8B decode is the 1× denominator the speedup is measured against).
+**Shipped: paged, continuous-batched, lossless tree-speculative decode.** The `nano_vllm` engine does paged-KV, continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. The trained draft head is published at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`. On Qwen3-8B (B200, bf16, single-stream) it reaches **96–103% of the reference vLLM-based fork's wall-clock TPS** — 738.6 vs 718.9 tok/s on humaneval (above it), 791.0 vs 820.7 on gsm8k, 910.3 vs 930.3 on math500 — from an engine core of ~3.8k lines vs vLLM's ~560k. See [Results](#results). The HF + SDPA `ptd/engine` substrate remains the single-clone correctness reference.
 
 ## Quickstart
 
@@ -53,19 +53,20 @@ The tree is decoupled from the backend on purpose: the same `ptd.tree` plugs int
 
 ## Results
 
-The `nano_vllm` engine ships paged, continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify with our own triton tree-attention kernel. Headline numbers (Qwen3-8B, gsm8k, tree budget 255, width 7, trained epoch6 distill head, bf16, 4-sample, single-stream):
+The `nano_vllm` engine ships paged, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused qkv/gate-up GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. Headline numbers — **wall-clock tokens/sec**, the number a user actually sees (Qwen3-8B, B200, bf16, single-stream, tree budget 127, width 7, trained epoch6 distill head, 2048-token generation window, full-dataset sample counts):
 
-- **Verify-only `decode_cuda_speedup` = 7.31× (cudagraph backend) / 6.27× (compiled backend)**, vs the reference fork's **7.55×**.
-- The residual gap to the fork is **accept_len** (6.96 vs 7.16), **not** engine efficiency: per-round verify ≈ per-token AR forward, ratio ≈ 0.95 (vs the fork's ≈ 0.98).
-- **Lossless:** fp32 token-identical to an SDPA oracle (lossless gate 21/21).
+| dataset | this engine | reference fork (full vLLM) | ratio | accept_len (ours / fork) |
+|---|---|---|---|---|
+| humaneval (164) | **738.6** | 718.9 | **1.03×** | 7.25 / 7.23 |
+| math500 (100) | **910.3** | 930.3 | 0.98× | 9.60 / 9.76 |
+| gsm8k (64) | **791.0** | 820.7 | 0.96× | 7.72 / 8.01 |
 
-Honest caveats:
+- Both engines run the same published draft head, the same prompts, the same budget, on the same GPU; the fork rows are our own measurements of its production configuration (triton kernel + logical KV layout + CUDA graphs), not paper claims.
+- **~5.8× wall-clock speedup** over the same stack's autoregressive decode.
+- The engine core is **~3.8k lines** (vs ~560k lines of Python in vLLM): the condensation is the point — fork-class throughput from a codebase you can read in an afternoon.
+- **Lossless:** fp32 token-identical to an SDPA oracle; bf16 is lossless-by-construction (each accepted token is target-greedy) but not bitwise-equal to AR greedy — borderline-argmax flips move with kernel reduction order. fp32 is exact.
 
-- **Verify-only / drafter-excluded.** The `decode_cuda_speedup` measures the target verify forward only; the drafter is excluded from both legs via a CUDA-event split, matching the fork's `decode_cuda_s` accounting (which wraps only the target forward, not the drafter).
-- **Lossless-by-construction, not bitwise-equal in bf16.** Each verify row is target-greedy, so decoding is lossless by construction; it is **not** bitwise-equal to AR greedy in bf16 — one borderline-argmax flip. fp32 is exact.
-- **Conditions:** the numbers above hold at the stated config (Qwen3-8B, gsm8k, budget 255, width 7, epoch6 head, bf16, single-stream).
-
-Reproduce with `bench/identical_fork_compare.py`.
+Production configuration: `NANO_FUSE_GEMMS=1`, `attn_backend="triton_paged_tree_cudagraph_nogather"`, graphed drafter, `session=True`. Reproduce the table with `bench/tps_walltime.py` (per-dataset fingerprints: `bench/tree_diag.py`); verify-only GPU-time comparison: `bench/identical_fork_compare.py`.
 
 ## Roadmap
 

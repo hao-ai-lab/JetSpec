@@ -139,3 +139,71 @@ def test_nano_tree_stats_shape():
     assert len(full["accept_lengths"]) == full["rounds"]
     assert len(full["tree_sizes"]) == full["rounds"]
     assert all(a >= 1 for a in full["accept_lengths"])   # each round commits >= the correction
+
+
+def _long_echo_tree(engine, model, *, tree_block_size: int, return_stats: bool = False):
+    return engine.generate_tree(
+        PROMPT,
+        TargetEchoTreeDrafter(model),
+        block_size=tree_block_size,
+        tree_width=1,
+        budget=tree_block_size,
+        target_layer_ids=[0],
+        sampling_params=SamplingParams(0.0, 80),
+        return_stats=return_stats,
+    )
+
+
+def _first_unique_midblock_token(tokens, tree_block_size: int):
+    seen = set()
+    for idx, token in enumerate(tokens):
+        if token in seen:
+            continue
+        seen.add(token)
+        if idx == 0:
+            continue
+        round_idx = ((idx - 1) // tree_block_size) + 1
+        offset = (idx - 1) % tree_block_size
+        if round_idx >= 3 and 0 < offset < tree_block_size - 1:
+            return token
+    raise AssertionError(f"no unique mid-block EOS candidate for block_size={tree_block_size}")
+
+
+def test_nano_tree_long_decode_eos_midblock_matches_ref():
+    """Persistent commit buffers must stay token-identical to the DynamicCache ref.
+
+    TargetEchoTreeDrafter commits multi-token blocks, so choosing EOS from inside
+    a later block covers the commit-slice path, early-EOS break, and the
+    need_hidden target_hidden slice-write path in one CPU regression.
+    """
+    for tree_block_size in (4, 16):
+        model = _tiny_model(0)
+        nano_full = _long_echo_tree(
+            _tiny_nano(model), model, tree_block_size=tree_block_size, return_stats=True
+        )
+        ref_full = _long_echo_tree(
+            _tiny_llm(model), model, tree_block_size=tree_block_size, return_stats=True
+        )
+        assert nano_full["token_ids"] == ref_full["token_ids"]
+        assert nano_full["rounds"] >= 3
+
+        eos_token = _first_unique_midblock_token(nano_full["token_ids"], tree_block_size)
+        nano = _tiny_nano(model)
+        ref = _tiny_llm(model)
+        nano.eos_token_ids = {eos_token}
+        ref.eos_token_ids = {eos_token}
+
+        nano_eos = _long_echo_tree(
+            nano, model, tree_block_size=tree_block_size, return_stats=True
+        )
+        ref_eos = _long_echo_tree(
+            ref, model, tree_block_size=tree_block_size, return_stats=True
+        )
+
+        assert nano_eos["token_ids"] == ref_eos["token_ids"]
+        assert nano_eos["token_ids"][-1] == eos_token
+        eos_idx = len(nano_eos["token_ids"]) - 1
+        eos_round = ((eos_idx - 1) // tree_block_size) + 1
+        eos_offset = (eos_idx - 1) % tree_block_size
+        assert eos_round >= 3
+        assert 0 < eos_offset < tree_block_size - 1

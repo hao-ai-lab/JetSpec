@@ -18,6 +18,7 @@ builds its own tree, one batched verify forward under a padded per-seq 4D ancest
 mask, per-seq accept + ref-count-safe gather), token-identical to running
 `generate_tree` on each prompt alone (the N2b lossless gate).
 """
+import os
 import torch
 from transformers import DynamicCache
 
@@ -51,10 +52,26 @@ _TREE_BUCKETS = (64, 128, 192, 256)
 #     (A3-GRAPH), collapsing the per-kernel launch storm that compile can't remove at
 #     B=1. It is opt-in: "triton_paged_tree_compiled" stays the compiled-non-graph oracle
 #     (byte-for-byte unchanged), so the cudagraph path can be diffed against it.
+#   - `_LOGICAL_KV_BACKENDS` (L5 no-gather): supersets of compiled/cudagraph that
+#     keep committed tree KV where the verify wrote it and pass per-layer logical
+#     slot maps to the kernel instead of running the O(context) per-round
+#     `cache.gather`. The gather-path backends stay byte-identical oracles.
 _KERNEL_BACKENDS = ("triton_paged_tree", "triton_paged_tree_compiled",
-                    "triton_paged_tree_cudagraph")
-_COMPILED_BACKENDS = ("triton_paged_tree_compiled", "triton_paged_tree_cudagraph")
-_CUDAGRAPH_BACKENDS = ("triton_paged_tree_cudagraph",)
+                    "triton_paged_tree_cudagraph",
+                    "triton_paged_tree_compiled_nogather",
+                    "triton_paged_tree_cudagraph_nogather")
+_COMPILED_BACKENDS = ("triton_paged_tree_compiled", "triton_paged_tree_cudagraph",
+                      "triton_paged_tree_compiled_nogather",
+                      "triton_paged_tree_cudagraph_nogather")
+_CUDAGRAPH_BACKENDS = ("triton_paged_tree_cudagraph",
+                       "triton_paged_tree_cudagraph_nogather")
+_LOGICAL_KV_BACKENDS = ("triton_paged_tree_compiled_nogather",
+                        "triton_paged_tree_cudagraph_nogather")
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def _bucket_for_n(n: int) -> int:
@@ -70,6 +87,117 @@ def _bucket_for_n(n: int) -> int:
     return ((n + step - 1) // step) * step
 
 
+def _round_session_capacity(prompt_len: int) -> int:
+    return ((int(prompt_len) + 255) // 256) * 256
+
+
+class _LogicalRoundBuffers:
+    """Per-decode logical-KV staging buffers for round metadata.
+
+    The logical-KV path mutates these buffers in place between verify calls. They
+    are intentionally engine-local: legacy gather backends keep using the old
+    allocation path and remain byte-identical oracles.
+    """
+
+    def __init__(self, *, max_slots: int, prompt_len: int, nlayers: int,
+                 hidden_size: int, block_size: int, device, dtype):
+        self.device = torch.device(device)
+        self.dtype = dtype
+        self.block_size = int(block_size)
+        self.hidden_size = int(hidden_size)
+        self.slots = torch.zeros((1, max_slots), dtype=torch.long, device=self.device)
+        self.starts = torch.tensor([prompt_len], dtype=torch.int32, device=self.device)
+        self.lens = torch.zeros((1,), dtype=torch.int32, device=self.device)
+        self.slot_rows = [self.slots] * int(nlayers)
+        self.seq_lens_k = torch.zeros((1,), dtype=torch.int32, device=self.device)
+        self._seq_step = {}
+        self._pos = {}
+        self._qq_bias = {}
+        self._dummy = {}
+        self._cu = {}
+        self._node_offsets = {}
+        self._slot_stage = {}
+
+    def logical_bind(self):
+        return self.slot_rows, self.starts, self.lens
+
+    def reset(self, prompt_len: int):
+        self.starts.fill_(int(prompt_len))
+        self.lens.zero_()
+        self.seq_lens_k.zero_()
+        self.slots.zero_()
+
+    def node_offsets(self, B: int):
+        B = int(B)
+        offs = self._node_offsets.get(B)
+        if offs is None:
+            offs = torch.arange(B, device=self.device, dtype=torch.long) % self.block_size
+            self._node_offsets[B] = offs
+        return offs
+
+    def stage_slots(self, wlen: int, node_blks: torch.Tensor, B: int):
+        B = int(B)
+        offs = self.node_offsets(B)
+        slot_stage = self._slot_stage.get(B)
+        if slot_stage is None:
+            slot_stage = torch.empty((B,), dtype=torch.long, device=self.device)
+            self._slot_stage[B] = slot_stage
+        slot_stage.copy_(node_blks[:B])
+        slot_stage.mul_(self.block_size)
+        slot_stage.add_(offs)
+        self.slots[:, wlen:wlen + B].copy_(slot_stage.view(1, B))
+
+    def fill_lengths(self, wlen: int, past_len: int, B: int):
+        self.lens.fill_(int(wlen) + int(B))
+        self.seq_lens_k.fill_(int(past_len) + int(B))
+        return self.seq_lens_k
+
+    def stage_tree_inputs(self, seq_step: torch.Tensor, depth, ancestor_mask: torch.Tensor,
+                          past_len: int, N: int, B: int):
+        B = int(B)
+        N = int(N)
+        seq_step_b = self._seq_step.get(B)
+        if seq_step_b is None:
+            seq_step_b = torch.zeros((1, B), dtype=torch.long, device=self.device)
+            self._seq_step[B] = seq_step_b
+        else:
+            seq_step_b.zero_()
+        seq_step_b[:, :N].copy_(seq_step[:, :N])
+
+        pos_b = self._pos.get(B)
+        if pos_b is None:
+            pos_b = torch.empty((1, B), dtype=torch.long, device=self.device)
+            self._pos[B] = pos_b
+        depth_t = depth if torch.is_tensor(depth) else torch.as_tensor(depth)
+        if depth_t.device != self.device or depth_t.dtype != torch.long:
+            depth_t = depth_t.to(device=self.device, dtype=torch.long)
+        pos_b[:, :N].copy_(depth_t[:N].view(1, N))
+        pos_b[:, :N].add_(int(past_len))
+        if B > N:
+            pos_b[:, N:B].copy_(pos_b[:, N - 1:N].expand(1, B - N))
+
+        qq_bias_b = self._qq_bias.get(B)
+        if qq_bias_b is None:
+            qq_bias_b = torch.empty((B, B), dtype=torch.float32, device=self.device)
+            self._qq_bias[B] = qq_bias_b
+        qq_bias_b.fill_(float("-inf"))
+        anc = ancestor_mask
+        if anc.device != self.device or anc.dtype != torch.bool:
+            anc = anc.to(device=self.device, dtype=torch.bool)
+        qq_bias_b[:N, :N].masked_fill_(anc[:N, :N], 0.0)
+
+        dummy = self._dummy.get(B)
+        if dummy is None:
+            dummy = torch.zeros((1, B, self.hidden_size), dtype=self.dtype,
+                                device=self.device)
+            self._dummy[B] = dummy
+        cu = self._cu.get(B)
+        if cu is None:
+            cu = torch.tensor([0, B], dtype=torch.int32, device=self.device)
+            self._cu[B] = cu
+        return seq_step_b, pos_b, qq_bias_b, dummy, cu
+
+
 class NanoEngine:
     def __init__(
         self,
@@ -79,6 +207,7 @@ class NanoEngine:
         block_size: int = 16,
         attn_implementation: str = "sdpa",
         attn_backend: str = "sdpa",
+        fuse_gemms: bool = False,
     ):
         self.model, self.tokenizer = load_target(
             model_name_or_path, device, dtype, attn_implementation
@@ -94,6 +223,7 @@ class NanoEngine:
         # weights/format; only the interface HF dispatches to is replaced). Affects
         # N0/N1/N2a; N2b stays on SDPA regardless (see generate_tree_batch).
         self.attn_backend = attn_backend
+        self.fuse_gemms = bool(fuse_gemms) or _env_flag("NANO_FUSE_GEMMS")
         if attn_backend == "triton_paged_tree":
             from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
 
@@ -120,11 +250,16 @@ class NanoEngine:
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
-            self.compiled_verify = CompiledVerifyStack(self.model, block_size=self.block_size)
+            self.compiled_verify = CompiledVerifyStack(
+                self.model, block_size=self.block_size, fuse_gemms=self.fuse_gemms,
+            )
             self._compiled_verify_hidden = {}        # target_layer_ids -> stack
-            self.compiled_ar = CompiledVerifyStack(self.model, block_size=self.block_size)
+            self.compiled_ar = CompiledVerifyStack(
+                self.model, block_size=self.block_size, fuse_gemms=self.fuse_gemms,
+            )
             self._use_cudagraph = attn_backend in _CUDAGRAPH_BACKENDS
             self._graphed_verify = {}                # (need_hidden, tap_set) -> GraphedVerify
+        self._tree_session = None
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -176,11 +311,34 @@ class NanoEngine:
         # mask from cache_position; the kernel masks internally.)
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
         logits, cache, _ = self.runner.forward(input_ids, cache, pos)
+        ar_graph = None
         if compiled:
             # A3-BUCKET: pre-grow the pool to the whole-run length ONCE so the compiled
             # AR (N=1) stack's pool-shape guard never trips mid-decode (only seq_lens_k
             # value grows, not the pool block-count shape). +1 for the lone decode slot.
             cache.reserve_capacity(prompt_len + sp.max_new_tokens + 1)
+            # Step 1 (path-to-fork-tps): CUDA-graph the N=1 AR forward. The compiled AR
+            # stack is fused but still launches ~36 layers' kernels eagerly per token;
+            # capturing a B=1 graph (GraphedVerify, bucket {1}) collapses that launch
+            # storm into one cudaGraphLaunch — the same win the tree-verify path banks.
+            # Built here (after reserve_capacity, so the k/v pools are address-stable) and
+            # only for the cudagraph backend; the compiled-non-graph path is left untouched
+            # as the losslessness oracle.
+            if getattr(self, "_use_cudagraph", False):
+                from ptd.nano_vllm.graph_capture import GraphedVerify
+                cfg = self.model.config
+                head_dim = (getattr(cfg, "head_dim", None)
+                            or cfg.hidden_size // cfg.num_attention_heads)
+                nl = cfg.num_hidden_layers
+                ar_graph = GraphedVerify(
+                    self.compiled_ar,
+                    [cache.pool(i)[0] for i in range(nl)],
+                    [cache.pool(i)[1] for i in range(nl)],
+                    block_table_width=cache.reserved_block_table_width,
+                    head_dim=head_dim, hidden_size=cfg.hidden_size,
+                    device=torch.device(self.device), dtype=self.dtype,
+                    buckets=(1,),
+                )
         next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
@@ -209,10 +367,23 @@ class NanoEngine:
                 nlayers = self.model.config.num_hidden_layers
                 k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                 v_pools = [cache.pool(i)[1] for i in range(nlayers)]
-                logits = self.compiled_ar(
-                    next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
-                    None, node_blks, node_offs,
-                )
+                if ar_graph is not None:
+                    # Step 1: replay the captured B=1 graph. qq_bias is a (1,1) zero —
+                    # the lone node attends itself with +0 bias, identical to the
+                    # qq_bias=None causal path for N=1 (no inter-node masking, prefix
+                    # always-visible). seq_lens_k (slk) grows each round and is staged,
+                    # so the graph reads the lengthening prefix; node_blks/offs stage the
+                    # new slot so the in-graph scatter lands this token's K/V correctly.
+                    qq0 = torch.zeros((1, 1), dtype=torch.float32, device=self.device)
+                    logits = ar_graph.replay(
+                        1, next_tok, cos, sin, bts, cu, slk, qq0,
+                        node_blks, node_offs, 1,
+                    )
+                else:
+                    logits = self.compiled_ar(
+                        next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
+                        None, node_blks, node_offs,
+                    )
             else:
                 logits, cache, _ = self.runner.forward(next_tok, cache, pos)
             next_tok = sample(logits[:, -1:, :], sp.temperature)
@@ -272,12 +443,13 @@ class NanoEngine:
             stack = CompiledVerifyStack(
                 self.model, block_size=self.block_size,
                 need_hidden=True, target_layer_ids=target_layer_ids,
+                fuse_gemms=getattr(self, "fuse_gemms", False),
             )
             cache[key] = stack
         return stack
 
     def _get_graphed_verify(self, stack, paged_cache, block_table_width,
-                            need_hidden, target_layer_ids):
+                            need_hidden, target_layer_ids, logical_kv_bind=None):
         """Lazily build (and cache) the per-bucket `GraphedVerify` wrapping `stack`
         (A3-GRAPH). Built on first use because it needs the LIVE post-`reserve_capacity`
         k/v pools + the pinned block-table width, which only exist once `generate_tree`
@@ -307,7 +479,11 @@ class NanoEngine:
         # changed (new prompt / new reserve_capacity), the cached graphs read stale
         # addresses, so rebuild (and drop the old GraphedVerify so its pool refs free).
         pool0 = paged_cache.pool(0)[0]
-        tag = (id(pool0), int(block_table_width))
+        # L5: the logical slot buffers are graph-read addresses too — a new decode's
+        # fresh buffers make old graphs semantically incompatible (not just
+        # address-stale), so they join the rebuild tag.
+        lk_tag = id(logical_kv_bind[0][0]) if logical_kv_bind is not None else None
+        tag = (id(pool0), int(block_table_width), lk_tag)
         gv = cache.get(key)
         if gv is None or gv.pool_tag != tag:
             nlayers = self.model.config.num_hidden_layers
@@ -319,6 +495,7 @@ class NanoEngine:
                 hidden_size=self.model.config.hidden_size,
                 device=torch.device(self.device), dtype=self.dtype,
                 buckets=_TREE_BUCKETS,
+                logical_kv_bind=logical_kv_bind,
             )
             gv.pool_tag = tag
             cache[key] = gv
@@ -329,7 +506,8 @@ class NanoEngine:
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
-                      profile_table: dict = None) -> dict:
+                      profile_table: dict = None, tree_diag: bool = False,
+                      session: bool = False, session_prompt_capacity: int = None) -> dict:
         """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
@@ -357,6 +535,8 @@ class NanoEngine:
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
+        prompt_len = committed.shape[1]
+        commit_capacity = prompt_len + sp.max_new_tokens + block_size
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.dtype
@@ -364,6 +544,10 @@ class NanoEngine:
         need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
+        tree_diag_bins = (
+            torch.zeros(block_size, dtype=torch.long, device=self.device)
+            if tree_diag else None
+        )
         target_hidden = None
 
         backend = getattr(self, "attn_backend", "sdpa")
@@ -373,11 +557,79 @@ class NanoEngine:
         # extra step of swapping the verify forward for the compiled read-only stack.
         kernel = backend in _KERNEL_BACKENDS
         compiled = backend in _COMPILED_BACKENDS
+        logical_kv = backend in _LOGICAL_KV_BACKENDS   # L5 no-gather (compiled-only)
+        Bmax = _bucket_for_n(budget)
+
+        tree_session = None
+        session_is_new = False
+        if session:
+            session_tag = {
+                "block_size": int(block_size),
+                "cache_block_size": int(self.block_size),
+                "dtype": str(self.dtype),
+                "need_hidden": bool(need_hidden),
+                "budget_bucket": int(Bmax),
+                "max_new_tokens": int(sp.max_new_tokens),
+                "attn_backend": backend,
+                "logical_kv": bool(logical_kv),
+            }
+            existing_session = getattr(self, "_tree_session", None)
+            if existing_session is None:
+                prompt_capacity = (
+                    _round_session_capacity(prompt_len)
+                    if session_prompt_capacity is None
+                    else int(session_prompt_capacity)
+                )
+                if prompt_capacity <= 0:
+                    raise ValueError(
+                        f"session_prompt_capacity must be positive; got {prompt_capacity}"
+                    )
+                if prompt_len > prompt_capacity:
+                    raise ValueError(
+                        f"tree session prompt_len mismatch: prompt_len={prompt_len} > "
+                        f"session_prompt_capacity={prompt_capacity}"
+                    )
+                tree_session = {
+                    "prompt_capacity": prompt_capacity,
+                    "tag": session_tag,
+                    "cache": None,
+                    "round_bufs": None,
+                }
+                session_is_new = True
+            else:
+                prompt_capacity = int(existing_session["prompt_capacity"])
+                mismatches = []
+                if session_prompt_capacity is not None:
+                    requested_capacity = int(session_prompt_capacity)
+                    if requested_capacity != prompt_capacity:
+                        mismatches.append(
+                            f"session_prompt_capacity mismatch: expected "
+                            f"{prompt_capacity}, got {requested_capacity}"
+                        )
+                if prompt_len > prompt_capacity:
+                    mismatches.append(
+                        f"prompt_len mismatch: prompt_len={prompt_len} > "
+                        f"session_prompt_capacity={prompt_capacity}"
+                    )
+                stored_tag = existing_session["tag"]
+                for name, value in session_tag.items():
+                    expected = stored_tag.get(name)
+                    if expected != value:
+                        mismatches.append(
+                            f"{name} mismatch: expected {expected}, got {value}"
+                        )
+                if mismatches:
+                    raise ValueError("tree session mismatch: " + "; ".join(mismatches))
+                tree_session = existing_session
 
         # --- prefill: populate the persistent paged cache with the prompt's KV ---
-        cache = PagedKVCache(
-            block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
-        )
+        if session and not session_is_new:
+            cache = tree_session["cache"]
+            cache.reset()
+        else:
+            cache = PagedKVCache(
+                block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
+            )
         if kernel:
             # Prefill runs on the kernel too (single seq 0, qq_bias=None -> pure
             # causal over the prompt: context_len = seq_len - S = 0).
@@ -389,10 +641,24 @@ class NanoEngine:
             committed, cache, pos,
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
         )
+        committed_buf = torch.empty(
+            (1, commit_capacity), dtype=committed.dtype, device=committed.device
+        )
+        committed_buf[:, :prompt_len].copy_(committed)
+        committed_len = prompt_len
+        target_hidden_buf = None
+        target_hidden_len = 0
         if full_hidden is not None:
-            target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
+            target_hidden_buf = torch.empty(
+                (1, commit_capacity, full_hidden.shape[-1]),
+                dtype=full_hidden.dtype,
+                device=full_hidden.device,
+            )
+            target_hidden_len = full_hidden.shape[1]
+            target_hidden_buf[:, :target_hidden_len, :].copy_(full_hidden)
+            target_hidden = target_hidden_buf[:, :target_hidden_len, :]
         if compiled:
-            if getattr(self, "_use_cudagraph", False) and _bucket_for_n(budget) > _TREE_BUCKETS[-1]:
+            if getattr(self, "_use_cudagraph", False) and Bmax > _TREE_BUCKETS[-1]:
                 # A3-GRAPH's GraphedVerify staging buffers are sized to the largest
                 # STATIC bucket (`_TREE_BUCKETS[-1]`); a budget whose bucket exceeds it
                 # can't be replayed (replay would copy an oversized tree into the fixed
@@ -413,13 +679,79 @@ class NanoEngine:
             # raises mid-decode). After this only the `seq_lens_k` value changes per round;
             # every pool/block-table shape stays fixed -> recompiles stop after the bucket
             # set is traced.
-            cache.reserve_capacity(committed.shape[1] + sp.max_new_tokens + _bucket_for_n(budget))
+        if compiled or session:
+            reserve_prompt_len = tree_session["prompt_capacity"] if session else prompt_len
+            should_reserve = (not session) or session_is_new
+            if logical_kv:
+                # L5 no-gather: without gather's compaction, every committed token can
+                # in the worst case pin its own retained block, so the POOL must be
+                # sized for prompt + 16*(max_new + tree_depth) + Bmax tokens — while
+                # the kernel-visible block-table WIDTH keeps today's (much smaller)
+                # prompt + max_new + Bmax bound (it drives the dynamo guard + graph
+                # staging and must not inflate with the pool). freeze_pool() turns any
+                # later silent `_grow_pool` (a torch.cat = pool relocation under live
+                # CUDA graphs) into a loud error.
+                # Pool = the prefix (per-layer ids, via total_tokens) + the no-compaction
+                # worst case as LAYER-SHARED ids (every committed token pinning its own
+                # retained block, + one in-flight round) — shared because
+                # reserve_logical_slots hands every layer the same block ids; sizing
+                # this through total_tokens would multiply it ~num_layers-fold (174GB
+                # at max_new=2048, the G2 OOM). Width keeps the kernel-visible bound.
+                if should_reserve:
+                    cache.reserve_capacity(
+                        reserve_prompt_len,
+                        block_table_tokens=reserve_prompt_len + sp.max_new_tokens + Bmax,
+                        extra_shared_blocks=(sp.max_new_tokens + block_size
+                                             + (Bmax + self.block_size - 1) // self.block_size + 1),
+                    )
+                    cache.freeze_pool()
+                nlayers_lk = self.model.config.num_hidden_layers
+                max_slots = sp.max_new_tokens + block_size + Bmax
+                # Address-stable for the decode: graphs/compiled calls read these in
+                # place (the pools' "REUSED IN PLACE" contract); the engine mutates
+                # them between replays. Window = committed-after-prompt + this round's
+                # B in-flight nodes; starts is write-once at prompt_len. ONE row shared
+                # by all layers (layer-shared slot ids).
+                if session and not session_is_new:
+                    round_bufs = tree_session["round_bufs"]
+                    round_bufs.reset(prompt_len)
+                else:
+                    round_bufs = _LogicalRoundBuffers(
+                        max_slots=max_slots, prompt_len=prompt_len, nlayers=nlayers_lk,
+                        hidden_size=self.model.config.hidden_size, block_size=self.block_size,
+                        device=self.device, dtype=self.dtype,
+                    )
+                    if session:
+                        tree_session["round_bufs"] = round_bufs
+                slots_rows, starts_buf, lens_buf = round_bufs.logical_bind()
+                wlen = 0
+                bts0 = cache.prefix_block_tables(cache.reserved_block_table_width)
+                # Pool tensors are round-invariant after reserve_capacity/freeze_pool.
+                k_pools0 = [cache.pool(i)[0] for i in range(nlayers_lk)]
+                v_pools0 = [cache.pool(i)[1] for i in range(nlayers_lk)]
+            else:
+                if should_reserve:
+                    cache.reserve_capacity(reserve_prompt_len + sp.max_new_tokens + Bmax)
+                if session:
+                    cache.freeze_pool()
+        if session and session_is_new:
+            tree_session["cache"] = cache
+            self._tree_session = tree_session
         first_tok = sample(logits[:, -1:, :], sp.temperature)
         new_ids.append(int(first_tok.item()))
-        committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
+        committed_buf[:, committed_len:committed_len + 1].copy_(first_tok.view(1, 1))
+        committed_len += 1
+        committed = committed_buf[:, :committed_len]       # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
-            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+            out = {
+                "token_ids": new_ids,
+                "text": self.tokenizer.decode(new_ids, skip_special_tokens=True),
+                "tpf": 0.0,
+            }
+            if tree_diag_bins is not None:
+                out["tree_nodes_per_depth"] = tree_diag_bins.cpu().tolist()
+            return out
 
         # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
         # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
@@ -429,21 +761,35 @@ class NanoEngine:
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
-            past_len = cache.get_seq_length()                          # == committed.shape[1] - 1
+            if tree_diag_bins is not None:
+                tree_diag_bins += torch.bincount(tree.depth, minlength=block_size)[:block_size]
+            # logical path: the cache's seq bookkeeping stays frozen at prompt_len
+            # (no append/gather advances it); the engine-tracked window length is
+            # the source of truth. Same VALUE as the gather path's get_seq_length()
+            # (== committed.shape[1] - 1), so posN/RoPE are identical either way.
+            past_len = (prompt_len + wlen) if logical_kv \
+                else cache.get_seq_length()                            # == committed.shape[1] - 1
             # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.
             seq_step = tree.token_ids.view(1, -1)                      # (1, N)
-            depths = tree.depth.tolist()
-            posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
-            cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
+            if logical_kv:
+                posN = None
+                cache_pos = None
+            else:
+                depths = tree.depth.tolist()
+                posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
+                cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
             if kernel:
                 # Kernel path: prefix [0, past_len) is always-visible (handled by the
                 # kernel); the N tree nodes attend per the ancestor mask folded in as
                 # the fp32 (0/-inf) qq_bias. No dense 4D mask — attention_mask=None.
                 anc = build_ancestor_matrix(tree).to(device=self.device, dtype=torch.bool)
-                qq_bias = torch.where(
-                    anc, torch.zeros((), dtype=torch.float32, device=self.device),
-                    torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
-                )
+                if logical_kv:
+                    qq_bias = None
+                else:
+                    qq_bias = torch.where(
+                        anc, torch.zeros((), dtype=torch.float32, device=self.device),
+                        torch.full((), float("-inf"), dtype=torch.float32, device=self.device),
+                    )
                 if compiled:
                     # A3-INT/A3-HIDDEN compiled verify: bypass model.__call__ + the
                     # per-layer Python and run the fused read-only stack. Reserve this
@@ -468,20 +814,53 @@ class NanoEngine:
                     # blocks (incl. the transient pad slots), so the pad KV never
                     # survives the round.
                     B = _bucket_for_n(N)
-                    seq_step_b, posN_b, qq_bias_b = self._pad_tree_to_bucket(
-                        seq_step, posN, qq_bias, N, B)
+                    if logical_kv:
+                        seq_step_b, posN_b, qq_bias_b, dummy, cu = round_bufs.stage_tree_inputs(
+                            seq_step, tree.depth, anc, past_len, N, B)
+                    else:
+                        seq_step_b, posN_b, qq_bias_b = self._pad_tree_to_bucket(
+                            seq_step, posN, qq_bias, N, B)
                     # Pin the block_table width too (the second compiled-stack shape guard
                     # besides the pool) — reserve_capacity fixed the per-layer reservation.
-                    bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
-                        0, B, past_len, block_table_width=cache.reserved_block_table_width)
-                    dummy = torch.zeros(1, B, self.model.config.hidden_size,
-                                        device=self.device, dtype=self.dtype)
+                    if logical_kv:
+                        # L5: block-aligned transient reservation — no block-table
+                        # extension, no incref; nodes live at arbitrary pool slots the
+                        # kernel reaches through the logical window. Stage this round's
+                        # slots at window positions [wlen, wlen+B); the window length
+                        # covers committed + in-flight nodes (the fork's
+                        # persisted_len + qlen pattern). Block tables stay the frozen
+                        # prefill ones (values ignored for window positions).
+                        nb_lk, round_blocks = cache.reserve_logical_slots(B)
+                        offs = round_bufs.node_offsets(B)
+                        round_bufs.stage_slots(wlen, nb_lk, B)
+                        node_blks = [nb_lk] * len(bts0)   # layer-shared ids, one row
+                        node_offs = [offs] * len(bts0)
+                        bts = bts0
+                        slk = round_bufs.fill_lengths(wlen, past_len, B)
+                    else:
+                        bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
+                            0, B, past_len, block_table_width=cache.reserved_block_table_width)
+                        dummy = torch.zeros(1, B, self.model.config.hidden_size,
+                                            device=self.device, dtype=self.dtype)
+                        cu = torch.tensor([0, B], device=self.device, dtype=torch.int32)
                     cos, sin = self.model.model.rotary_emb(dummy, posN_b)
-                    cu = torch.tensor([0, B], device=self.device, dtype=torch.int32)
                     nlayers = self.model.config.num_hidden_layers
-                    k_pools = [cache.pool(i)[0] for i in range(nlayers)]
-                    v_pools = [cache.pool(i)[1] for i in range(nlayers)]
+                    if logical_kv:
+                        k_pools = k_pools0
+                        v_pools = v_pools0
+                    else:
+                        k_pools = [cache.pool(i)[0] for i in range(nlayers)]
+                        v_pools = [cache.pool(i)[1] for i in range(nlayers)]
                     use_graph = getattr(self, "_use_cudagraph", False)
+                    # L5: the logical metadata rides every verify call on the no-gather
+                    # path. The graphed path binds the buffers IN PLACE at construction
+                    # (like the pools — the engine mutates them before replay), so
+                    # replay's signature is unchanged; the direct path passes them as
+                    # kwargs each call.
+                    lk_kwargs = dict(
+                        logical_kv_slots=slots_rows, logical_kv_starts=starts_buf,
+                        logical_kv_lens=lens_buf) if logical_kv else {}
+                    lk_bind = (slots_rows, starts_buf, lens_buf) if logical_kv else None
                     if need_hidden:
                         stack = self._get_compiled_verify_hidden(target_layer_ids)
                         if use_graph:
@@ -492,14 +871,15 @@ class NanoEngine:
                             # inside replay, token-identical to the direct stack call.
                             gv = self._get_graphed_verify(
                                 stack, cache, cache.reserved_block_table_width,
-                                need_hidden=True, target_layer_ids=target_layer_ids)
+                                need_hidden=True, target_layer_ids=target_layer_ids,
+                                logical_kv_bind=lk_bind)
                             logits, new_hidden = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
                                 qq_bias_b, node_blks, node_offs, N)
                         else:
                             logits, new_hidden = stack(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs,
+                                qq_bias_b, node_blks, node_offs, **lk_kwargs,
                             )
                             logits = logits[:, :N, :]            # drop the B-N pad rows
                             new_hidden = new_hidden[:, :N, :]
@@ -508,14 +888,15 @@ class NanoEngine:
                             gv = self._get_graphed_verify(
                                 self.compiled_verify, cache,
                                 cache.reserved_block_table_width,
-                                need_hidden=False, target_layer_ids=None)
+                                need_hidden=False, target_layer_ids=None,
+                                logical_kv_bind=lk_bind)
                             logits = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
                                 qq_bias_b, node_blks, node_offs, N)
                         else:
                             logits = self.compiled_verify(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs,
+                                qq_bias_b, node_blks, node_offs, **lk_kwargs,
                             )
                             logits = logits[:, :N, :]            # drop the B-N pad rows
                         new_hidden = None
@@ -542,28 +923,77 @@ class NanoEngine:
                     output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
                 )
             target_logits = logits                                    # (1, N, V) — every row is a tree node
-            accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
-            # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
-            # rejected branches' KV. accepted_path = [0(root), …acc nodes], tree-ordered;
-            # their cache slots are past_len + path -> contiguous positions after gather.
-            keep = torch.cat([
-                torch.arange(past_len, device=self.device),
-                past_len + torch.tensor(accepted_path, device=self.device),
-            ])
-            cache.gather(keep)                    # cache length -> past_len + (acc + 1)
+            if sp.temperature == 0.0:
+                # L2 (path-to-fork-tps): GPU-resident greedy accept — one .item()
+                # (accepted_len) instead of the oracle's posterior.tolist() +
+                # child-map python walk; the path/correction stay device tensors
+                # so the gather/hidden/commit steps below never re-upload them.
+                # max_depth = block_size (the tree's depth budget) keeps the
+                # parent-walk loop short and sync-free. temperature>0 stays on
+                # the CPU oracle (gpu_tree_accept is greedy-only).
+                from ptd.tree._core.accept import gpu_tree_accept
+                greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
+                path_t, acc, corr_t = gpu_tree_accept(
+                    tree.token_ids, greedy, tree.parent_indices, tree.depth,
+                    max_depth=block_size,
+                )
+            else:
+                accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+                path_t = torch.tensor(accepted_path, device=self.device)
+                corr_t = torch.tensor(correction, device=self.device)
+            if logical_kv:
+                # L5 slot-commit (replaces the O(context) gather): the accepted nodes'
+                # KV stays at the slots the verify wrote; only the WINDOW MAP is
+                # rewritten — copy the accepted entries (advanced indexing copies, so
+                # the overlapping write-back is safe; path_t[0]=0 maps wlen->wlen) down
+                # to the committed region, then advance the window. O(acc+1) work.
+                kept = round_bufs.slots[:, wlen + path_t]
+                round_bufs.slots[:, wlen:wlen + int(kept.shape[1])] = kept
+                # Free policy: a round's reservation is block-aligned, so block j of
+                # EVERY layer holds exactly nodes [16j, 16j+16) of THIS round — a block
+                # survives iff it holds an accepted node; pure-rejected (incl. pad)
+                # blocks recycle now. Dead slots inside kept blocks leak until the
+                # per-decode cache drops (~bounded by reserve_capacity's formula).
+                # path_t is already on host for the EOS/commit step below — one small
+                # DtoH, same data the round syncs anyway.
+                path_list = path_t.tolist()
+                kept_j = {p // self.block_size for p in path_list}
+                freed_idx = [j for j in range(len(round_blocks))
+                             if j not in kept_j]
+                cache.release_round_blocks(round_blocks, freed_idx)
+                wlen += len(path_list)
+            else:
+                # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
+                # rejected branches' KV. path_t = [0(root), …acc nodes], tree-ordered;
+                # their cache slots are past_len + path -> contiguous positions after gather.
+                keep = torch.cat([
+                    torch.arange(past_len, device=self.device),
+                    past_len + path_t,
+                ])
+                cache.gather(keep)                # cache length -> past_len + (acc + 1)
             if new_hidden is not None:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
-                sel = torch.tensor(accepted_path, device=self.device)
-                target_hidden = torch.cat([target_hidden, new_hidden[:, sel, :]], dim=1)
-            accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
-                else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
-            block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
-            committed = torch.cat([committed, block.view(1, -1)], dim=1)
+                hidden_append = new_hidden[:, path_t, :]
+                hidden_end = target_hidden_len + hidden_append.shape[1]
+                target_hidden_buf[:, target_hidden_len:hidden_end, :].copy_(hidden_append)
+                target_hidden_len = hidden_end
+                target_hidden = target_hidden_buf[:, :target_hidden_len, :]
+            commit_start = committed_len
+            if acc > 0:
+                accepted = tree.token_ids[path_t[1:]]
+                accepted_len = accepted.numel()
+                committed_buf[:, committed_len:committed_len + accepted_len].copy_(
+                    accepted.view(1, -1)
+                )
+                committed_len += accepted_len
+            committed_buf[0, committed_len] = corr_t
+            committed_len += 1
+            committed = committed_buf[:, :committed_len]
             rounds += 1
-            accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
+            accept_lengths.append(committed_len - commit_start)   # acc + 1, matches reference accept-len
             tree_sizes.append(int(N))
-            for t in block.tolist():
+            for t in committed_buf[0, commit_start:committed_len].tolist():
                 new_ids.append(int(t))
                 if int(t) in self.eos_token_ids:
                     break
@@ -576,6 +1006,8 @@ class NanoEngine:
             out["accept_lengths"] = accept_lengths   # per-round (acc+1)
             out["tree_sizes"] = tree_sizes           # per-round node count
             out["rounds"] = rounds
+        if tree_diag_bins is not None:
+            out["tree_nodes_per_depth"] = tree_diag_bins.cpu().tolist()
         return out
 
     @torch.inference_mode()

@@ -37,6 +37,9 @@ def paged_tree_attn(
     scale: float,               # head_dim ** -0.5
     num_queries_per_kv: int,    # Hq // Hkv
     block_size: int,
+    logical_kv_slots: Optional[torch.Tensor] = None,   # (num_seqs, max_logical_slots) physical slot ids
+    logical_kv_starts: Optional[torch.Tensor] = None,  # (num_seqs,) first logical key pos to remap
+    logical_kv_lens: Optional[torch.Tensor] = None,    # (num_seqs,) number of logical key positions
 ) -> torch.Tensor:
     """Opaque ``custom_op`` over the triton paged tree-attention kernel.
 
@@ -49,6 +52,7 @@ def paged_tree_attn(
     return _paged_tree_attn_impl(
         q, k_pool, v_pool, block_table, cu_seqlens_q, seq_lens_k,
         qq_bias, scale, num_queries_per_kv, block_size,
+        logical_kv_slots, logical_kv_starts, logical_kv_lens,
     )
 
 
@@ -64,6 +68,9 @@ def _paged_tree_attn_fake(
     scale,
     num_queries_per_kv,
     block_size,
+    logical_kv_slots=None,
+    logical_kv_starts=None,
+    logical_kv_lens=None,
 ):
     """Meta/fake kernel: output is ``(total_q, Hq, D)`` matching ``q`` exactly.
 
