@@ -89,6 +89,32 @@ def test_compiled_draft_head_matches_eager_across_context_buckets():
         torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
 
 
+@torch.inference_mode()
+def test_compiled_draft_head_reuses_one_bucket_graph_across_context_lengths():
+    head, target = _tiny_head_and_target()
+    compiled = CompiledDraftHead(
+        head,
+        target,
+        block_size=4,
+        target_layer_ids=[0],
+        ctx_buckets=(16,),
+    )
+
+    old_error_on_recompile = torch._dynamo.config.error_on_recompile
+    torch._dynamo.reset()
+    torch._dynamo.config.error_on_recompile = True
+    try:
+        for ctx_len in range(1, 13):
+            context_ids, target_hidden = _inputs(ctx_len, head.config.vocab_size, head.config.hidden_size)
+            logits = compiled.propose_logits(context_ids, depth=3, target_hidden=target_hidden)
+
+            assert compiled.bucket_for_ctx_len(ctx_len) == 16
+            assert logits.shape == (1, 3, head.config.vocab_size)
+    finally:
+        torch._dynamo.config.error_on_recompile = old_error_on_recompile
+        torch._dynamo.reset()
+
+
 def test_draft_head_context_bucket_math():
     head, target = _tiny_head_and_target()
     compiled = CompiledDraftHead(
