@@ -135,6 +135,9 @@ class CompiledVerifyStack:
         qq_bias,          # (N, N) fp32 (-inf/0) or None
         node_blks,        # list[(N,) long]       per layer: reserved pool block id per node
         node_offs,        # list[(N,) long]       per layer: reserved pool offset per node
+        logical_kv_slots=None,    # list[(1, max_slots) int64] per layer, or None
+        logical_kv_starts=None,   # (1,) int32 shared, or None
+        logical_kv_lens=None,     # (1,) int32 shared, or None
     ):
         """Read-only Qwen3 forward over the N tree nodes -> `(1, N, V)` logits, or
         `(logits, target_hidden)` when `need_hidden` (A3-HIDDEN).
@@ -184,6 +187,8 @@ class CompiledVerifyStack:
             out = torch.ops.ptd.paged_tree_attn(
                 q_flat, k_pools[i], v_pools[i], block_tables[i], cu, seq_lens_k,
                 qq_bias, self.scaling, self.num_queries_per_kv, self.block_size,
+                logical_kv_slots[i] if logical_kv_slots is not None else None,
+                logical_kv_starts, logical_kv_lens,
             )
             attn_out = attn.o_proj(out.reshape(1, N, Hq * Dh))
             hidden = residual + attn_out
@@ -215,6 +220,9 @@ class CompiledVerifyStack:
         qq_bias,
         node_blks,
         node_offs,
+        logical_kv_slots=None,
+        logical_kv_starts=None,
+        logical_kv_lens=None,
     ):
         """Run the compiled verify stack. Args mirror `_stack`; returns `(1, N, V)`
         logits, or `(logits, target_hidden)` when this stack was built with
@@ -243,7 +251,11 @@ class CompiledVerifyStack:
         # table by runtime `seq_lens_k`, so a symbolic column count is safe.
         for t in block_tables:
             torch._dynamo.mark_dynamic(t, 1)
+        if logical_kv_slots is not None:
+            for t in logical_kv_slots:
+                torch._dynamo.mark_dynamic(t, 1)
         return self._compiled(
             input_ids, cos, sin, k_pools, v_pools, block_tables, cu, seq_lens_k,
             qq_bias, node_blks, node_offs,
+            logical_kv_slots, logical_kv_starts, logical_kv_lens,
         )

@@ -140,6 +140,7 @@ class PagedKVCache(Cache):
         self._paged_handoff = False
         self._handoff_seq_ids: Optional[list[int]] = None
         self._ptd_attn_meta: Optional[dict] = None
+        self._pool_frozen = False
         if self._is_single_seq:
             # N0/N1: pool grows on demand once dims are known.
             self._free_blocks: list[int] = []
@@ -155,6 +156,8 @@ class PagedKVCache(Cache):
         """Append `extra_blocks` empty blocks to every layer's pools, freeing them.
 
         Only used in single-seq (N0) mode; the N2a fixed pool never grows."""
+        if self._pool_frozen:
+            raise RuntimeError("PagedKVCache pool is frozen; late growth would relocate the pool")
         old = self._num_blocks
         self._num_blocks = old + extra_blocks
         for layer_idx in self._kpool:
@@ -165,7 +168,7 @@ class PagedKVCache(Cache):
                 [self._vpool[layer_idx], torch.zeros(shape, dtype=self.dtype, device=self.device)], dim=0)
         self._free_blocks.extend(range(old, self._num_blocks))
 
-    def reserve_capacity(self, total_tokens: int) -> None:
+    def reserve_capacity(self, total_tokens: int, block_table_tokens: Optional[int] = None) -> None:
         """Pre-grow the (single-seq) pool ONCE to hold `total_tokens`, so the pool
         tensors' block-count dim is shape-stable for the rest of the run.
 
@@ -187,17 +190,27 @@ class PagedKVCache(Cache):
         `num_layers × ceil(total_tokens / block_size)` physical blocks — reserve for
         every layer, not one (a single-layer estimate undershoots ~`num_layers`-fold and
         leaves the pool growing per round, re-triggering the recompiles this prevents).
-        Add one block_size-bucket of slack per layer for the partial last block."""
+        Add one block_size-bucket of slack per layer for the partial last block.
+
+        `block_table_tokens` decouples the kernel-visible block-table width from
+        the larger physical pool reservation used by logical-KV no-gather decode.
+        Leaving it `None` preserves the legacy one-argument behavior exactly."""
         if not self._is_single_seq or self._num_heads is None:
             return
+        block_table_tokens = total_tokens if block_table_tokens is None else block_table_tokens
         num_layers = max(1, len(self._kpool))
         per_layer = self._blocks_for(total_tokens) + 1      # +1: partial last block
+        table_per_layer = self._blocks_for(block_table_tokens) + 1
         # Remember the per-layer reservation so the engine can pin the compiled stack's
         # block_table column count to it (A3-BUCKET shape stability). Never shrinks.
-        self._reserved_per_layer = max(getattr(self, "_reserved_per_layer", 0), per_layer)
+        self._reserved_per_layer = max(getattr(self, "_reserved_per_layer", 0), table_per_layer)
         need_blocks = num_layers * per_layer
         if need_blocks > self._num_blocks:
             self._grow_pool(need_blocks - self._num_blocks)
+
+    def freeze_pool(self) -> None:
+        """Forbid later single-seq growth once graph-bound pool addresses matter."""
+        self._pool_frozen = True
 
     @property
     def reserved_block_table_width(self) -> Optional[int]:
@@ -438,6 +451,62 @@ class PagedKVCache(Cache):
         self._touch(seq_id)
         seq_lens_k = torch.tensor([past_len + n_nodes], device=dev, dtype=torch.int32)
         return block_tables, node_blks, node_offs, seq_lens_k
+
+    def reserve_logical_slots(self, n_nodes: int) -> tuple[torch.Tensor, list[list[int]]]:
+        """Reserve block-aligned, per-layer physical slots for a logical-KV round.
+
+        Unlike `reserve_tree_slots`, this does not extend block tables, does not
+        incref blocks, and does not update `_seq_filled`: the engine owns these
+        transient round blocks and releases rejected block groups explicitly."""
+        dev = self.device
+        layer_ids = sorted(self._kpool.keys())
+        per_layer = self._blocks_for(n_nodes)
+        total = per_layer * len(layer_ids)
+        all_new = [int(b) for b in self.allocate(total).tolist()] if total else []
+        rows, round_blocks = [], []
+        cursor = 0
+        for _layer_idx in layer_ids:
+            blocks = all_new[cursor:cursor + per_layer]
+            cursor += per_layer
+            round_blocks.append(blocks)
+            row = torch.tensor(blocks, device=dev, dtype=torch.long).repeat_interleave(self._block_size)[:n_nodes]
+            rows.append(row)
+        if not rows:
+            node_blks = torch.empty((0, n_nodes), dtype=torch.long, device=dev)
+        else:
+            node_blks = torch.stack(rows, dim=0)
+        return node_blks, round_blocks
+
+    def release_round_blocks(self, round_blocks: list[list[int]], freed_idx: list[int]) -> None:
+        """Return rejected logical-KV round blocks directly to the free pool."""
+        freed = []
+        for blocks in round_blocks:
+            for idx in freed_idx:
+                if idx < 0 or idx >= len(blocks):
+                    raise IndexError(f"freed_idx {idx} out of range for {len(blocks)} blocks")
+                block_id = int(blocks[idx])
+                if block_id in self._block_refcounts:
+                    raise RuntimeError(f"logical round block {block_id} was unexpectedly refcounted")
+                if block_id not in self._free_blocks:
+                    freed.append(block_id)
+        self._free_blocks = sorted(set(self._free_blocks).union(freed))
+
+    def prefix_block_tables(self, width: int, seq_id: Optional[int] = None) -> list[torch.Tensor]:
+        """Frozen prefill block tables, right-padded to `width` columns per layer."""
+        seq_id = self._default_seq_id if seq_id is None else seq_id
+        rows = []
+        for layer_idx in sorted(self._kpool.keys()):
+            table = self._seq_block_tables.get(seq_id, {}).get(layer_idx, [])
+            if len(table) > width:
+                raise ValueError(
+                    f"block_table for layer {layer_idx} has {len(table)} blocks > "
+                    f"requested fixed width {width}"
+                )
+            row = torch.zeros((width,), device=self.device, dtype=torch.int32)
+            if table:
+                row[: len(table)] = torch.tensor(table, device=self.device, dtype=torch.int32)
+            rows.append(row.view(1, -1))
+        return rows
 
     def gather(self, positions: torch.Tensor, seq_id: Optional[int] = None) -> None:
         """Compact `seq_id`'s non-contiguous keep set into a linear prefix (all layers).

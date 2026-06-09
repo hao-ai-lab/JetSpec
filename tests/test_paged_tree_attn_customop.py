@@ -172,3 +172,52 @@ def test_fullgraph_traces_with_logical_kv_args(with_bias):
     )
     assert out.shape == (TOTAL_Q, HQ, D)
     assert out.dtype == q.dtype
+
+
+def test_compiled_verify_stack_traces_legacy_and_logical_kv_kwargs_on_meta():
+    """The stack-level call stays fullgraph-traceable with omitted logical args and
+    with per-layer logical-slot rows threaded down to the custom op."""
+    from transformers import Qwen3Config, Qwen3ForCausalLM
+
+    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+
+    torch._dynamo.reset()
+    cfg = Qwen3Config(
+        vocab_size=32,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        max_position_embeddings=32,
+        tie_word_embeddings=False,
+    )
+    model = Qwen3ForCausalLM(cfg).eval().to(device="meta", dtype=torch.float32)
+    stack = CompiledVerifyStack(model, block_size=4)
+    n = 3
+    args = dict(
+        input_ids=torch.empty((1, n), dtype=torch.long, device="meta"),
+        cos=torch.empty((1, n, 8), dtype=torch.float32, device="meta"),
+        sin=torch.empty((1, n, 8), dtype=torch.float32, device="meta"),
+        k_pools=[torch.empty((6, 4, 1, 8), dtype=torch.float32, device="meta")],
+        v_pools=[torch.empty((6, 4, 1, 8), dtype=torch.float32, device="meta")],
+        block_tables=[torch.empty((1, 5), dtype=torch.int32, device="meta")],
+        cu=torch.empty((2,), dtype=torch.int32, device="meta"),
+        seq_lens_k=torch.empty((1,), dtype=torch.int32, device="meta"),
+        qq_bias=None,
+        node_blks=[torch.empty((n,), dtype=torch.long, device="meta")],
+        node_offs=[torch.empty((n,), dtype=torch.long, device="meta")],
+    )
+
+    with torch.no_grad():
+        legacy = stack(**args)
+        logical = stack(
+            **args,
+            logical_kv_slots=[torch.empty((1, 8), dtype=torch.int64, device="meta")],
+            logical_kv_starts=torch.empty((1,), dtype=torch.int32, device="meta"),
+            logical_kv_lens=torch.empty((1,), dtype=torch.int32, device="meta"),
+        )
+
+    assert legacy.shape == (1, n, cfg.vocab_size)
+    assert logical.shape == (1, n, cfg.vocab_size)
