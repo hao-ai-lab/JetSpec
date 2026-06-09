@@ -176,11 +176,34 @@ class NanoEngine:
         # mask from cache_position; the kernel masks internally.)
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
         logits, cache, _ = self.runner.forward(input_ids, cache, pos)
+        ar_graph = None
         if compiled:
             # A3-BUCKET: pre-grow the pool to the whole-run length ONCE so the compiled
             # AR (N=1) stack's pool-shape guard never trips mid-decode (only seq_lens_k
             # value grows, not the pool block-count shape). +1 for the lone decode slot.
             cache.reserve_capacity(prompt_len + sp.max_new_tokens + 1)
+            # Step 1 (path-to-fork-tps): CUDA-graph the N=1 AR forward. The compiled AR
+            # stack is fused but still launches ~36 layers' kernels eagerly per token;
+            # capturing a B=1 graph (GraphedVerify, bucket {1}) collapses that launch
+            # storm into one cudaGraphLaunch — the same win the tree-verify path banks.
+            # Built here (after reserve_capacity, so the k/v pools are address-stable) and
+            # only for the cudagraph backend; the compiled-non-graph path is left untouched
+            # as the losslessness oracle.
+            if getattr(self, "_use_cudagraph", False):
+                from ptd.nano_vllm.graph_capture import GraphedVerify
+                cfg = self.model.config
+                head_dim = (getattr(cfg, "head_dim", None)
+                            or cfg.hidden_size // cfg.num_attention_heads)
+                nl = cfg.num_hidden_layers
+                ar_graph = GraphedVerify(
+                    self.compiled_ar,
+                    [cache.pool(i)[0] for i in range(nl)],
+                    [cache.pool(i)[1] for i in range(nl)],
+                    block_table_width=cache.reserved_block_table_width,
+                    head_dim=head_dim, hidden_size=cfg.hidden_size,
+                    device=torch.device(self.device), dtype=self.dtype,
+                    buckets=(1,),
+                )
         next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
@@ -209,10 +232,23 @@ class NanoEngine:
                 nlayers = self.model.config.num_hidden_layers
                 k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                 v_pools = [cache.pool(i)[1] for i in range(nlayers)]
-                logits = self.compiled_ar(
-                    next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
-                    None, node_blks, node_offs,
-                )
+                if ar_graph is not None:
+                    # Step 1: replay the captured B=1 graph. qq_bias is a (1,1) zero —
+                    # the lone node attends itself with +0 bias, identical to the
+                    # qq_bias=None causal path for N=1 (no inter-node masking, prefix
+                    # always-visible). seq_lens_k (slk) grows each round and is staged,
+                    # so the graph reads the lengthening prefix; node_blks/offs stage the
+                    # new slot so the in-graph scatter lands this token's K/V correctly.
+                    qq0 = torch.zeros((1, 1), dtype=torch.float32, device=self.device)
+                    logits = ar_graph.replay(
+                        1, next_tok, cos, sin, bts, cu, slk, qq0,
+                        node_blks, node_offs, 1,
+                    )
+                else:
+                    logits = self.compiled_ar(
+                        next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
+                        None, node_blks, node_offs,
+                    )
             else:
                 logits, cache, _ = self.runner.forward(next_tok, cache, pos)
             next_tok = sample(logits[:, -1:, :], sp.temperature)
