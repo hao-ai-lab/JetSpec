@@ -32,15 +32,15 @@ from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
 # A3-BUCKET: tree-N bucket sizes for the compiled verify stack. `torch.compile(
 # dynamic=False)` specializes `_stack` on the concrete node count N, so a variable-N
 # decode recompiles per distinct N. We snap N UP to the next bucket by padding (pad
-# rows get -inf qq_bias so real rows never attend them and tree_accept never reads
-# them — see `_pad_tree_to_bucket`), so the compiled stack only ever sees these few N
-# values. Buckets were chosen from the measured N distribution on a real gsm8k decode
+# rows are isolated from real rows by qq_bias and tree_accept never reads them — see
+# `_pad_tree_to_bucket`), so the compiled stack only ever sees these few N values.
+# Buckets were chosen from the measured N distribution on a real gsm8k decode
 # (Qwen3-8B, budget=255, width=7, block_size=16, epoch6 head): the crossproduct heap
 # fills to the budget cap EVERY round, so N is degenerate at 255 — but the smaller
 # buckets keep early/short-context or smaller-budget runs from recompiling too, and
 # 256 covers the budget=255 steady state (the dominant case). Padding adds at most
 # `bucket - N` dummy rows (here 1), a negligible verify-forward cost.
-_TREE_BUCKETS = (64, 128, 192, 256)
+_TREE_BUCKETS = (16, 32, 64, 128, 192, 256)
 
 # A3-GRAPH backends. The compiled verify/AR stacks (A3-INT/A3-HIDDEN) ride two flag sets:
 #   - `_KERNEL_BACKENDS`: routes prefill + the verify forward through the paged tree-attn
@@ -402,11 +402,11 @@ class NanoEngine:
           - `qq_bias_b[i, N:] = -inf` for every real row i < N: real queries assign
             -inf score to pad keys, so the softmax over `[prefix | tree]` is identical
             to the unbucketed (N,N) bias — real rows' attention output is unchanged.
-          - `qq_bias_b[N:, :] = -inf` for every pad row: pad queries attend nothing
-            (all keys -inf). Their attention output is the kernel's all-masked value
-            (irrelevant — we slice `[:N]` off), and crucially they are never read by
-            `tree_accept`, which walks child indices 0..N-1 only (so a pad row is never
-            `current` and its logit/hidden is never inspected).
+          - pad queries are isolated from every real key by -inf and can only attend
+            themselves. The self edge avoids all-masked softmax NaNs inside the per-layer
+            pad K/V while still leaving pad rows unobservable: we slice `[:N]` off, and
+            `tree_accept` walks child indices 0..N-1 only (so a pad row is never `current`
+            and its logit/hidden is never inspected).
           - pad rows get a dummy token (0) and the last real RoPE position; neither
             feeds back into any real row (the -inf bias isolates them).
         The pad rows' post-RoPE K/V is scattered into the reserved slots
@@ -422,6 +422,8 @@ class NanoEngine:
         neg_inf = torch.full((), float("-inf"), dtype=qq_bias.dtype, device=dev)
         qq_bias_b = neg_inf.expand(B, B).clone()           # every pad interaction -inf
         qq_bias_b[:N, :N] = qq_bias                         # real block unchanged
+        pad_idx = torch.arange(N, B, device=dev)
+        qq_bias_b[pad_idx, pad_idx] = 0.0                   # pad rows self-only, no NaNs
         return seq_step_b, posN_b, qq_bias_b
 
     def _get_compiled_verify_hidden(self, target_layer_ids):
@@ -804,15 +806,15 @@ class NanoEngine:
                     #
                     # A3-BUCKET: pad the N real tree rows up to a fixed bucket B so the
                     # compiled stack only ever sees the few `_TREE_BUCKETS` node counts
-                    # (no per-N recompile). The pad rows get -inf qq_bias both ways, so
-                    # real rows never attend pad keys and pad rows are never `current`
-                    # in tree_accept (which walks real child indices 0..N-1 only) — the
-                    # logits/hidden we slice back to [:N] are bit-identical to the
-                    # unbucketed stack. We reserve B slots (the compiled stack scatters
-                    # all B rows' KV in-graph); `gather(keep)` below references only
-                    # `past_len + accepted_path` (< past_len + N), and decrefs ALL old
-                    # blocks (incl. the transient pad slots), so the pad KV never
-                    # survives the round.
+                    # (no per-N recompile). Real rows get -inf for every pad key; pad
+                    # rows get only a self edge so the kernel never sees an all-masked
+                    # softmax row, but pad rows are never `current` in tree_accept (which
+                    # walks real child indices 0..N-1 only). The logits/hidden we slice
+                    # back to [:N] are bit-identical to the unbucketed stack. We reserve B
+                    # slots (the compiled stack scatters all B rows' KV in-graph);
+                    # `gather(keep)` below references only `past_len + accepted_path`
+                    # (< past_len + N), and decrefs ALL old blocks (incl. the transient
+                    # pad slots), so the pad KV never survives the round.
                     B = _bucket_for_n(N)
                     if logical_kv:
                         seq_step_b, posN_b, qq_bias_b, dummy, cu = round_bufs.stage_tree_inputs(
