@@ -91,6 +91,46 @@ def _round_session_capacity(prompt_len: int) -> int:
     return ((int(prompt_len) + 255) // 256) * 256
 
 
+def _maybe_extend_tree(tree, draft_logits, tree_drafter, committed, target_hidden,
+                       tree_width, extend_kwargs):
+    """P1 ceiling raise (v1, chain mode): extend the rank-1 chain leaf with one
+    conditioned drafter pass when the chain is fully present in the tree AND
+    its per-depth top-2 gaps clear `gap_threshold`. Cost when it fires: one
+    extra drafter forward; strict no-op otherwise (returns the tree unchanged).
+    """
+    # tree contract (engine -> tree, one-way): public ptd.tree API only.
+    from ptd.tree import should_extend, splice_extension
+
+    cond_fn = getattr(tree_drafter, "propose_logits_conditioned", None)
+    if cond_fn is None:
+        return tree
+    lp = torch.log_softmax(draft_logits[0].float(), dim=-1)
+    topk_lp, topk_tok = torch.topk(lp, tree_width, dim=-1)        # (D, K)
+    chain = topk_tok[:, 0].tolist()                               # rank-1 chain tokens
+    parents = tree.parent_indices.tolist()
+    tokens = tree.token_ids.tolist()
+    children = [[] for _ in range(tree.num_nodes)]
+    for i in range(1, tree.num_nodes):
+        children[parents[i]].append(i)
+    node = 0
+    for tok in chain:
+        nxt = next((c for c in children[node] if tokens[c] == tok), None)
+        if nxt is None:
+            return tree                                           # chain not fully treed
+        node = nxt
+    ranks = [0] * len(chain)
+    if not should_extend(topk_lp, ranks,
+                         gap_threshold=float(extend_kwargs.get("gap_threshold", 1.0))):
+        return tree
+    cond = cond_fn(committed, topk_tok[:, 0], target_hidden=target_hidden)
+    return splice_extension(
+        tree, node, cond,
+        ext_budget=int(extend_kwargs.get("ext_budget", len(chain))),
+        tree_width=tree_width,
+        mode=extend_kwargs.get("mode", "chain"),
+    )
+
+
 class _LogicalRoundBuffers:
     """Per-decode logical-KV staging buffers for round metadata.
 
@@ -510,7 +550,7 @@ class NanoEngine:
                       return_stats: bool = False, prompt_info: dict = None,
                       profile_table: dict = None, tree_diag: bool = False,
                       session: bool = False, session_prompt_capacity: int = None,
-                      max_tree_depth: int = None) -> dict:
+                      max_tree_depth: int = None, extend_kwargs: dict = None) -> dict:
         """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
@@ -770,6 +810,15 @@ class NanoEngine:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
+            if extend_kwargs is not None:
+                # P1 ceiling raise: when the rank-1 chain is in the tree and
+                # gap-confident, one conditioned drafter pass extends it below
+                # the 15-deep leaf (tree depth then exceeds block_size-1; the
+                # caller must size max_tree_depth accordingly).
+                tree = _maybe_extend_tree(
+                    tree, draft_logits, tree_drafter, committed, target_hidden,
+                    tree_width, extend_kwargs,
+                )
             N = tree.num_nodes
             actual_tree_depth = int(tree.depth.max().item()) if N else 0
             if actual_tree_depth > configured_max_tree_depth:
