@@ -32,6 +32,7 @@ from ptd.tree._core.base import DraftTree, TreeAlgorithm
 from ptd.tree._core.registry import get_algorithm, register_tree_algo, list_algorithms
 from ptd.tree._core.ancestor import build_ancestor_matrix
 from ptd.tree._core.accept import tree_accept
+from ptd.tree._core.extend import should_extend, splice_extension
 from ptd.tree._core.topk_build import build_from_topk
 from ptd.tree import baselines        # noqa: F401  (import to register algorithms)
 from ptd.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
@@ -42,4 +43,5 @@ __all__ = [
     "DraftTree", "TreeAlgorithm",
     "get_algorithm", "register_tree_algo", "list_algorithms",
     "build_ancestor_matrix", "tree_accept", "build_from_topk",
+    "should_extend", "splice_extension",
 ]
