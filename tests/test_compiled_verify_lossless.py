@@ -165,8 +165,15 @@ def _force_bucket(monkeypatch, pad: int):
 def test_bucket_for_n_math():
     """`_bucket_for_n` snaps UP to the next bucket; beyond the max it rounds up to a
     multiple of the largest bucket (bounded shape set, never per-N)."""
-    assert _eng_mod._TREE_BUCKETS == (64, 128, 192, 256)
-    assert _eng_mod._bucket_for_n(1) == 64
+    assert _eng_mod._TREE_BUCKETS == (16, 32, 64, 128, 192, 256)
+    assert _eng_mod._bucket_for_n(1) == 16
+    assert _eng_mod._bucket_for_n(15) == 16
+    assert _eng_mod._bucket_for_n(16) == 16
+    assert _eng_mod._bucket_for_n(17) == 32
+    assert _eng_mod._bucket_for_n(31) == 32
+    assert _eng_mod._bucket_for_n(32) == 32
+    assert _eng_mod._bucket_for_n(33) == 64
+    assert _eng_mod._bucket_for_n(63) == 64
     assert _eng_mod._bucket_for_n(64) == 64
     assert _eng_mod._bucket_for_n(65) == 128
     assert _eng_mod._bucket_for_n(255) == 256
@@ -176,7 +183,8 @@ def test_bucket_for_n_math():
 
 def test_pad_tree_to_bucket_structure():
     """`_pad_tree_to_bucket` keeps the real (N,N) qq_bias block intact and sets every
-    pad interaction (real->pad cols, pad->any rows) to -inf, with B==N a no-op."""
+    real/pad interaction to -inf; pad rows have only a self edge to avoid all-masked
+    softmax NaNs and are never accepted. B==N is a no-op."""
     eng = object.__new__(_eng_mod.NanoEngine)
     eng.device = "cpu"
     N, pad = 4, 3
@@ -190,7 +198,10 @@ def test_pad_tree_to_bucket_structure():
     assert torch.equal(ss_b[:, :N], seq_step) and (ss_b[:, N:] == 0).all()
     assert torch.equal(qq_b[:N, :N], qq)                 # real block unchanged
     assert torch.isneginf(qq_b[:N, N:]).all()            # real rows never attend pad
-    assert torch.isneginf(qq_b[N:, :]).all()             # pad rows attend nothing
+    assert torch.isneginf(qq_b[N:, :N]).all()            # pad rows never attend real
+    pad_block = qq_b[N:, N:]
+    assert torch.isneginf(pad_block.masked_fill(torch.eye(pad).bool(), float("-inf"))).all()
+    assert torch.equal(torch.diagonal(pad_block), torch.zeros(pad))
     # B == N: identity (no copy, returns inputs)
     assert eng._pad_tree_to_bucket(seq_step, posN, qq, N, N)[0] is seq_step
 
