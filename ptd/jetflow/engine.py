@@ -820,13 +820,20 @@ class JetFlowEngine:
                     tree_width, extend_kwargs,
                 )
             N = tree.num_nodes
-            actual_tree_depth = int(tree.depth.max().item()) if N else 0
-            if actual_tree_depth > configured_max_tree_depth:
-                raise ValueError(
-                    f"tree depth {actual_tree_depth} exceeds max_tree_depth="
-                    f"{configured_max_tree_depth}; pass max_tree_depth large enough "
-                    "to size per-round commit/cache buffers"
-                )
+            if extend_kwargs is None and max_tree_depth is None:
+                # Default path: builders consume D = block_size-1 logit rows, so
+                # tree depth cannot exceed the configured ceiling by construction.
+                # Skip the bound check — tree.depth.max().item() is a per-round
+                # device sync the steady round loop must stay free of.
+                actual_tree_depth = configured_max_tree_depth
+            else:
+                actual_tree_depth = int(tree.depth.max().item()) if N else 0
+                if actual_tree_depth > configured_max_tree_depth:
+                    raise ValueError(
+                        f"tree depth {actual_tree_depth} exceeds max_tree_depth="
+                        f"{configured_max_tree_depth}; pass max_tree_depth large enough "
+                        "to size per-round commit/cache buffers"
+                    )
             if tree_diag_bins is not None:
                 tree_diag_bins += torch.bincount(tree.depth, minlength=commit_slack)[:commit_slack]
             # logical path: the cache's seq bookkeeping stays frozen at prompt_len
@@ -994,10 +1001,10 @@ class JetFlowEngine:
                 # (accepted_len) instead of the oracle's posterior.tolist() +
                 # child-map python walk; the path/correction stay device tensors
                 # so the gather/hidden/commit steps below never re-upload them.
-                # max_depth must be the actual tree depth, not the drafter horizon:
-                # deep spliced trees can exceed block_size-1. DraftTree carries depth
-                # as a tensor, so the .item() above is the one cheap host sync used to
-                # size the path extraction bound. temperature>0 stays on the CPU oracle
+                # max_depth bounds the path-extraction walk: the configured ceiling
+                # on the default path (no sync; builders can't exceed it), the
+                # measured depth when deep spliced trees are enabled (the gated
+                # .item() above). temperature>0 stays on the CPU oracle
                 # (gpu_tree_accept is greedy-only).
                 from ptd.tree._core.accept import gpu_tree_accept
                 greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
