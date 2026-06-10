@@ -886,7 +886,14 @@ class JetFlowEngine:
                     # `gather(keep)` below references only `past_len + accepted_path`
                     # (< past_len + N), and decrefs ALL old blocks (incl. the transient
                     # pad slots), so the pad KV never survives the round.
-                    B = _bucket_for_n(N)
+                    # The bucket is PINNED per decode at Bmax (the budget's bucket),
+                    # not chosen per round from N: variable-N algos (top2gap) otherwise
+                    # oscillate between bucket graphs round-to-round, which measured a
+                    # ~12% TPS tax at budget 63 (gsm8k, b200 f1 probe) — pinning restores
+                    # one replayed graph per decode while small-budget cells (<=31) still
+                    # land in the small W14 buckets. N exceeds Bmax only via tree
+                    # extension (extend_kwargs), which falls back to its own bucket.
+                    B = Bmax if N <= Bmax else _bucket_for_n(N)
                     if logical_kv:
                         seq_step_b, posN_b, qq_bias_b, dummy, cu = round_bufs.stage_tree_inputs(
                             seq_step, tree.depth, anc, past_len, N, B)
