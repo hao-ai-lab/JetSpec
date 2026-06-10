@@ -509,7 +509,8 @@ class NanoEngine:
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
                       profile_table: dict = None, tree_diag: bool = False,
-                      session: bool = False, session_prompt_capacity: int = None) -> dict:
+                      session: bool = False, session_prompt_capacity: int = None,
+                      max_tree_depth: int = None) -> dict:
         """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
@@ -538,7 +539,13 @@ class NanoEngine:
         else:
             committed = prompt.to(self.device)
         prompt_len = committed.shape[1]
-        commit_capacity = prompt_len + sp.max_new_tokens + block_size
+        configured_max_tree_depth = (
+            block_size - 1 if max_tree_depth is None else int(max_tree_depth)
+        )
+        if configured_max_tree_depth < 0:
+            raise ValueError(f"max_tree_depth must be >= 0; got {configured_max_tree_depth}")
+        commit_slack = configured_max_tree_depth + 1
+        commit_capacity = prompt_len + sp.max_new_tokens + commit_slack
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.dtype
@@ -547,7 +554,7 @@ class NanoEngine:
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         tree_diag_bins = (
-            torch.zeros(block_size, dtype=torch.long, device=self.device)
+            torch.zeros(commit_slack, dtype=torch.long, device=self.device)
             if tree_diag else None
         )
         target_hidden = None
@@ -571,6 +578,7 @@ class NanoEngine:
                 "dtype": str(self.dtype),
                 "need_hidden": bool(need_hidden),
                 "budget_bucket": int(Bmax),
+                "max_tree_depth": int(configured_max_tree_depth),
                 "max_new_tokens": int(sp.max_new_tokens),
                 "attn_backend": backend,
                 "logical_kv": bool(logical_kv),
@@ -687,7 +695,7 @@ class NanoEngine:
             if logical_kv:
                 # L5 no-gather: without gather's compaction, every committed token can
                 # in the worst case pin its own retained block, so the POOL must be
-                # sized for prompt + 16*(max_new + tree_depth) + Bmax tokens — while
+                # sized for prompt + 16*(max_new + commit_slack) + Bmax tokens — while
                 # the kernel-visible block-table WIDTH keeps today's (much smaller)
                 # prompt + max_new + Bmax bound (it drives the dynamo guard + graph
                 # staging and must not inflate with the pool). freeze_pool() turns any
@@ -703,12 +711,12 @@ class NanoEngine:
                     cache.reserve_capacity(
                         reserve_prompt_len,
                         block_table_tokens=reserve_prompt_len + sp.max_new_tokens + Bmax,
-                        extra_shared_blocks=(sp.max_new_tokens + block_size
+                        extra_shared_blocks=(sp.max_new_tokens + commit_slack
                                              + (Bmax + self.block_size - 1) // self.block_size + 1),
                     )
                     cache.freeze_pool()
                 nlayers_lk = self.model.config.num_hidden_layers
-                max_slots = sp.max_new_tokens + block_size + Bmax
+                max_slots = sp.max_new_tokens + commit_slack + Bmax
                 # Address-stable for the decode: graphs/compiled calls read these in
                 # place (the pools' "REUSED IN PLACE" contract); the engine mutates
                 # them between replays. Window = committed-after-prompt + this round's
@@ -763,8 +771,15 @@ class NanoEngine:
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
+            actual_tree_depth = int(tree.depth.max().item()) if N else 0
+            if actual_tree_depth > configured_max_tree_depth:
+                raise ValueError(
+                    f"tree depth {actual_tree_depth} exceeds max_tree_depth="
+                    f"{configured_max_tree_depth}; pass max_tree_depth large enough "
+                    "to size per-round commit/cache buffers"
+                )
             if tree_diag_bins is not None:
-                tree_diag_bins += torch.bincount(tree.depth, minlength=block_size)[:block_size]
+                tree_diag_bins += torch.bincount(tree.depth, minlength=commit_slack)[:commit_slack]
             # logical path: the cache's seq bookkeeping stays frozen at prompt_len
             # (no append/gather advances it); the engine-tracked window length is
             # the source of truth. Same VALUE as the gather path's get_seq_length()
@@ -930,14 +945,16 @@ class NanoEngine:
                 # (accepted_len) instead of the oracle's posterior.tolist() +
                 # child-map python walk; the path/correction stay device tensors
                 # so the gather/hidden/commit steps below never re-upload them.
-                # max_depth = block_size (the tree's depth budget) keeps the
-                # parent-walk loop short and sync-free. temperature>0 stays on
-                # the CPU oracle (gpu_tree_accept is greedy-only).
+                # max_depth must be the actual tree depth, not the drafter horizon:
+                # deep spliced trees can exceed block_size-1. DraftTree carries depth
+                # as a tensor, so the .item() above is the one cheap host sync used to
+                # size the path extraction bound. temperature>0 stays on the CPU oracle
+                # (gpu_tree_accept is greedy-only).
                 from ptd.tree._core.accept import gpu_tree_accept
                 greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
                 path_t, acc, corr_t = gpu_tree_accept(
                     tree.token_ids, greedy, tree.parent_indices, tree.depth,
-                    max_depth=block_size,
+                    max_depth=actual_tree_depth,
                 )
             else:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)

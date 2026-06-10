@@ -42,24 +42,28 @@ def summarize_tree_diag(
     output_tokens: int,
     num_samples: int,
     block_size: int,
+    max_depth: int = None,
 ) -> dict:
     rounds = len(accept_lengths)
-    hist_counts = [0] * block_size
+    depth_slots = block_size if max_depth is None else int(max_depth)
+    if depth_slots <= 0:
+        raise ValueError(f"max_depth must be positive; got {depth_slots}")
+    hist_counts = [0] * depth_slots
     for accept_len in accept_lengths:
         accepted_draft_len = int(accept_len) - 1
-        if accepted_draft_len < 0 or accepted_draft_len >= block_size:
+        if accepted_draft_len < 0 or accepted_draft_len >= depth_slots:
             raise ValueError(
                 f"accept length {accept_len} maps to draft length "
-                f"{accepted_draft_len}, outside [0, {block_size - 1}]"
+                f"{accepted_draft_len}, outside [0, {depth_slots - 1}]"
             )
         hist_counts[accepted_draft_len] += 1
 
     denom = rounds if rounds else 1
     nodes = [int(v) for v in tree_nodes_per_depth]
-    if len(nodes) < block_size:
-        nodes = nodes + [0] * (block_size - len(nodes))
+    if len(nodes) < depth_slots:
+        nodes = nodes + [0] * (depth_slots - len(nodes))
     else:
-        nodes = nodes[:block_size]
+        nodes = nodes[:depth_slots]
 
     return {
         "output_tokens": int(output_tokens),
@@ -70,10 +74,10 @@ def summarize_tree_diag(
         "acceptance_length_histogram": [c / denom for c in hist_counts],
         "per_depth_acceptance_rate": [
             sum(1 for accept_len in accept_lengths if int(accept_len) - 1 > depth) / denom
-            for depth in range(block_size - 1)
+            for depth in range(depth_slots - 1)
         ],
         "avg_tree_nodes_per_depth": [
-            nodes[depth] / denom for depth in range(1, block_size)
+            nodes[depth] / denom for depth in range(1, depth_slots)
         ],
     }
 
@@ -187,7 +191,10 @@ def run_tree_diag_measurement(
     dump_first_rounds: int = 0,
 ) -> tuple[dict, str]:
     all_accept_lengths: list[int] = []
-    tree_nodes_per_depth = [0] * block_size
+    depth_slots = block_size
+    if tree_kwargs.get("max_tree_depth") is not None:
+        depth_slots = int(tree_kwargs["max_tree_depth"]) + 1
+    tree_nodes_per_depth = [0] * depth_slots
     output_tokens = 0
     dump_text = ""
     recorder = (
@@ -204,7 +211,7 @@ def run_tree_diag_measurement(
         output_tokens += len(out["token_ids"])
         all_accept_lengths.extend(out["accept_lengths"])
         for depth, count in enumerate(out["tree_nodes_per_depth"]):
-            if depth < block_size:
+            if depth < depth_slots:
                 tree_nodes_per_depth[depth] += int(count)
         if prompt_index == 0 and recorder is not None:
             dump_text = format_draft_round_dump(
@@ -219,6 +226,7 @@ def run_tree_diag_measurement(
         output_tokens=output_tokens,
         num_samples=len(prompts),
         block_size=block_size,
+        max_depth=depth_slots,
     )
     return metrics, dump_text
 

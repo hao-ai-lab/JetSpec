@@ -19,6 +19,9 @@ from ptd.engine.llm import LLM, SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
 from ptd.nano_vllm.engine import NanoEngine
+from ptd.tree import DraftTree
+from ptd.tree._core.base import TreeAlgorithm
+from ptd.tree._core.registry import register_tree_algo
 
 
 class _StubTokenizer:
@@ -65,6 +68,77 @@ def _tiny_nano(model, block_size: int = 16) -> NanoEngine:
 
 PROMPT = torch.tensor([[3, 14, 15, 92, 65, 35, 89, 7]])   # arbitrary fixed input_ids
 SP = SamplingParams(0.0, 24)
+
+
+class _DeepEchoTreeDrafter:
+    def __init__(self, model, *, depth: int):
+        self.model = model
+        self.depth = int(depth)
+        self.last_tokens: list[int] = []
+
+    @torch.inference_mode()
+    def propose_logits(self, context_ids, depth, target_hidden=None, **kwargs):
+        from transformers import DynamicCache
+
+        cache = DynamicCache()
+        pos = torch.arange(context_ids.shape[1], device=context_ids.device).unsqueeze(0)
+        logits = self.model(
+            input_ids=context_ids,
+            position_ids=pos,
+            past_key_values=cache,
+            use_cache=True,
+        ).logits
+        nxt = logits[:, -1:, :].argmax(-1)
+        tokens = [int(nxt.item())]
+        cur = context_ids.shape[1]
+        for _ in range(self.depth - 1):
+            p = torch.tensor([[cur]], device=context_ids.device)
+            logits = self.model(
+                input_ids=nxt,
+                position_ids=p,
+                past_key_values=cache,
+                use_cache=True,
+            ).logits
+            nxt = logits[:, -1:, :].argmax(-1)
+            tokens.append(int(nxt.item()))
+            cur += 1
+        self.last_tokens = tokens
+        return torch.zeros(
+            1,
+            depth,
+            self.model.config.vocab_size,
+            dtype=torch.float32,
+            device=context_ids.device,
+        )
+
+
+@register_tree_algo("_test_deep_chain")
+class _DeepChainAlgorithm(TreeAlgorithm):
+    def __init__(self, drafter: _DeepEchoTreeDrafter, *, extra_branches: int = 0):
+        self.drafter = drafter
+        self.extra_branches = int(extra_branches)
+
+    def build(self, root_token, draft_logits, block_size, tree_width, budget, device, **kwargs):
+        chain = [int(root_token), *self.drafter.last_tokens]
+        tokens = list(chain)
+        parents = [-1] + list(range(len(chain) - 1))
+        depths = list(range(len(chain)))
+        vocab_size = int(draft_logits.shape[-1])
+
+        for i in range(self.extra_branches):
+            parent = i % (len(chain) - 1)
+            greedy_child = chain[parent + 1]
+            tokens.append((greedy_child + 1 + i) % vocab_size)
+            parents.append(parent)
+            depths.append(depths[parent] + 1)
+
+        assert len(tokens) <= budget
+        return DraftTree(
+            token_ids=torch.tensor(tokens, dtype=torch.long, device=device),
+            parent_indices=torch.tensor(parents, dtype=torch.long, device=device),
+            depth=torch.tensor(depths, dtype=torch.long, device=device),
+            num_nodes=len(tokens),
+        )
 
 
 def _greedy(eng):
@@ -139,6 +213,46 @@ def test_nano_tree_stats_shape():
     assert len(full["accept_lengths"]) == full["rounds"]
     assert len(full["tree_sizes"]) == full["rounds"]
     assert all(a >= 1 for a in full["accept_lengths"])   # each round commits >= the correction
+
+
+def test_nano_tree_lossless_deep_tree_beyond_block_depth():
+    """A spliced tree can be much deeper than the drafter horizon.
+
+    The verifier/accept/commit path must size by configured max tree depth and
+    accept by the tree's actual depth, while bucket sizing remains node-count
+    based. This tree is depth 20 with 33 nodes, so depth and N fall in different
+    compiled buckets.
+    """
+    from ptd.nano_vllm.engine import _bucket_for_n
+
+    model = _tiny_model(0)
+    depth = 20
+    extra_branches = 12
+    budget = depth + 1 + extra_branches
+    sp = SamplingParams(0.0, 44)
+    drafter = _DeepEchoTreeDrafter(model, depth=depth)
+
+    greedy = _tiny_nano(model).generate(PROMPT, sp)["token_ids"]
+    out = _tiny_nano(model, block_size=4).generate_tree(
+        PROMPT,
+        drafter,
+        block_size=4,
+        tree_width=2,
+        budget=budget,
+        algo="_test_deep_chain",
+        algo_kwargs={"drafter": drafter, "extra_branches": extra_branches},
+        max_tree_depth=depth,
+        sampling_params=sp,
+        return_stats=True,
+        tree_diag=True,
+    )
+
+    assert out["token_ids"] == greedy
+    assert out["accept_lengths"][0] == depth + 1
+    assert out["tree_sizes"][0] == budget
+    assert len(out["tree_nodes_per_depth"]) == depth + 1
+    assert _bucket_for_n(out["tree_sizes"][0]) == 64
+    assert _bucket_for_n(depth) == 32
 
 
 def _long_echo_tree(engine, model, *, tree_block_size: int, return_stats: bool = False):
