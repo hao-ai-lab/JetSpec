@@ -6,11 +6,14 @@ import torch
 from ptd.tree import get_algorithm
 from ptd.tree._core.base import DraftTree
 
+from bench import build_depth_rank_profile as profile_mod
 from bench.build_depth_rank_profile import (
     DepthRankProfileCounts,
     accepted_path_from_committed_tokens,
+    accumulate_generation_profile,
     accumulate_round_profile,
     build_profile_table,
+    fail_if_skip_rate_too_high,
 )
 
 
@@ -97,3 +100,98 @@ def test_accepted_path_rejects_non_child_token_sequence():
     tree = _synthetic_tree()
     with pytest.raises(ValueError, match="not a child"):
         accepted_path_from_committed_tokens(tree, [10, 30])
+
+
+def test_generation_profile_does_not_walk_round_correction(monkeypatch):
+    tree = _synthetic_tree()
+    monkeypatch.setattr(profile_mod, "rebuild_recorded_tree", lambda *args, **kwargs: tree)
+    counts = DepthRankProfileCounts(depths=2, width=2)
+
+    accumulate_generation_profile(
+        counts,
+        records=[{}],
+        token_ids=[1, 10, 999],
+        accept_lengths=[2],
+        block_size=3,
+        tree_width=2,
+        budget=7,
+    )
+
+    assert counts.rounds_counted == 1
+    assert counts.skipped_rounds == 0
+    assert counts.accepted == [
+        [1, 0],
+        [0, 0],
+    ]
+
+
+def test_generation_profile_skips_eos_truncated_final_round(monkeypatch):
+    tree = _synthetic_tree()
+    monkeypatch.setattr(profile_mod, "rebuild_recorded_tree", lambda *args, **kwargs: tree)
+    counts = DepthRankProfileCounts(depths=2, width=2)
+
+    accumulate_generation_profile(
+        counts,
+        records=[{}],
+        token_ids=[1, 10],
+        accept_lengths=[3],
+        block_size=3,
+        tree_width=2,
+        budget=7,
+    )
+
+    assert counts.rounds_counted == 0
+    assert counts.skipped_rounds == 1
+
+
+def test_generation_profile_skips_max_new_truncated_final_round(monkeypatch):
+    tree = _synthetic_tree()
+    monkeypatch.setattr(profile_mod, "rebuild_recorded_tree", lambda *args, **kwargs: tree)
+    counts = DepthRankProfileCounts(depths=2, width=2)
+
+    accumulate_generation_profile(
+        counts,
+        records=[{}, {}],
+        token_ids=[1, 10, 999, 11],
+        accept_lengths=[2, 3],
+        block_size=3,
+        tree_width=2,
+        budget=7,
+    )
+
+    assert counts.rounds_counted == 1
+    assert counts.skipped_rounds == 1
+    assert counts.accepted == [
+        [1, 0],
+        [0, 0],
+    ]
+
+
+def test_generation_profile_skips_unreconstructable_round(monkeypatch):
+    tree = _synthetic_tree()
+    monkeypatch.setattr(profile_mod, "rebuild_recorded_tree", lambda *args, **kwargs: tree)
+    counts = DepthRankProfileCounts(depths=2, width=2)
+
+    accumulate_generation_profile(
+        counts,
+        records=[{}],
+        token_ids=[1, 10, 999],
+        accept_lengths=[3],
+        block_size=3,
+        tree_width=2,
+        budget=7,
+    )
+
+    assert counts.rounds_counted == 0
+    assert counts.skipped_rounds == 1
+
+
+def test_skip_rate_gate_exits_above_five_percent(capsys):
+    counts = DepthRankProfileCounts(depths=2, width=2)
+    counts.rounds_counted = 94
+    counts.skipped_rounds = 6
+
+    with pytest.raises(SystemExit, match="> 5%"):
+        fail_if_skip_rate_too_high(counts)
+
+    assert "skipped_rounds=6/100 (6.00%)" in capsys.readouterr().out

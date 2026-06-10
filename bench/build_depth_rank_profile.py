@@ -41,7 +41,7 @@ class DepthRankProfileCounts:
     presence: list[list[int]] = field(init=False)
     accepted: list[list[int]] = field(init=False)
     rounds_counted: int = 0
-    skipped_truncated_rounds: int = 0
+    skipped_rounds: int = 0
 
     def __post_init__(self) -> None:
         if self.depths <= 0:
@@ -182,7 +182,7 @@ def build_profile_table(
         "presence_counts": counts.presence,
         "accepted_counts": counts.accepted,
         "rounds_counted": counts.rounds_counted,
-        "skipped_truncated_rounds": counts.skipped_truncated_rounds,
+        "skipped_rounds": counts.skipped_rounds,
     }
     if meta:
         out_meta.update(meta)
@@ -233,7 +233,7 @@ def accumulate_generation_profile(
         accepted_token_count = accept_len - 1
         available = [int(v) for v in token_ids[cursor:]]
         if len(available) < accepted_token_count:
-            counts.skipped_truncated_rounds += 1
+            counts.skipped_rounds += 1
             break
 
         tree = rebuild_recorded_tree(
@@ -243,11 +243,20 @@ def accumulate_generation_profile(
             budget=budget,
             device="cpu",
         )
-        path = accepted_path_from_committed_tokens(
-            tree,
-            available[:accepted_token_count],
-        )
+        try:
+            path = accepted_path_from_committed_tokens(
+                tree,
+                available[:accepted_token_count],
+            )
+        except ValueError:
+            counts.skipped_rounds += 1
+            if len(available) < accept_len:
+                break
+            cursor += accept_len
+            continue
         accumulate_round_profile(counts, tree, path)
+        if len(available) < accept_len:
+            break
         cursor += accept_len
         if cursor > len(token_ids):
             break
@@ -279,9 +288,29 @@ def run_collection(
         )
         print(
             f"profiled {prompt_index + 1}/{len(prompts)}: "
-            f"rounds={len(recorder.records)} counted={counts.rounds_counted}"
+            f"rounds={len(recorder.records)} counted={counts.rounds_counted} "
+            f"skipped={counts.skipped_rounds}"
         )
     return counts
+
+
+def fail_if_skip_rate_too_high(counts: DepthRankProfileCounts) -> None:
+    total_rounds = counts.rounds_counted + counts.skipped_rounds
+    if total_rounds == 0:
+        print("depth-rank profile skipped_rounds=0/0 (0.00%)")
+        return
+
+    skip_rate = counts.skipped_rounds / total_rounds
+    print(
+        f"depth-rank profile skipped_rounds={counts.skipped_rounds}/{total_rounds} "
+        f"({skip_rate:.2%})"
+    )
+    if skip_rate > 0.05:
+        raise SystemExit(
+            f"depth-rank profile skipped {counts.skipped_rounds}/{total_rounds} "
+            f"rounds ({skip_rate:.2%}) > 5%; aborting because path reconstruction "
+            "is too noisy"
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -348,6 +377,7 @@ def main() -> None:
         tree_width=args.tree_width,
         budget=args.budget,
     )
+    fail_if_skip_rate_too_high(counts)
     torch.cuda.synchronize()
 
     table = build_profile_table(
