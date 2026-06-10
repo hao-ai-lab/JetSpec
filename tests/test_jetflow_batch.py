@@ -1,5 +1,5 @@
-"""nano_vllm N2a gate: continuous-batched AR over the shared multi-seq paged
-cache must be token-identical to running single-stream `NanoEngine.generate` on
+"""JetFlow N2a gate: continuous-batched AR over the shared multi-seq paged
+cache must be token-identical to running single-stream `JetFlowEngine.generate` on
 each prompt alone.
 
 Runs on CPU with a tiny randomly-initialized fp32 Qwen3 (no network, no GPU): in
@@ -8,7 +8,7 @@ fp32 the pooled batched forward and the single-stream forward are bitwise-equal
 for attention), so this gates the batched mask / position / per-seq KV-routing
 arithmetic directly. The headline property — decoding N prompts of DIFFERENT
 lengths together yields the SAME tokens as decoding each alone — is checked
-per-sequence. Mirrors `tests/test_nano_engine.py`'s `_tiny_nano` harness.
+per-sequence. Mirrors `tests/test_jetflow_engine.py`'s `_tiny_jetflow` harness.
 (On b200 in bf16 a batched forward vs a single-token forward can flip a borderline
 argmax after ~tens of exact tokens — the same class as the bf16 borderline-argmax caveat.)
 """
@@ -17,9 +17,9 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from ptd.engine.llm import SamplingParams
 from ptd.engine.model_runner import ModelRunner
-from ptd.nano_vllm.engine import NanoEngine
-from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
-from ptd.nano_vllm.paged_kv_cache import PagedKVCache
+from ptd.jetflow.engine import JetFlowEngine
+from ptd.jetflow.scheduler import Scheduler, SequenceRequest
+from ptd.jetflow.paged_kv_cache import PagedKVCache
 
 
 class _StubTokenizer:
@@ -40,9 +40,9 @@ def _tiny_model(seed: int = 0) -> Qwen3ForCausalLM:
     return Qwen3ForCausalLM(cfg).eval().to(torch.float32)
 
 
-def _tiny_nano(model, block_size: int = 16) -> NanoEngine:
-    """Wire the same model into a `NanoEngine` without touching the network."""
-    eng = object.__new__(NanoEngine)
+def _tiny_jetflow(model, block_size: int = 16) -> JetFlowEngine:
+    """Wire the same model into a `JetFlowEngine` without touching the network."""
+    eng = object.__new__(JetFlowEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -73,9 +73,9 @@ def test_batch_matches_single_stream_each_seq_fp32():
     on the pooled per-seq KV."""
     for seed in (0, 1, 7):
         model = _tiny_model(seed)
-        ref = [_tiny_nano(model).generate(p, SP)["token_ids"] for p in PROMPTS]
+        ref = [_tiny_jetflow(model).generate(p, SP)["token_ids"] for p in PROMPTS]
         for block_size in (16, 4, 5):
-            batched = _tiny_nano(model, block_size).generate_batch(PROMPTS, SP)
+            batched = _tiny_jetflow(model, block_size).generate_batch(PROMPTS, SP)
             for i, p in enumerate(PROMPTS):
                 assert batched[i]["token_ids"] == ref[i], (
                     f"batched seq {i} diverged from single-stream "
@@ -88,9 +88,9 @@ def test_batch_order_invariant():
     """The pool is keyed by seq_id, not batch position, so permuting the batch must
     not change any sequence's tokens (no cross-talk between sequences)."""
     model = _tiny_model(3)
-    forward = _tiny_nano(model).generate_batch(PROMPTS, SP)
+    forward = _tiny_jetflow(model).generate_batch(PROMPTS, SP)
     reversed_prompts = list(reversed(PROMPTS))
-    backward = _tiny_nano(model).generate_batch(reversed_prompts, SP)
+    backward = _tiny_jetflow(model).generate_batch(reversed_prompts, SP)
     for i in range(len(PROMPTS)):
         assert backward[len(PROMPTS) - 1 - i]["token_ids"] == forward[i]["token_ids"], (
             f"seq {i} tokens changed when the batch order was reversed"
@@ -101,8 +101,8 @@ def test_batch_singleton_matches_generate():
     """A batch of one is identical to plain single-stream generate (degenerate
     N2a == N0)."""
     model = _tiny_model(1)
-    ref = _tiny_nano(model).generate(PROMPTS[0], SP)["token_ids"]
-    got = _tiny_nano(model).generate_batch([PROMPTS[0]], SP)[0]["token_ids"]
+    ref = _tiny_jetflow(model).generate(PROMPTS[0], SP)["token_ids"]
+    got = _tiny_jetflow(model).generate_batch([PROMPTS[0]], SP)[0]["token_ids"]
     assert got == ref
 
 
@@ -112,7 +112,7 @@ def test_batch_ragged_finish_keeps_survivors_lossless():
     batch must not perturb the rest. seq 1 finishes early; seq 0 keeps going and
     must still match its single-stream run."""
     model = _tiny_model(0)
-    eng = _tiny_nano(model)
+    eng = _tiny_jetflow(model)
     eng.eos_token_ids = set()
     sp_long = SamplingParams(0.0, 20)
     ref0 = eng.generate(PROMPTS[0], sp_long)["token_ids"]
@@ -120,7 +120,7 @@ def test_batch_ragged_finish_keeps_survivors_lossless():
     # Give seq 1 a tiny budget by truncating its reference; the batch uses the
     # shared SP, so instead assert via the EOS path: inject an EOS so seq 1 stops.
     eos_tok = ref0[3] if len(ref0) > 3 else 0
-    eng_eos = _tiny_nano(model)
+    eng_eos = _tiny_jetflow(model)
     eng_eos.eos_token_ids = {eos_tok}
     ref0_eos = eng_eos.generate(PROMPTS[0], sp_long)["token_ids"]
     ref2_eos = eng_eos.generate(PROMPTS[2], sp_long)["token_ids"]

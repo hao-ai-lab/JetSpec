@@ -1,4 +1,4 @@
-"""Offline single-stream LLM — a small nano-vLLM-style API.
+"""Offline single-stream LLM — a small JetFlow-style API.
 
 Plain autoregressive greedy/temperature decode over an HF `DynamicCache`
 (prefill the prompt once, then single-token decode steps reusing the cache).

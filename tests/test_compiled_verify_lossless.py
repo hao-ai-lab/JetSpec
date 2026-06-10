@@ -1,9 +1,9 @@
-"""nano_vllm A3-INT lossless gate: the compiled read-only tree-VERIFY stack, wired
-into `NanoEngine` behind `attn_backend="triton_paged_tree_compiled"`, must produce
+"""JetFlow A3-INT lossless gate: the compiled read-only tree-VERIFY stack, wired
+into `JetFlowEngine` behind `attn_backend="triton_paged_tree_compiled"`, must produce
 the SAME tokens as the default SDPA path for the N1 (`generate_tree`) cases the e2e
 suite uses.
 
-SDPA is the correctness oracle (same as `test_nano_kernel_e2e`): the compiled stack
+SDPA is the correctness oracle (same as `test_jetflow_kernel_e2e`): the compiled stack
 reproduces the exact Qwen3 per-layer compute and reads the exact post-RoPE K/V the
 oracle reads, so on a tiny fp32 Qwen3 on CUDA the two argmax streams are identical.
 We reuse the e2e suite's tiny fp32 CUDA model + drafters and assert token-for-token
@@ -34,27 +34,27 @@ torch._dynamo.config.recompile_limit = 64
 
 from ptd.engine.llm import SamplingParams
 from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from tests.test_nano_kernel_e2e import _tiny_model, _tiny_nano, PROMPT, SP
+from tests.test_jetflow_kernel_e2e import _tiny_model, _tiny_jetflow, PROMPT, SP
 
 
 def _add_compiled_backend(cudagraph: bool = False):
-    """Extend `_tiny_nano` to also wire the compiled backend (the e2e fixture only
+    """Extend `_tiny_jetflow` to also wire the compiled backend (the e2e fixture only
     knows sdpa / triton_paged_tree). We mirror its bypass-`__init__` construction and
     bind a `CompiledVerifyStack` over the tiny model, then route via the same fixture
-    by post-attaching `compiled_verify`. Returns a builder `(model) -> NanoEngine`.
+    by post-attaching `compiled_verify`. Returns a builder `(model) -> JetFlowEngine`.
 
     `cudagraph=True` (A3-GRAPH) flips on the opt-in CUDA-graph layer: the same compiled
     stacks, but the per-round tree verify replays a per-bucket captured graph instead of
     calling the stack directly. The compiled-non-graph build (`cudagraph=False`) stays the
     untouched oracle the graph path is diffed against."""
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
-    from ptd.nano_vllm.engine import _env_flag
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.engine import _env_flag
 
     def build(model):
-        eng = _tiny_nano(model, "triton_paged_tree")     # registers interface + flips impl
+        eng = _tiny_jetflow(model, "triton_paged_tree")     # registers interface + flips impl
         eng.attn_backend = ("triton_paged_tree_cudagraph" if cudagraph
                             else "triton_paged_tree_compiled")
-        eng.fuse_gemms = _env_flag("NANO_FUSE_GEMMS")
+        eng.fuse_gemms = _env_flag("JETFLOW_FUSE_GEMMS")
         eng.compiled_verify = CompiledVerifyStack(
             model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
         )
@@ -77,7 +77,7 @@ def test_n0_compiled_ar_matches_sdpa():
     to plain SDPA AR (fp32 exact on the tiny model)."""
     model = _tiny_model(0)
     build_compiled = _add_compiled_backend()
-    sdpa = _tiny_nano(model, "sdpa").generate(PROMPT, SP)["token_ids"]
+    sdpa = _tiny_jetflow(model, "sdpa").generate(PROMPT, SP)["token_ids"]
     comp = build_compiled(model).generate(PROMPT, SP)["token_ids"]
     assert comp == sdpa, "compiled AR decode diverged from SDPA"
 
@@ -95,7 +95,7 @@ def test_n1_compiled_verify_matches_sdpa_random(seed):
         return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
                                budget=15, sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     comp = run(build_compiled(model))
     assert comp == sdpa, f"compiled verify diverged from SDPA (random drafter, seed={seed})"
 
@@ -111,7 +111,7 @@ def test_n1_compiled_verify_matches_sdpa_echo():
         return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
                                budget=15, sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     comp = run(build_compiled(model))
     assert comp == sdpa, "compiled verify diverged from SDPA (echo drafter)"
 
@@ -136,7 +136,7 @@ def test_n1_compiled_verify_need_hidden_matches_sdpa(target_layer_ids):
                                budget=15, target_layer_ids=target_layer_ids,
                                sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     comp = run(build_compiled(model))
     assert comp == sdpa, (
         f"compiled need_hidden verify diverged from SDPA (target_layer_ids={target_layer_ids})"
@@ -153,7 +153,7 @@ def test_n1_compiled_verify_need_hidden_matches_sdpa(target_layer_ids):
 # token-identical to SDPA (the lossless oracle). A broken pad (e.g. real rows attending
 # pad keys, or a pad row leaking into accept) would flip tokens here.
 
-import ptd.nano_vllm.engine as _eng_mod
+import ptd.jetflow.engine as _eng_mod
 
 
 def _force_bucket(monkeypatch, pad: int):
@@ -185,7 +185,7 @@ def test_pad_tree_to_bucket_structure():
     """`_pad_tree_to_bucket` keeps the real (N,N) qq_bias block intact and sets every
     real/pad interaction to -inf; pad rows have only a self edge to avoid all-masked
     softmax NaNs and are never accepted. B==N is a no-op."""
-    eng = object.__new__(_eng_mod.NanoEngine)
+    eng = object.__new__(_eng_mod.JetFlowEngine)
     eng.device = "cpu"
     N, pad = 4, 3
     B = N + pad
@@ -214,7 +214,7 @@ def test_n1_compiled_verify_bucketed_matches_sdpa(monkeypatch, pad):
     build_compiled = _add_compiled_backend()
     sdpa = (lambda e: (torch.manual_seed(1), e.generate_tree(
         PROMPT, drafter, block_size=4, tree_width=2, budget=15,
-        sampling_params=SP)["token_ids"])[1])(_tiny_nano(model, "sdpa"))
+        sampling_params=SP)["token_ids"])[1])(_tiny_jetflow(model, "sdpa"))
     _force_bucket(monkeypatch, pad)
     torch.manual_seed(1)
     comp = build_compiled(model).generate_tree(
@@ -237,7 +237,7 @@ def test_n1_compiled_verify_bucketed_need_hidden_matches_sdpa(monkeypatch, targe
                                budget=15, target_layer_ids=target_layer_ids,
                                sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     _force_bucket(monkeypatch, 4)
     comp = run(build_compiled(model))
     assert comp == sdpa, (
@@ -261,9 +261,9 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
     prefix + node KV and returns `new_hidden`), then run the compiled stack over a
     FRESH pool seeded the same way, and compare the two taps over the same node rows.
     """
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
-    from ptd.nano_vllm.engine import _env_flag
-    from ptd.nano_vllm.paged_kv_cache import PagedKVCache
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.engine import _env_flag
+    from ptd.jetflow.paged_kv_cache import PagedKVCache
 
     model = _tiny_model(0)
     device = next(model.parameters()).device
@@ -282,7 +282,7 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
         eng.runner.forward(prefix, cache, torch.arange(past_len, device=device).unsqueeze(0))
         return cache
 
-    eng = _tiny_nano(model, "triton_paged_tree")
+    eng = _tiny_jetflow(model, "triton_paged_tree")
 
     # Eager-kernel oracle: the verify forward returns new_hidden (= the engine's tap).
     cache_e = _fresh_kernel_cache(eng)
@@ -307,7 +307,7 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
         block_size=eng.block_size,
         need_hidden=True,
         target_layer_ids=target_layer_ids,
-        fuse_gemms=_env_flag("NANO_FUSE_GEMMS"),
+        fuse_gemms=_env_flag("JETFLOW_FUSE_GEMMS"),
     )
     _, comp_hidden = stack(seq_step, cos, sin, k_pools, v_pools, bts, cu, slk,
                            None, node_blks, node_offs)
@@ -344,7 +344,7 @@ def test_n1_cudagraph_verify_matches_sdpa_and_compiled_random(seed):
         return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
                                budget=15, sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     comp = run(build_compiled(model))
     graph = run(build_graph(model))
     assert comp == sdpa, f"compiled diverged from SDPA (seed={seed})"
@@ -363,7 +363,7 @@ def test_n1_cudagraph_verify_matches_sdpa_echo():
         return e.generate_tree(PROMPT, drafter, block_size=4, tree_width=2,
                                budget=15, sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     graph = run(build_graph(model))
     assert graph == sdpa, "cudagraph verify diverged from SDPA (echo drafter)"
 
@@ -382,7 +382,7 @@ def test_n1_cudagraph_verify_need_hidden_matches_sdpa(target_layer_ids):
                                budget=15, target_layer_ids=target_layer_ids,
                                sampling_params=SP)["token_ids"]
 
-    sdpa = run(_tiny_nano(model, "sdpa"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
     graph = run(build_graph(model))
     assert graph == sdpa, (
         f"cudagraph need_hidden verify diverged from SDPA "
@@ -394,7 +394,7 @@ def test_cudagraph_captures_once_per_bucket_no_recapture():
     """A full decode captures each tree-N bucket ONCE and never recaptures (the A3-GRAPH
     gate). We monkeypatch `_bucket_for_n` to a constant so every round hits ONE bucket,
     count `_capture_bucket` calls over a multi-round decode, and assert exactly one."""
-    import ptd.nano_vllm.graph_capture as _gc_mod
+    import ptd.jetflow.graph_capture as _gc_mod
 
     model = _tiny_model(0)
     drafter = TargetEchoTreeDrafter(model)

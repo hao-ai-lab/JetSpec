@@ -1,11 +1,11 @@
-"""Identical-conditions nano-vs-fork comparison for the verify-only decode speedup.
+"""Identical-conditions JetFlow-vs-fork comparison for the verify-only decode speedup.
 
-Measures nano's `decode_cuda_speedup` (AR verify-only GPU time per token ÷ tree
+Measures JetFlow's `decode_cuda_speedup` (AR verify-only GPU time per token ÷ tree
 verify-only GPU time per token) under conditions MATCHED to a reference vLLM fork
 DFlash profile that reported comparable speedup (`see-reference-fork-benchmarks` /
 `gains_report.txt`). The fork's verify-only `decode_cuda_s` wraps only the target
 `execute_model` (the drafter `propose` runs in a separate, untimed RPC), so this
-harness EXCLUDES nano's drafter from both legs via a CUDA-event split, matching the
+harness EXCLUDES JetFlow's drafter from both legs via a CUDA-event split, matching the
 fork's accounting.
 
 Matched conditions (fork -> here):
@@ -25,11 +25,11 @@ Matched conditions (fork -> here):
   samples               4                          --samples (default 4)
   output tokens/sample  ~208                       --max-tokens (default 210)
 
-The intrinsic difference being measured is the verify ENGINE: nano's triton paged
+The intrinsic difference being measured is the verify ENGINE: JetFlow's triton paged
 tree-attn vs the fork's FLASH_ATTN flash-varlen. That is the comparison SUBJECT, not
 a condition to match.
 
-    NANO_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
+    JETFLOW_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
     PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
     python bench/identical_fork_compare.py --samples 4 --max-tokens 210
 """
@@ -41,7 +41,7 @@ import torch
 from torch.cuda import Event
 
 from ptd.engine.llm import SamplingParams
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 from ptd.models.draft_head import load_draft_head
 from ptd.draft_head_drafter import DraftHeadTreeDrafter
 
@@ -90,9 +90,9 @@ def main():
     ap.add_argument("--algo", type=str, default="crossproduct")
     args = ap.parse_args()
 
-    backend = os.environ.get("NANO_BACKEND", "triton_paged_tree_compiled")
+    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_compiled")
     head_id = os.environ["PTD_DRAFT_HEAD"]
-    eng = NanoEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
+    eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
     tli, bs = head.target_layer_ids, head.block_size
@@ -140,7 +140,7 @@ def main():
         # verify no longer routes through it, so wrapping replay is what captures the
         # tree leg. Wrapping both is safe: AR -> stack, tree -> replay, disjoint.
         eng.runner.forward = prefill.wrap(eng.runner.forward)
-        from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+        from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
         CompiledVerifyStack.__call__ = verify.wrap(CompiledVerifyStack.__call__)
         if backend == "triton_paged_tree_cudagraph":
             # The tree verify leg is `GraphedVerify.replay` (copy-in + `g.replay()`). The
@@ -151,7 +151,7 @@ def main():
             # `graphs` dict growing) — recording it to a separate `capture` timer instead.
             # The reported verify/round is then pure per-round cost (copy-in + launch),
             # matching how the compiled leg times only its per-round forward.
-            from ptd.nano_vllm.graph_capture import GraphedVerify
+            from ptd.jetflow.graph_capture import GraphedVerify
             _orig_replay = GraphedVerify.replay
 
             def _timed_replay(self, *a, **k):
@@ -239,7 +239,7 @@ def main():
         print(f"       graph_capture_gpu={capture.ms/1e3:7.3f}s over {capture.n} captures "
               f"(one-time per-prompt setup, EXCLUDED from verify/round)")
     print(f"       accept_len={accept_len:.3f}   tree-N: min/mean/max={min(N_all)}/{avgN:.1f}/{max(N_all)}")
-    print(f"\nRESULT nano verify-only decode_cuda_speedup = {speedup:.2f}x   "
+    print(f"\nRESULT JetFlow verify-only decode_cuda_speedup = {speedup:.2f}x   "
           f"[fork={FORK['decode_cuda_speedup']:.2f}x]")
     print(f"       accept_len {accept_len:.3f} vs fork {FORK['accept_len']}   "
           f"avgN {avgN:.0f} vs fork {FORK['avg_tree_nodes']}")

@@ -1,4 +1,4 @@
-"""nano_vllm N1 gate: single-stream TREE-spec decode over the paged KV cache must
+"""JetFlow N1 gate: single-stream TREE-spec decode over the paged KV cache must
 be token-identical to (a) plain greedy AR and (b) the `DynamicCache` reference
 tree verify (`LLM.generate_tree(kv_cache_verify=True)`) — losslessness is
 preserved by the `PagedKVCache.gather` that keeps only the accepted root-to-leaf
@@ -7,7 +7,7 @@ path's KV (the paged analogue of `_select_kv_cache`).
 Runs on CPU with a tiny randomly-initialized fp32 Qwen3 (no network, no GPU): in
 fp32 the paged store and HF's `DynamicCache` are bitwise-equal (gather/append is a
 plain copy, no rounding), so this gates the gather / mask / cache_position
-arithmetic directly. Mirrors `tests/test_nano_engine.py`'s `_tiny_nano` and
+arithmetic directly. Mirrors `tests/test_jetflow_engine.py`'s `_tiny_jetflow` and
 `tests/test_tree_kv_cache.py`'s fixtures. (On b200 in bf16 a block forward vs the
 recompute path can flip a borderline argmax after ~tens of exact tokens — the same
 class as the bf16 borderline-argmax caveat; validated separately on b200.)
@@ -18,7 +18,7 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 from ptd.engine.llm import LLM, SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 from ptd.tree import DraftTree
 from ptd.tree._core.base import TreeAlgorithm
 from ptd.tree._core.registry import register_tree_algo
@@ -53,9 +53,9 @@ def _tiny_llm(model) -> LLM:
     return llm
 
 
-def _tiny_nano(model, block_size: int = 16) -> NanoEngine:
-    """Wire the same model into a `NanoEngine` without touching the network."""
-    eng = object.__new__(NanoEngine)
+def _tiny_jetflow(model, block_size: int = 16) -> JetFlowEngine:
+    """Wire the same model into a `JetFlowEngine` without touching the network."""
+    eng = object.__new__(JetFlowEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -145,7 +145,7 @@ def _greedy(eng):
     return eng.generate(PROMPT, SP)["token_ids"]
 
 
-def _nano_tree(eng, drafter, *, seed=1, return_stats=False):
+def _jetflow_tree(eng, drafter, *, seed=1, return_stats=False):
     # seed before each call so the random drafter builds identical trees across
     # runs (losslessness holds for any tree regardless).
     torch.manual_seed(seed)
@@ -164,58 +164,58 @@ def _ref_tree(llm, drafter, *, seed=1):
     )
 
 
-def test_nano_tree_lossless_random():
+def test_jetflow_tree_lossless_random():
     """Random drafter (accepts ~0/round) -> paged-cache tree == DynamicCache ref ==
     greedy. Exercises the gather's keep-root-only case every round."""
     model = _tiny_model(0)
-    greedy = _greedy(_tiny_nano(model))
-    nano = _nano_tree(_tiny_nano(model), RandomTreeDrafter(128))["token_ids"]
+    greedy = _greedy(_tiny_jetflow(model))
+    jetflow = _jetflow_tree(_tiny_jetflow(model), RandomTreeDrafter(128))["token_ids"]
     ref = _ref_tree(_tiny_llm(model), RandomTreeDrafter(128))["token_ids"]
-    n = min(len(greedy), len(nano))
+    n = min(len(greedy), len(jetflow))
     assert ref[:n] == greedy[:n], "DynamicCache tree diverged from greedy"
-    assert nano[:n] == greedy[:n], "paged-cache tree diverged from greedy (gather bug)"
-    assert nano == ref, "paged-cache tree != DynamicCache tree (not a drop-in)"
+    assert jetflow[:n] == greedy[:n], "paged-cache tree diverged from greedy (gather bug)"
+    assert jetflow == ref, "paged-cache tree != DynamicCache tree (not a drop-in)"
 
 
-def test_nano_tree_lossless_echo():
+def test_jetflow_tree_lossless_echo():
     """Echo tree's top-1 path is the greedy chain -> full-depth accept, exercising
     the gather's deep non-contiguous keep set (acc > 0). Paged-cache tree must match
     both greedy and the DynamicCache reference, and accept multiple tokens/round."""
     model = _tiny_model(0)
-    greedy = _greedy(_tiny_nano(model))
-    nano = _nano_tree(_tiny_nano(model), TargetEchoTreeDrafter(model))
+    greedy = _greedy(_tiny_jetflow(model))
+    jetflow = _jetflow_tree(_tiny_jetflow(model), TargetEchoTreeDrafter(model))
     ref = _ref_tree(_tiny_llm(model), TargetEchoTreeDrafter(model))
-    n = min(len(greedy), len(nano["token_ids"]))
+    n = min(len(greedy), len(jetflow["token_ids"]))
     assert ref["token_ids"][:n] == greedy[:n], "DynamicCache tree (echo) diverged from greedy"
-    assert nano["token_ids"][:n] == greedy[:n], "paged-cache tree (echo) diverged from greedy"
-    assert nano["token_ids"] == ref["token_ids"], "paged-cache tree (echo) != DynamicCache ref"
-    assert nano["tpf"] >= 2.0, f"echo should accept multiple tokens/round, got tpf={nano['tpf']:.2f}"
+    assert jetflow["token_ids"][:n] == greedy[:n], "paged-cache tree (echo) diverged from greedy"
+    assert jetflow["token_ids"] == ref["token_ids"], "paged-cache tree (echo) != DynamicCache ref"
+    assert jetflow["tpf"] >= 2.0, f"echo should accept multiple tokens/round, got tpf={jetflow['tpf']:.2f}"
 
 
-def test_nano_tree_block_sizes_match_ref():
+def test_jetflow_tree_block_sizes_match_ref():
     """The paged engine stays lossless across cache block sizes that don't divide
     head_dim (cross-boundary gather/append), and across model seeds."""
     for seed in (0, 1, 7):
         model = _tiny_model(seed)
         ref = _ref_tree(_tiny_llm(model), RandomTreeDrafter(128))["token_ids"]
         for block_size in (16, 4, 5):
-            nano = _nano_tree(_tiny_nano(model, block_size), RandomTreeDrafter(128))["token_ids"]
-            assert nano == ref, (
+            jetflow = _jetflow_tree(_tiny_jetflow(model, block_size), RandomTreeDrafter(128))["token_ids"]
+            assert jetflow == ref, (
                 f"paged tree diverged from DynamicCache ref (seed={seed}, block_size={block_size})"
             )
 
 
-def test_nano_tree_stats_shape():
+def test_jetflow_tree_stats_shape():
     """return_stats exposes per-round accept lengths / tree sizes on the paged path,
     and every committed token after the first is accounted for."""
     model = _tiny_model(0)
-    full = _nano_tree(_tiny_nano(model), RandomTreeDrafter(128), return_stats=True)
+    full = _jetflow_tree(_tiny_jetflow(model), RandomTreeDrafter(128), return_stats=True)
     assert len(full["accept_lengths"]) == full["rounds"]
     assert len(full["tree_sizes"]) == full["rounds"]
     assert all(a >= 1 for a in full["accept_lengths"])   # each round commits >= the correction
 
 
-def test_nano_tree_lossless_deep_tree_beyond_block_depth():
+def test_jetflow_tree_lossless_deep_tree_beyond_block_depth():
     """A spliced tree can be much deeper than the drafter horizon.
 
     The verifier/accept/commit path must size by configured max tree depth and
@@ -223,7 +223,7 @@ def test_nano_tree_lossless_deep_tree_beyond_block_depth():
     based. This tree is depth 20 with 33 nodes, so depth and N fall in different
     compiled buckets.
     """
-    from ptd.nano_vllm.engine import _bucket_for_n
+    from ptd.jetflow.engine import _bucket_for_n
 
     model = _tiny_model(0)
     depth = 20
@@ -232,8 +232,8 @@ def test_nano_tree_lossless_deep_tree_beyond_block_depth():
     sp = SamplingParams(0.0, 44)
     drafter = _DeepEchoTreeDrafter(model, depth=depth)
 
-    greedy = _tiny_nano(model).generate(PROMPT, sp)["token_ids"]
-    out = _tiny_nano(model, block_size=4).generate_tree(
+    greedy = _tiny_jetflow(model).generate(PROMPT, sp)["token_ids"]
+    out = _tiny_jetflow(model, block_size=4).generate_tree(
         PROMPT,
         drafter,
         block_size=4,
@@ -283,7 +283,7 @@ def _first_unique_midblock_token(tokens, tree_block_size: int):
     raise AssertionError(f"no unique mid-block EOS candidate for block_size={tree_block_size}")
 
 
-def test_nano_tree_long_decode_eos_midblock_matches_ref():
+def test_jetflow_tree_long_decode_eos_midblock_matches_ref():
     """Persistent commit buffers must stay token-identical to the DynamicCache ref.
 
     TargetEchoTreeDrafter commits multi-token blocks, so choosing EOS from inside
@@ -292,31 +292,31 @@ def test_nano_tree_long_decode_eos_midblock_matches_ref():
     """
     for tree_block_size in (4, 16):
         model = _tiny_model(0)
-        nano_full = _long_echo_tree(
-            _tiny_nano(model), model, tree_block_size=tree_block_size, return_stats=True
+        jetflow_full = _long_echo_tree(
+            _tiny_jetflow(model), model, tree_block_size=tree_block_size, return_stats=True
         )
         ref_full = _long_echo_tree(
             _tiny_llm(model), model, tree_block_size=tree_block_size, return_stats=True
         )
-        assert nano_full["token_ids"] == ref_full["token_ids"]
-        assert nano_full["rounds"] >= 3
+        assert jetflow_full["token_ids"] == ref_full["token_ids"]
+        assert jetflow_full["rounds"] >= 3
 
-        eos_token = _first_unique_midblock_token(nano_full["token_ids"], tree_block_size)
-        nano = _tiny_nano(model)
+        eos_token = _first_unique_midblock_token(jetflow_full["token_ids"], tree_block_size)
+        jetflow = _tiny_jetflow(model)
         ref = _tiny_llm(model)
-        nano.eos_token_ids = {eos_token}
+        jetflow.eos_token_ids = {eos_token}
         ref.eos_token_ids = {eos_token}
 
-        nano_eos = _long_echo_tree(
-            nano, model, tree_block_size=tree_block_size, return_stats=True
+        jetflow_eos = _long_echo_tree(
+            jetflow, model, tree_block_size=tree_block_size, return_stats=True
         )
         ref_eos = _long_echo_tree(
             ref, model, tree_block_size=tree_block_size, return_stats=True
         )
 
-        assert nano_eos["token_ids"] == ref_eos["token_ids"]
-        assert nano_eos["token_ids"][-1] == eos_token
-        eos_idx = len(nano_eos["token_ids"]) - 1
+        assert jetflow_eos["token_ids"] == ref_eos["token_ids"]
+        assert jetflow_eos["token_ids"][-1] == eos_token
+        eos_idx = len(jetflow_eos["token_ids"]) - 1
         eos_round = ((eos_idx - 1) // tree_block_size) + 1
         eos_offset = (eos_idx - 1) % tree_block_size
         assert eos_round >= 3

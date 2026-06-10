@@ -176,7 +176,7 @@ def _bucketed_stack_args(model, real_n: int, bucket_n: int, qq_bias: torch.Tenso
 
 
 def test_small_bucket_math_on_cpu():
-    from ptd.nano_vllm.engine import _TREE_BUCKETS, _bucket_for_n
+    from ptd.jetflow.engine import _TREE_BUCKETS, _bucket_for_n
 
     assert _TREE_BUCKETS == (16, 32, 64, 128, 192, 256)
     assert [_bucket_for_n(n) for n in (1, 15, 16, 17, 31, 32, 33, 63)] == [
@@ -202,7 +202,7 @@ def test_small_bucket_math_on_cpu():
 @pytest.mark.parametrize("target_layer_ids", [None, (0,), (0, 1)])
 @torch.inference_mode()
 def test_fused_gemms_match_unfused_stack_on_cpu(monkeypatch, n, real_n, target_layer_ids):
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
     monkeypatch.setattr(torch.ops.ptd, "paged_tree_attn", _cpu_paged_tree_attn)
     model = _tiny_cpu_model()
@@ -249,7 +249,7 @@ def test_fused_gemms_match_unfused_stack_on_cpu(monkeypatch, n, real_n, target_l
 @pytest.mark.parametrize("real_n,bucket_n", [(15, 16), (31, 32)])
 @torch.inference_mode()
 def test_small_bucket_padding_matches_unpadded_stack_on_cpu(monkeypatch, real_n, bucket_n):
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
     monkeypatch.setattr(torch.ops.ptd, "paged_tree_attn", _cpu_paged_tree_attn)
     model = _tiny_cpu_model()
@@ -268,7 +268,7 @@ def test_small_bucket_padding_matches_unpadded_stack_on_cpu(monkeypatch, real_n,
 
 @torch.inference_mode()
 def test_bucket_16_full_depth_chain_mask_matches_sdpa_on_cpu(monkeypatch):
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
     from transformers import DynamicCache
 
     monkeypatch.setattr(torch.ops.ptd, "paged_tree_attn", _cpu_paged_tree_attn)
@@ -292,7 +292,7 @@ def test_bucket_16_full_depth_chain_mask_matches_sdpa_on_cpu(monkeypatch):
 
 @torch.inference_mode()
 def test_fused_gemms_reduce_linear_calls_per_layer_on_cpu(monkeypatch):
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
     monkeypatch.setattr(torch.ops.ptd, "paged_tree_attn", _cpu_paged_tree_attn)
     model = _tiny_cpu_model()

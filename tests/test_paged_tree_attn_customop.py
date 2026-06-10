@@ -1,11 +1,11 @@
-"""CPU gate for the paged tree-attention ``custom_op`` (nano_vllm N3, foundation).
+"""CPU gate for the paged tree-attention ``custom_op`` (JetFlow N3, foundation).
 
 The CPU-runnable checks need NO triton/CUDA: the op is registered, the fake
 (meta) kernel returns the right shape/dtype, and ``torch.compile(fullgraph=True)``
 traces *past* the op as an opaque fusion boundary. Full ``opcheck`` is CUDA-only
 (every opcheck utility executes the real op, which forwards to triton) and runs
 as part of the b200 kernel gate alongside the kernel==SDPA oracle in
-``test_nano_kernel.py``.
+``test_jetflow_kernel.py``.
 
 The op exists so a future compiled read-only decoder forward fuses the GEMMs
 around attention without graph-breaking on the ``@triton.jit`` launch.
@@ -13,7 +13,7 @@ around attention without graph-breaking on the ``@triton.jit`` launch.
 import pytest
 import torch
 
-from ptd.nano_vllm.paged_tree_attn_op import paged_tree_attn
+from ptd.jetflow.paged_tree_attn_op import paged_tree_attn
 
 
 # Small, kernel-shaped inputs: total_q=20 ragged over 3 seqs, Hq=8/Hkv=2 (GQA),
@@ -179,7 +179,7 @@ def test_compiled_verify_stack_traces_legacy_and_logical_kv_kwargs_on_meta():
     with per-layer logical-slot rows threaded down to the custom op."""
     from transformers import Qwen3Config, Qwen3ForCausalLM
 
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
     torch._dynamo.reset()
     cfg = Qwen3Config(

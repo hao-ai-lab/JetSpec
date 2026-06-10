@@ -1,4 +1,4 @@
-"""Wall-clock TPS for the optimized nano_vllm engine — AR baseline vs tree-spec.
+"""Wall-clock TPS for the optimized JetFlow engine — AR baseline vs tree-spec.
 
 Reports REAL wall-clock tokens/sec (time.perf_counter), NOT GPU-self-time —
 i.e. what a user actually sees, including host/Python overhead. Complements
@@ -6,7 +6,7 @@ bench/identical_fork_compare.py (which reports decode_cuda_speedup =
 GPU-self-time, drafter-excluded). The production configuration behind the
 README Results table:
 
-    NANO_FUSE_GEMMS=1 NANO_BACKEND=triton_paged_tree_cudagraph_nogather \
+    JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
       PYTHONPATH=. PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       python bench/tps_walltime.py --samples 64 --max-tokens 2048 --budget 127 \
         --drafter graphed --session --prompt-set gsm8k
@@ -18,7 +18,7 @@ import time
 import torch
 
 from ptd.engine.llm import SamplingParams
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 from ptd.models.draft_head import load_draft_head
 from ptd.draft_head_drafter import DraftHeadTreeDrafter
 
@@ -76,9 +76,9 @@ def main():
                     choices=["gsm8k", "math500", "humaneval", "aime"])
     args = ap.parse_args()
 
-    backend = os.environ.get("NANO_BACKEND", "triton_paged_tree_cudagraph")
+    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
     head_id = os.environ["PTD_DRAFT_HEAD"]
-    eng = NanoEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
+    eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
     tli, bs = head.target_layer_ids, head.block_size

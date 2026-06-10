@@ -1,5 +1,5 @@
 """HF attention interface that routes Qwen3Attention through the paged tree-attention
-triton kernel (nano_vllm N3, opt-in).
+triton kernel (JetFlow N3, opt-in).
 
 `Qwen3Attention.forward` applies RoPE + q/k-norm, calls `past_key_values.update(...)`,
 then immediately hands the result to `ALL_ATTENTION_FUNCTIONS[config._attn_implementation]`
@@ -20,8 +20,8 @@ import torch
 
 from transformers.integrations.sdpa_attention import sdpa_attention_forward
 
-from ptd.nano_vllm.paged_kv_cache import PagedHandle
-from ptd.nano_vllm.paged_tree_attn_op import paged_tree_attn
+from ptd.jetflow.paged_kv_cache import PagedHandle
+from ptd.jetflow.paged_tree_attn_op import paged_tree_attn
 
 
 def _ptd_paged_tree_attn_forward(

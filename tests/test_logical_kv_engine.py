@@ -27,20 +27,20 @@ torch._dynamo.config.recompile_limit = 64
 
 from ptd.engine.llm import SamplingParams
 from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from tests.test_nano_kernel_e2e import _tiny_model, _tiny_nano, PROMPT, SP
+from tests.test_jetflow_kernel_e2e import _tiny_model, _tiny_jetflow, PROMPT, SP
 
 
 def _add_backend(backend: str):
     """Builder for any compiled-family backend over the tiny model (mirrors
     `test_compiled_verify_lossless._add_compiled_backend`, parameterized by the
     backend string so the logical-KV no-gather variants ride the same fixture)."""
-    from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
-    from ptd.nano_vllm.engine import _CUDAGRAPH_BACKENDS, _env_flag
+    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
+    from ptd.jetflow.engine import _CUDAGRAPH_BACKENDS, _env_flag
 
     def build(model):
-        eng = _tiny_nano(model, "triton_paged_tree")
+        eng = _tiny_jetflow(model, "triton_paged_tree")
         eng.attn_backend = backend
-        eng.fuse_gemms = _env_flag("NANO_FUSE_GEMMS")
+        eng.fuse_gemms = _env_flag("JETFLOW_FUSE_GEMMS")
         eng.compiled_verify = CompiledVerifyStack(
             model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
         )
@@ -89,7 +89,7 @@ def test_nogather_matches_sdpa_directly():
     model = _tiny_model(0)
     drafter = TargetEchoTreeDrafter(model)
     torch.manual_seed(1)
-    sdpa = _tiny_nano(model, "sdpa").generate_tree(
+    sdpa = _tiny_jetflow(model, "sdpa").generate_tree(
         PROMPT, drafter, block_size=4, tree_width=2, budget=15,
         sampling_params=SP)["token_ids"]
     tok_l, _ = _run(_add_backend("triton_paged_tree_compiled_nogather")(model), drafter)

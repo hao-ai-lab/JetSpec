@@ -4,7 +4,7 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from ptd.engine import SamplingParams
 from ptd.engine.model_runner import ModelRunner
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 
 
 class _StubTokenizer:
@@ -45,8 +45,8 @@ def _tiny_model(seed: int = 0) -> Qwen3ForCausalLM:
     return Qwen3ForCausalLM(cfg).eval().to(torch.float32)
 
 
-def _tiny_nano(model, block_size: int) -> NanoEngine:
-    eng = object.__new__(NanoEngine)
+def _tiny_jetflow(model, block_size: int) -> JetFlowEngine:
+    eng = object.__new__(JetFlowEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -79,8 +79,8 @@ def test_tree_session_matches_fresh_calls_across_prompts_and_cache_blocks():
     for block_size in (4, 16):
         model = _tiny_model(0)
         drafter = _StubTreeDrafter(model.config.vocab_size)
-        fresh = _tiny_nano(model, block_size)
-        session = _tiny_nano(model, block_size)
+        fresh = _tiny_jetflow(model, block_size)
+        session = _tiny_jetflow(model, block_size)
 
         expected = [
             _tree(fresh, prompt, drafter, tree_block_size=block_size)
@@ -108,8 +108,8 @@ def test_tree_session_resets_stale_long_prompt_state_before_short_prompt():
     drafter = _StubTreeDrafter(model.config.vocab_size)
     long_prompt = torch.tensor([[3, 14, 15, 92, 65, 35, 89, 7, 9, 3, 2, 71]])
     short_prompt = torch.tensor([[8, 6, 7]])
-    fresh_short = _tiny_nano(model, 4)
-    session = _tiny_nano(model, 4)
+    fresh_short = _tiny_jetflow(model, 4)
+    session = _tiny_jetflow(model, 4)
 
     _tree(
         session,
@@ -136,7 +136,7 @@ def test_tree_session_resets_stale_long_prompt_state_before_short_prompt():
 def test_tree_session_rejects_prompt_beyond_session_capacity():
     model = _tiny_model(2)
     drafter = _StubTreeDrafter(model.config.vocab_size)
-    session = _tiny_nano(model, 4)
+    session = _tiny_jetflow(model, 4)
 
     _tree(
         session,
@@ -161,7 +161,7 @@ def test_tree_session_rejects_prompt_beyond_session_capacity():
 def test_tree_session_cache_reset_hygiene_returns_all_blocks():
     model = _tiny_model(3)
     drafter = _StubTreeDrafter(model.config.vocab_size)
-    session = _tiny_nano(model, 4)
+    session = _tiny_jetflow(model, 4)
 
     _tree(
         session,

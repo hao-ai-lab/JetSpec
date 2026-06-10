@@ -1,7 +1,7 @@
-"""Continuous-batching scheduler (nano_vllm N2a).
+"""Continuous-batching scheduler (JetFlow N2a).
 
 Controls admission, batching, and eviction for a batch of sequences sharing one
-`PagedKVCache` pool. The engine (`NanoEngine.generate_batch`) owns the forward;
+`PagedKVCache` pool. The engine (`JetFlowEngine.generate_batch`) owns the forward;
 the scheduler owns the bookkeeping: a FIFO waiting queue, a `seq_id -> request`
 running set, and the eviction policy that frees pool room when a new prefill
 can't fit. It is a thin policy layer over the cache's own admit/allocate/evict
@@ -27,7 +27,7 @@ from typing import Callable, Optional
 
 import torch
 
-from ptd.nano_vllm.paged_kv_cache import EvictionFailed, PagedKVCache
+from ptd.jetflow.paged_kv_cache import EvictionFailed, PagedKVCache
 
 
 @dataclass
