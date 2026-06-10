@@ -1,4 +1,4 @@
-"""nano_vllm N0 gate: a paged KV cache + single-stream AR engine that is
+"""JetFlow N0 gate: a paged KV cache + single-stream AR engine that is
 token-identical to `ptd.engine` on a tiny fp32 Qwen3.
 
 Runs on CPU with a tiny randomly-initialized fp32 model (no network, no GPU): in
@@ -13,8 +13,8 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 
 from ptd.engine.llm import LLM, SamplingParams
 from ptd.engine.model_runner import ModelRunner
-from ptd.nano_vllm.engine import NanoEngine
-from ptd.nano_vllm.paged_kv_cache import PagedKVCache
+from ptd.jetflow.engine import JetFlowEngine
+from ptd.jetflow.paged_kv_cache import PagedKVCache
 
 
 class _StubTokenizer:
@@ -46,9 +46,9 @@ def _tiny_llm(model) -> LLM:
     return llm
 
 
-def _tiny_nano(model, block_size: int = 16) -> NanoEngine:
-    """Wire the same model into a `NanoEngine` without touching the network."""
-    eng = object.__new__(NanoEngine)
+def _tiny_jetflow(model, block_size: int = 16) -> JetFlowEngine:
+    """Wire the same model into a `JetFlowEngine` without touching the network."""
+    eng = object.__new__(JetFlowEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -108,28 +108,28 @@ def test_paged_cache_multi_layer_isolation_and_free():
     assert torch.equal(gk0, k0[:, :, :4])                    # surviving KV intact
 
 
-# --- NanoEngine lossless gate (token-identical to ptd.engine) ----------------
+# --- JetFlowEngine lossless gate (token-identical to ptd.engine) ----------------
 
-def test_nano_ar_matches_llm_greedy_fp32():
-    """NanoEngine greedy == LLM greedy, token-for-token, across seeds and block
+def test_jetflow_ar_matches_llm_greedy_fp32():
+    """JetFlowEngine greedy == LLM greedy, token-for-token, across seeds and block
     sizes (fp32 bitwise-equal). Block sizes that don't divide head_dim exercise
     the cross-boundary append/unpack arithmetic."""
     for seed in (0, 1, 7):
         model = _tiny_model(seed)
         ref = _tiny_llm(model).generate(PROMPT, SP)["token_ids"]
         for block_size in (16, 4, 5):
-            got = _tiny_nano(model, block_size).generate(PROMPT, SP)["token_ids"]
+            got = _tiny_jetflow(model, block_size).generate(PROMPT, SP)["token_ids"]
             assert got == ref, (
-                f"nano AR diverged from ptd.engine (seed={seed}, block_size={block_size})"
+                f"JetFlow AR diverged from ptd.engine (seed={seed}, block_size={block_size})"
             )
         assert len(ref) == SP.max_new_tokens
 
 
-def test_nano_ar_cache_reuse_grows_by_one():
+def test_jetflow_ar_cache_reuse_grows_by_one():
     """Decode reuses the prefix: the paged cache length grows by exactly one token
     per step (no recompute)."""
     model = _tiny_model(0)
-    eng = _tiny_nano(model)
+    eng = _tiny_jetflow(model)
     cache = PagedKVCache(block_size=eng.block_size, dtype=torch.float32)
     pos = torch.arange(PROMPT.shape[1]).unsqueeze(0)
     logits, cache, _ = eng.runner.forward(PROMPT, cache, pos)
@@ -143,7 +143,7 @@ def test_nano_ar_cache_reuse_grows_by_one():
         tok = sample(logits[:, -1:, :], 0.0)
 
 
-def test_nano_ar_temperature_sampling_deterministic():
+def test_jetflow_ar_temperature_sampling_deterministic():
     """temperature>0 is deterministic under a fixed seed and matches LLM's
     sampler-driven path (same RNG draws via the shared `sample`)."""
     model = _tiny_model(2)
@@ -151,5 +151,5 @@ def test_nano_ar_temperature_sampling_deterministic():
     torch.manual_seed(123)
     ref = _tiny_llm(model).generate(PROMPT, sp)["token_ids"]
     torch.manual_seed(123)
-    got = _tiny_nano(model).generate(PROMPT, sp)["token_ids"]
+    got = _tiny_jetflow(model).generate(PROMPT, sp)["token_ids"]
     assert got == ref

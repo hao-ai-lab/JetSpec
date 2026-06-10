@@ -1,4 +1,4 @@
-"""Standalone correctness gate for the paged tree-attention kernel (nano_vllm N3).
+"""Standalone correctness gate for the paged tree-attention kernel (JetFlow N3).
 
 The kernel reads the exact post-RoPE K/V bytes SDPA reads, so correctness reduces
 to "kernel output == SDPA output on the same paged pool". We build a RANDOM block
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 if torch.cuda.is_available():
-    from ptd.nano_vllm.paged_tree_attn import paged_tree_attn
+    from ptd.jetflow.paged_tree_attn import paged_tree_attn
 from ptd.tree import build_ancestor_matrix
 from ptd.tree._core.base import DraftTree
 

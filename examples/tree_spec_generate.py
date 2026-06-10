@@ -1,7 +1,7 @@
-"""Trained-head tree-speculative decode on the owned `nano_vllm` engine.
+"""Trained-head tree-speculative decode on the owned `JetFlow` engine.
 
 Shows the contribution end to end via the public API: a trained DFlash draft
-head proposes multi-token, tree-structured drafts, and the `NanoEngine`'s
+head proposes multi-token, tree-structured drafts, and the `JetFlowEngine`'s
 compiled tree-attention path verifies the whole tree in one batched forward,
 accepting the longest target-greedy-agreeing root-to-leaf path. Lossless by
 construction (see README "Results"), faster than autoregressive decode.
@@ -16,7 +16,7 @@ published head `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`.
 import sys
 
 from ptd import load_draft_head, DraftHeadTreeDrafter
-from ptd.nano_vllm import NanoEngine, SamplingParams
+from ptd.jetflow import JetFlowEngine, SamplingParams
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-8B"
 DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma"
@@ -25,7 +25,7 @@ DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "Snyhlxde/ptd-qwen3-8b-distil
 def main():
     # The compiled tree-spec path (the contribution). The plain "triton_paged_tree"
     # backend runs the same tree-verify without torch.compile.
-    engine = NanoEngine(MODEL, attn_backend="triton_paged_tree_compiled")
+    engine = JetFlowEngine(MODEL, attn_backend="triton_paged_tree_compiled")
     head = load_draft_head(DRAFT_HEAD)
     drafter = DraftHeadTreeDrafter(
         head, target=engine.model, block_size=head.block_size,

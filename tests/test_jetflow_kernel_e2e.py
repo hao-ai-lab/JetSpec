@@ -1,5 +1,5 @@
-"""nano_vllm N3 end-to-end gate: the paged tree-attention triton kernel, wired into
-`NanoEngine` behind `attn_backend="triton_paged_tree"`, must produce the SAME tokens
+"""JetFlow N3 end-to-end gate: the paged tree-attention triton kernel, wired into
+`JetFlowEngine` behind `attn_backend="triton_paged_tree"`, must produce the SAME tokens
 as the default SDPA path for N0 (`generate`), N1 (`generate_tree`), and N2a
 (`generate_batch`).
 
@@ -22,7 +22,7 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 from ptd.engine.llm import SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 
 DEVICE = "cuda"
 
@@ -45,13 +45,13 @@ def _tiny_model(seed: int = 0) -> Qwen3ForCausalLM:
     return Qwen3ForCausalLM(cfg).eval().to(torch.float32).to(DEVICE)
 
 
-def _tiny_nano(model, attn_backend: str, block_size: int = 16) -> NanoEngine:
-    """Wire `model` into a `NanoEngine` with the chosen backend (no network).
+def _tiny_jetflow(model, attn_backend: str, block_size: int = 16) -> JetFlowEngine:
+    """Wire `model` into a `JetFlowEngine` with the chosen backend (no network).
 
     For the kernel backend we register the interface + flip `_attn_implementation`
     here (the `__init__` does this, but the tests bypass `__init__` via
     `object.__new__` to skip `load_target`)."""
-    eng = object.__new__(NanoEngine)
+    eng = object.__new__(JetFlowEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -61,7 +61,7 @@ def _tiny_nano(model, attn_backend: str, block_size: int = 16) -> NanoEngine:
     eng.eos_token_ids = set()            # no EOS -> deterministic length
     eng.attn_backend = attn_backend
     if attn_backend == "triton_paged_tree":
-        from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
+        from ptd.jetflow.paged_attn_backend import register_ptd_paged_tree
 
         register_ptd_paged_tree()
         model.config._attn_implementation = "ptd_paged_tree"
@@ -87,8 +87,8 @@ def _both(make_engine, run):
     backend flips `_attn_implementation`, so build the engines per call to keep the
     SDPA reference unpolluted."""
     model = make_engine
-    sdpa = run(_tiny_nano(model, "sdpa"))
-    kern = run(_tiny_nano(model, "triton_paged_tree"))
+    sdpa = run(_tiny_jetflow(model, "sdpa"))
+    kern = run(_tiny_jetflow(model, "triton_paged_tree"))
     return sdpa, kern
 
 
@@ -106,8 +106,8 @@ def test_n0_generate_kernel_matches_sdpa(seed):
 def test_n0_generate_block_sizes(block_size):
     """Block sizes that don't divide head_dim exercise cross-boundary slot math."""
     model = _tiny_model(0)
-    sdpa = _tiny_nano(model, "sdpa", block_size).generate(PROMPT, SP)["token_ids"]
-    kern = _tiny_nano(model, "triton_paged_tree", block_size).generate(PROMPT, SP)["token_ids"]
+    sdpa = _tiny_jetflow(model, "sdpa", block_size).generate(PROMPT, SP)["token_ids"]
+    kern = _tiny_jetflow(model, "triton_paged_tree", block_size).generate(PROMPT, SP)["token_ids"]
     assert kern == sdpa, f"N0 kernel diverged from SDPA (block_size={block_size})"
 
 
@@ -148,8 +148,8 @@ def test_n2a_generate_batch_kernel_matches_sdpa(seed):
     """Ragged multi-prompt batch (lengths 8/5/12/3): the kernel must match SDPA on
     every sequence."""
     model = _tiny_model(seed)
-    sdpa = _tiny_nano(model, "sdpa").generate_batch(PROMPTS, SP)
-    kern = _tiny_nano(model, "triton_paged_tree").generate_batch(PROMPTS, SP)
+    sdpa = _tiny_jetflow(model, "sdpa").generate_batch(PROMPTS, SP)
+    kern = _tiny_jetflow(model, "triton_paged_tree").generate_batch(PROMPTS, SP)
     for i in range(len(PROMPTS)):
         assert kern[i]["token_ids"] == sdpa[i]["token_ids"], (
             f"N2a kernel diverged from SDPA on seq {i} (seed={seed})"
@@ -159,8 +159,8 @@ def test_n2a_generate_batch_kernel_matches_sdpa(seed):
 @pytest.mark.parametrize("block_size", [16, 4, 5])
 def test_n2a_generate_batch_block_sizes(block_size):
     model = _tiny_model(0)
-    sdpa = _tiny_nano(model, "sdpa", block_size).generate_batch(PROMPTS, SP)
-    kern = _tiny_nano(model, "triton_paged_tree", block_size).generate_batch(PROMPTS, SP)
+    sdpa = _tiny_jetflow(model, "sdpa", block_size).generate_batch(PROMPTS, SP)
+    kern = _tiny_jetflow(model, "triton_paged_tree", block_size).generate_batch(PROMPTS, SP)
     for i in range(len(PROMPTS)):
         assert kern[i]["token_ids"] == sdpa[i]["token_ids"], (
             f"N2a kernel diverged from SDPA on seq {i} (block_size={block_size})"

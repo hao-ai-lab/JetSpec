@@ -1,4 +1,4 @@
-"""NanoEngine — single-stream AR decode over a paged KV cache (nano_vllm N0).
+"""JetFlowEngine — single-stream AR decode over a paged KV cache (JetFlow N0).
 
 The owned-substrate analogue of `ptd.engine.llm.LLM.generate()`: plain
 greedy/temperature decode (prefill the prompt once, then single-token steps
@@ -26,21 +26,21 @@ from ptd.models.qwen3 import load_target
 from ptd.engine.llm import SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.engine.sampler import sample
-from ptd.nano_vllm.paged_kv_cache import PagedKVCache
-from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
+from ptd.jetflow.paged_kv_cache import PagedKVCache
+from ptd.jetflow.scheduler import Scheduler, SequenceRequest
 
 # A3-BUCKET: tree-N bucket sizes for the compiled verify stack. `torch.compile(
 # dynamic=False)` specializes `_stack` on the concrete node count N, so a variable-N
 # decode recompiles per distinct N. We snap N UP to the next bucket by padding (pad
-# rows get -inf qq_bias so real rows never attend them and tree_accept never reads
-# them — see `_pad_tree_to_bucket`), so the compiled stack only ever sees these few N
-# values. Buckets were chosen from the measured N distribution on a real gsm8k decode
+# rows are isolated from real rows by qq_bias and tree_accept never reads them — see
+# `_pad_tree_to_bucket`), so the compiled stack only ever sees these few N values.
+# Buckets were chosen from the measured N distribution on a real gsm8k decode
 # (Qwen3-8B, budget=255, width=7, block_size=16, epoch6 head): the crossproduct heap
 # fills to the budget cap EVERY round, so N is degenerate at 255 — but the smaller
 # buckets keep early/short-context or smaller-budget runs from recompiling too, and
 # 256 covers the budget=255 steady state (the dominant case). Padding adds at most
 # `bucket - N` dummy rows (here 1), a negligible verify-forward cost.
-_TREE_BUCKETS = (64, 128, 192, 256)
+_TREE_BUCKETS = (16, 32, 64, 128, 192, 256)
 
 # A3-GRAPH backends. The compiled verify/AR stacks (A3-INT/A3-HIDDEN) ride two flag sets:
 #   - `_KERNEL_BACKENDS`: routes prefill + the verify forward through the paged tree-attn
@@ -89,6 +89,46 @@ def _bucket_for_n(n: int) -> int:
 
 def _round_session_capacity(prompt_len: int) -> int:
     return ((int(prompt_len) + 255) // 256) * 256
+
+
+def _maybe_extend_tree(tree, draft_logits, tree_drafter, committed, target_hidden,
+                       tree_width, extend_kwargs):
+    """P1 ceiling raise (v1, chain mode): extend the rank-1 chain leaf with one
+    conditioned drafter pass when the chain is fully present in the tree AND
+    its per-depth top-2 gaps clear `gap_threshold`. Cost when it fires: one
+    extra drafter forward; strict no-op otherwise (returns the tree unchanged).
+    """
+    # tree contract (engine -> tree, one-way): public ptd.tree API only.
+    from ptd.tree import should_extend, splice_extension
+
+    cond_fn = getattr(tree_drafter, "propose_logits_conditioned", None)
+    if cond_fn is None:
+        return tree
+    lp = torch.log_softmax(draft_logits[0].float(), dim=-1)
+    topk_lp, topk_tok = torch.topk(lp, tree_width, dim=-1)        # (D, K)
+    chain = topk_tok[:, 0].tolist()                               # rank-1 chain tokens
+    parents = tree.parent_indices.tolist()
+    tokens = tree.token_ids.tolist()
+    children = [[] for _ in range(tree.num_nodes)]
+    for i in range(1, tree.num_nodes):
+        children[parents[i]].append(i)
+    node = 0
+    for tok in chain:
+        nxt = next((c for c in children[node] if tokens[c] == tok), None)
+        if nxt is None:
+            return tree                                           # chain not fully treed
+        node = nxt
+    ranks = [0] * len(chain)
+    if not should_extend(topk_lp, ranks,
+                         gap_threshold=float(extend_kwargs.get("gap_threshold", 1.0))):
+        return tree
+    cond = cond_fn(committed, topk_tok[:, 0], target_hidden=target_hidden)
+    return splice_extension(
+        tree, node, cond,
+        ext_budget=int(extend_kwargs.get("ext_budget", len(chain))),
+        tree_width=tree_width,
+        mode=extend_kwargs.get("mode", "chain"),
+    )
 
 
 class _LogicalRoundBuffers:
@@ -198,7 +238,7 @@ class _LogicalRoundBuffers:
         return seq_step_b, pos_b, qq_bias_b, dummy, cu
 
 
-class NanoEngine:
+class JetFlowEngine:
     def __init__(
         self,
         model_name_or_path: str,
@@ -223,9 +263,9 @@ class NanoEngine:
         # weights/format; only the interface HF dispatches to is replaced). Affects
         # N0/N1/N2a; N2b stays on SDPA regardless (see generate_tree_batch).
         self.attn_backend = attn_backend
-        self.fuse_gemms = bool(fuse_gemms) or _env_flag("NANO_FUSE_GEMMS")
+        self.fuse_gemms = bool(fuse_gemms) or _env_flag("JETFLOW_FUSE_GEMMS")
         if attn_backend == "triton_paged_tree":
-            from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
+            from ptd.jetflow.paged_attn_backend import register_ptd_paged_tree
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
@@ -245,8 +285,8 @@ class NanoEngine:
             # verify stacks in per-bucket CUDA graphs (built lazily in generate_tree
             # once the pool is reserved + the bucket set known). `_use_cudagraph` gates
             # that extra layer; everything else is identical to the compiled backend.
-            from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
-            from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+            from ptd.jetflow.paged_attn_backend import register_ptd_paged_tree
+            from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
@@ -325,7 +365,7 @@ class NanoEngine:
             # only for the cudagraph backend; the compiled-non-graph path is left untouched
             # as the losslessness oracle.
             if getattr(self, "_use_cudagraph", False):
-                from ptd.nano_vllm.graph_capture import GraphedVerify
+                from ptd.jetflow.graph_capture import GraphedVerify
                 cfg = self.model.config
                 head_dim = (getattr(cfg, "head_dim", None)
                             or cfg.hidden_size // cfg.num_attention_heads)
@@ -402,11 +442,11 @@ class NanoEngine:
           - `qq_bias_b[i, N:] = -inf` for every real row i < N: real queries assign
             -inf score to pad keys, so the softmax over `[prefix | tree]` is identical
             to the unbucketed (N,N) bias — real rows' attention output is unchanged.
-          - `qq_bias_b[N:, :] = -inf` for every pad row: pad queries attend nothing
-            (all keys -inf). Their attention output is the kernel's all-masked value
-            (irrelevant — we slice `[:N]` off), and crucially they are never read by
-            `tree_accept`, which walks child indices 0..N-1 only (so a pad row is never
-            `current` and its logit/hidden is never inspected).
+          - pad queries are isolated from every real key by -inf and can only attend
+            themselves. The self edge avoids all-masked softmax NaNs inside the per-layer
+            pad K/V while still leaving pad rows unobservable: we slice `[:N]` off, and
+            `tree_accept` walks child indices 0..N-1 only (so a pad row is never `current`
+            and its logit/hidden is never inspected).
           - pad rows get a dummy token (0) and the last real RoPE position; neither
             feeds back into any real row (the -inf bias isolates them).
         The pad rows' post-RoPE K/V is scattered into the reserved slots
@@ -422,6 +462,8 @@ class NanoEngine:
         neg_inf = torch.full((), float("-inf"), dtype=qq_bias.dtype, device=dev)
         qq_bias_b = neg_inf.expand(B, B).clone()           # every pad interaction -inf
         qq_bias_b[:N, :N] = qq_bias                         # real block unchanged
+        pad_idx = torch.arange(N, B, device=dev)
+        qq_bias_b[pad_idx, pad_idx] = 0.0                   # pad rows self-only, no NaNs
         return seq_step_b, posN_b, qq_bias_b
 
     def _get_compiled_verify_hidden(self, target_layer_ids):
@@ -431,7 +473,7 @@ class NanoEngine:
         we cache one compiled stack per distinct tap tuple (different heads tap
         different layers and need their own DCE'd graph). Robust to the test fixtures
         that bypass `__init__` (no `_compiled_verify_hidden` dict)."""
-        from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+        from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
         cache = getattr(self, "_compiled_verify_hidden", None)
         if cache is None:
@@ -468,7 +510,7 @@ class NanoEngine:
         and graphs) whenever the pool tensor or width differs. Within one decode the pool
         + width are constant, so the entry is built once and every round replays it — the
         gate (no per-ROUND recapture) holds; a new prompt rebuilds once (per decode)."""
-        from ptd.nano_vllm.graph_capture import GraphedVerify
+        from ptd.jetflow.graph_capture import GraphedVerify
 
         cache = getattr(self, "_graphed_verify", None)
         if cache is None:
@@ -507,8 +549,9 @@ class NanoEngine:
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
                       profile_table: dict = None, tree_diag: bool = False,
-                      session: bool = False, session_prompt_capacity: int = None) -> dict:
-        """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
+                      session: bool = False, session_prompt_capacity: int = None,
+                      max_tree_depth: int = None, extend_kwargs: dict = None) -> dict:
+        """Tree speculative decode over a PERSISTENT paged KV cache (JetFlow N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
         each round the tree drafter emits per-depth logits, the tree algorithm builds
@@ -536,7 +579,13 @@ class NanoEngine:
         else:
             committed = prompt.to(self.device)
         prompt_len = committed.shape[1]
-        commit_capacity = prompt_len + sp.max_new_tokens + block_size
+        configured_max_tree_depth = (
+            block_size - 1 if max_tree_depth is None else int(max_tree_depth)
+        )
+        if configured_max_tree_depth < 0:
+            raise ValueError(f"max_tree_depth must be >= 0; got {configured_max_tree_depth}")
+        commit_slack = configured_max_tree_depth + 1
+        commit_capacity = prompt_len + sp.max_new_tokens + commit_slack
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.dtype
@@ -545,7 +594,7 @@ class NanoEngine:
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         tree_diag_bins = (
-            torch.zeros(block_size, dtype=torch.long, device=self.device)
+            torch.zeros(commit_slack, dtype=torch.long, device=self.device)
             if tree_diag else None
         )
         target_hidden = None
@@ -569,6 +618,7 @@ class NanoEngine:
                 "dtype": str(self.dtype),
                 "need_hidden": bool(need_hidden),
                 "budget_bucket": int(Bmax),
+                "max_tree_depth": int(configured_max_tree_depth),
                 "max_new_tokens": int(sp.max_new_tokens),
                 "attn_backend": backend,
                 "logical_kv": bool(logical_kv),
@@ -685,7 +735,7 @@ class NanoEngine:
             if logical_kv:
                 # L5 no-gather: without gather's compaction, every committed token can
                 # in the worst case pin its own retained block, so the POOL must be
-                # sized for prompt + 16*(max_new + tree_depth) + Bmax tokens — while
+                # sized for prompt + 16*(max_new + commit_slack) + Bmax tokens — while
                 # the kernel-visible block-table WIDTH keeps today's (much smaller)
                 # prompt + max_new + Bmax bound (it drives the dynamo guard + graph
                 # staging and must not inflate with the pool). freeze_pool() turns any
@@ -701,12 +751,12 @@ class NanoEngine:
                     cache.reserve_capacity(
                         reserve_prompt_len,
                         block_table_tokens=reserve_prompt_len + sp.max_new_tokens + Bmax,
-                        extra_shared_blocks=(sp.max_new_tokens + block_size
+                        extra_shared_blocks=(sp.max_new_tokens + commit_slack
                                              + (Bmax + self.block_size - 1) // self.block_size + 1),
                     )
                     cache.freeze_pool()
                 nlayers_lk = self.model.config.num_hidden_layers
-                max_slots = sp.max_new_tokens + block_size + Bmax
+                max_slots = sp.max_new_tokens + commit_slack + Bmax
                 # Address-stable for the decode: graphs/compiled calls read these in
                 # place (the pools' "REUSED IN PLACE" contract); the engine mutates
                 # them between replays. Window = committed-after-prompt + this round's
@@ -760,9 +810,32 @@ class NanoEngine:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
+            if extend_kwargs is not None:
+                # P1 ceiling raise: when the rank-1 chain is in the tree and
+                # gap-confident, one conditioned drafter pass extends it below
+                # the 15-deep leaf (tree depth then exceeds block_size-1; the
+                # caller must size max_tree_depth accordingly).
+                tree = _maybe_extend_tree(
+                    tree, draft_logits, tree_drafter, committed, target_hidden,
+                    tree_width, extend_kwargs,
+                )
             N = tree.num_nodes
+            if extend_kwargs is None and max_tree_depth is None:
+                # Default path: builders consume D = block_size-1 logit rows, so
+                # tree depth cannot exceed the configured ceiling by construction.
+                # Skip the bound check — tree.depth.max().item() is a per-round
+                # device sync the steady round loop must stay free of.
+                actual_tree_depth = configured_max_tree_depth
+            else:
+                actual_tree_depth = int(tree.depth.max().item()) if N else 0
+                if actual_tree_depth > configured_max_tree_depth:
+                    raise ValueError(
+                        f"tree depth {actual_tree_depth} exceeds max_tree_depth="
+                        f"{configured_max_tree_depth}; pass max_tree_depth large enough "
+                        "to size per-round commit/cache buffers"
+                    )
             if tree_diag_bins is not None:
-                tree_diag_bins += torch.bincount(tree.depth, minlength=block_size)[:block_size]
+                tree_diag_bins += torch.bincount(tree.depth, minlength=commit_slack)[:commit_slack]
             # logical path: the cache's seq bookkeeping stays frozen at prompt_len
             # (no append/gather advances it); the engine-tracked window length is
             # the source of truth. Same VALUE as the gather path's get_seq_length()
@@ -804,16 +877,23 @@ class NanoEngine:
                     #
                     # A3-BUCKET: pad the N real tree rows up to a fixed bucket B so the
                     # compiled stack only ever sees the few `_TREE_BUCKETS` node counts
-                    # (no per-N recompile). The pad rows get -inf qq_bias both ways, so
-                    # real rows never attend pad keys and pad rows are never `current`
-                    # in tree_accept (which walks real child indices 0..N-1 only) — the
-                    # logits/hidden we slice back to [:N] are bit-identical to the
-                    # unbucketed stack. We reserve B slots (the compiled stack scatters
-                    # all B rows' KV in-graph); `gather(keep)` below references only
-                    # `past_len + accepted_path` (< past_len + N), and decrefs ALL old
-                    # blocks (incl. the transient pad slots), so the pad KV never
-                    # survives the round.
-                    B = _bucket_for_n(N)
+                    # (no per-N recompile). Real rows get -inf for every pad key; pad
+                    # rows get only a self edge so the kernel never sees an all-masked
+                    # softmax row, but pad rows are never `current` in tree_accept (which
+                    # walks real child indices 0..N-1 only). The logits/hidden we slice
+                    # back to [:N] are bit-identical to the unbucketed stack. We reserve B
+                    # slots (the compiled stack scatters all B rows' KV in-graph);
+                    # `gather(keep)` below references only `past_len + accepted_path`
+                    # (< past_len + N), and decrefs ALL old blocks (incl. the transient
+                    # pad slots), so the pad KV never survives the round.
+                    # The bucket is PINNED per decode at Bmax (the budget's bucket),
+                    # not chosen per round from N: variable-N algos (top2gap) otherwise
+                    # oscillate between bucket graphs round-to-round, which measured a
+                    # ~12% TPS tax at budget 63 (gsm8k, b200 f1 probe) — pinning restores
+                    # one replayed graph per decode while small-budget cells (<=31) still
+                    # land in the small W14 buckets. N exceeds Bmax only via tree
+                    # extension (extend_kwargs), which falls back to its own bucket.
+                    B = Bmax if N <= Bmax else _bucket_for_n(N)
                     if logical_kv:
                         seq_step_b, posN_b, qq_bias_b, dummy, cu = round_bufs.stage_tree_inputs(
                             seq_step, tree.depth, anc, past_len, N, B)
@@ -928,14 +1008,16 @@ class NanoEngine:
                 # (accepted_len) instead of the oracle's posterior.tolist() +
                 # child-map python walk; the path/correction stay device tensors
                 # so the gather/hidden/commit steps below never re-upload them.
-                # max_depth = block_size (the tree's depth budget) keeps the
-                # parent-walk loop short and sync-free. temperature>0 stays on
-                # the CPU oracle (gpu_tree_accept is greedy-only).
+                # max_depth bounds the path-extraction walk: the configured ceiling
+                # on the default path (no sync; builders can't exceed it), the
+                # measured depth when deep spliced trees are enabled (the gated
+                # .item() above). temperature>0 stays on the CPU oracle
+                # (gpu_tree_accept is greedy-only).
                 from ptd.tree._core.accept import gpu_tree_accept
                 greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
                 path_t, acc, corr_t = gpu_tree_accept(
                     tree.token_ids, greedy, tree.parent_indices, tree.depth,
-                    max_depth=block_size,
+                    max_depth=actual_tree_depth,
                 )
             else:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
@@ -1013,7 +1095,7 @@ class NanoEngine:
     @torch.inference_mode()
     def generate_batch(self, prompts: list, sampling_params: SamplingParams = None) -> list:
         """Continuous-batched greedy/temperature AR over the shared multi-seq paged
-        cache (nano_vllm N2a). Returns a list of `{token_ids, text}` aligned to
+        cache (JetFlow N2a). Returns a list of `{token_ids, text}` aligned to
         `prompts`, each token-identical to `generate(prompt)` run alone — the N2a
         lossless gate.
 
@@ -1198,7 +1280,7 @@ class NanoEngine:
                             tree_width: int = 2, budget: int = 15, algo: str = "crossproduct",
                             algo_kwargs: dict = None, sampling_params: SamplingParams = None) -> list:
         """Batched per-sequence TREE-spec decode over the shared multi-seq paged
-        cache (nano_vllm N2b). Returns a list of `{token_ids, text, tpf}` aligned to
+        cache (JetFlow N2b). Returns a list of `{token_ids, text, tpf}` aligned to
         `prompts`, each token-identical to single-stream `generate_tree(prompt)` run
         alone — the N2b lossless gate.
 

@@ -6,7 +6,7 @@ Built on top of HF `transformers` (the target is a standard `AutoModelForCausalL
 
 ## Status
 
-**Shipped: paged, continuous-batched, lossless tree-speculative decode.** The `nano_vllm` engine does paged-KV, continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. The trained draft head is published at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`. On Qwen3-8B (B200, bf16, single-stream) it reaches **96–103% of the reference vLLM-based fork's wall-clock TPS** — 738.6 vs 718.9 tok/s on humaneval (above it), 791.0 vs 820.7 on gsm8k, 910.3 vs 930.3 on math500 — from an engine core of ~3.8k lines vs vLLM's ~560k. See [Results](#results). The HF + SDPA `ptd/engine` substrate remains the single-clone correctness reference.
+**Shipped: paged, continuous-batched, lossless tree-speculative decode.** The `JetFlow` engine does paged-KV, continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. The trained draft head is published at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`. On Qwen3-8B (B200, bf16, single-stream) it reaches **96–103% of the reference vLLM-based fork's wall-clock TPS** with the default tree algorithm, and **meets or beats the fork on all three benchmarks with the per-workload pick** — 740.5 vs 718.9 tok/s on humaneval, 827.0 vs 820.7 on gsm8k, 931.5 vs 930.3 on math500 — from an engine core of ~3.8k lines vs vLLM's ~560k. See [Results](#results). The HF + SDPA `ptd/engine` substrate remains the single-clone correctness reference.
 
 ## Quickstart
 
@@ -20,10 +20,10 @@ python examples/simple_generate.py            # offline greedy baseline
 
 ```python
 from ptd import load_draft_head, DraftHeadTreeDrafter
-from ptd.nano_vllm import NanoEngine, SamplingParams
+from ptd.jetflow import JetFlowEngine, SamplingParams
 
 # Compiled tree-attention verify path (the contribution); "triton_paged_tree" runs it un-compiled.
-engine = NanoEngine("Qwen/Qwen3-8B", attn_backend="triton_paged_tree_compiled")
+engine = JetFlowEngine("Qwen/Qwen3-8B", attn_backend="triton_paged_tree_compiled")
 head = load_draft_head("Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma")
 drafter = DraftHeadTreeDrafter(head, target=engine.model, block_size=head.block_size,
                                target_layer_ids=head.target_layer_ids)
@@ -53,7 +53,7 @@ The tree is decoupled from the backend on purpose: the same `ptd.tree` plugs int
 
 ## Results
 
-The `nano_vllm` engine ships paged, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused qkv/gate-up GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. Headline numbers — **wall-clock tokens/sec**, the number a user actually sees (Qwen3-8B, B200, bf16, single-stream, tree budget 127, width 7, trained epoch6 distill head, 2048-token generation window, full-dataset sample counts):
+The `JetFlow` engine ships paged, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused qkv/gate-up GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. Headline numbers — **wall-clock tokens/sec**, the number a user actually sees (Qwen3-8B, B200, bf16, single-stream, tree budget 127, width 7, trained epoch6 distill head, 2048-token generation window, full-dataset sample counts):
 
 | dataset | this engine | reference fork (full vLLM) | ratio | accept_len (ours / fork) |
 |---|---|---|---|---|
@@ -62,11 +62,23 @@ The `nano_vllm` engine ships paged, lossless tree-spec decode via `torch.compile
 | gsm8k (64) | **791.0** | 820.7 | 0.96× | 7.72 / 8.01 |
 
 - Both engines run the same published draft head, the same prompts, the same budget, on the same GPU; the fork rows are our own measurements of its production configuration (triton kernel + logical KV layout + CUDA graphs), not paper claims.
-- **~5.8× wall-clock speedup** over the same stack's autoregressive decode.
+- **5.8–7.7× wall-clock speedup** over the same stack's autoregressive decode (dataset-dependent; math500 highest).
 - The engine core is **~3.8k lines** (vs ~560k lines of Python in vLLM): the condensation is the point — fork-class throughput from a codebase you can read in an afternoon.
 - **Lossless:** fp32 token-identical to an SDPA oracle; bf16 is lossless-by-construction (each accepted token is target-greedy) but not bitwise-equal to AR greedy — borderline-argmax flips move with kernel reduction order. fp32 is exact.
 
-Production configuration: `NANO_FUSE_GEMMS=1`, `attn_backend="triton_paged_tree_cudagraph_nogather"`, graphed drafter, `session=True`. Reproduce the table with `bench/tps_walltime.py` (per-dataset fingerprints: `bench/tree_diag.py`); verify-only GPU-time comparison: `bench/identical_fork_compare.py`.
+Production configuration: `JETFLOW_FUSE_GEMMS=1`, `attn_backend="triton_paged_tree_cudagraph_nogather"`, graphed drafter, `session=True`. Reproduce the table with `bench/tps_walltime.py` (add `--algo top2gap_fanout --budget 63` for the rows below; per-dataset fingerprints: `bench/tree_diag.py`); verify-only GPU-time comparison: `bench/identical_fork_compare.py`.
+
+### Choosing a tree algorithm
+
+The default `crossproduct` is the robust pick: it spends the whole budget breadth-first by cumulative logprob, no tuning. `top2gap_fanout` reads the live per-depth top-2 logprob gap and stops fanning out where the drafter is confident, so it buys crossproduct-class or better throughput from **half the budget** — and budget-63 trees verify in the 64-node CUDA-graph bucket, whose rounds are cheaper than the 128 bucket. Same-day pairs, same configuration as the table above:
+
+| workload | pick | tok/s | accept_len | same-day `crossproduct`@127 |
+|---|---|---|---|---|
+| gsm8k | `top2gap_fanout` @ budget 63 | **827.0** | 7.43 | 800.0 (+3.4%) |
+| math500 | `top2gap_fanout` @ budget 63 | **931.5** | 9.38 | 912.1 (+2.1%) |
+| humaneval | `crossproduct` @ budget 127 | **740.5** | 7.25 | `top2gap`@63: 734.2 (≈ tie) |
+
+The advantage grows as the budget shrinks (same day, gsm8k): at budget 63, top2gap 827.0 vs crossproduct 727.1 (+14%); at budget 31, **816.9 vs 567.9 (+44%)** — crossproduct cannot reach depth with few nodes, top2gap can. Code prompts give the drafter lower per-token confidence, so full-budget breadth keeps the crown on humaneval. Both algorithms pass the same fp32 token-identity gate as the table above. (Day-to-day B200 wall-clock moves ~1%: the same-day crossproduct gsm8k re-measurement reads 800.0 against the table's 791.0.)
 
 ## Roadmap
 

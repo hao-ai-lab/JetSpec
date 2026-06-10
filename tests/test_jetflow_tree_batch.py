@@ -1,6 +1,6 @@
-"""nano_vllm N2b gate: batched per-sequence TREE-spec decode over the shared
+"""JetFlow N2b gate: batched per-sequence TREE-spec decode over the shared
 multi-seq paged cache must be token-identical to running single-stream
-`NanoEngine.generate_tree` on each prompt alone.
+`JetFlowEngine.generate_tree` on each prompt alone.
 
 N2b is the tree-spec analogue of N2a (`generate_batch`) and the batched analogue
 of N1 (`generate_tree`): each round every live sequence builds its own draft tree,
@@ -14,8 +14,8 @@ Runs on CPU with a tiny randomly-initialized fp32 Qwen3 (no network, no GPU): in
 fp32 the pooled batched verify and the single-stream verify are bitwise-equal
 (append/gather is a plain copy, and the padded per-seq mask makes other seqs' KV /
 padding a no-op for attention), so this gates the batched mask / RoPE-position /
-per-seq KV-routing arithmetic directly. Mirrors `tests/test_nano_tree.py`'s and
-`tests/test_nano_batch.py`'s `_tiny_nano` harness. (On b200 in bf16 a batched
+per-seq KV-routing arithmetic directly. Mirrors `tests/test_jetflow_tree.py`'s and
+`tests/test_jetflow_batch.py`'s `_tiny_jetflow` harness. (On b200 in bf16 a batched
 verify vs a single-stream verify can flip a borderline argmax after ~tens of exact
 tokens — the same class as the bf16 borderline-argmax caveat.)
 """
@@ -25,7 +25,7 @@ from transformers import Qwen3Config, Qwen3ForCausalLM
 from ptd.engine.llm import SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 
 
 class _StubTokenizer:
@@ -46,9 +46,9 @@ def _tiny_model(seed: int = 0) -> Qwen3ForCausalLM:
     return Qwen3ForCausalLM(cfg).eval().to(torch.float32)
 
 
-def _tiny_nano(model, block_size: int = 16) -> NanoEngine:
-    """Wire the same model into a `NanoEngine` without touching the network."""
-    eng = object.__new__(NanoEngine)
+def _tiny_jetflow(model, block_size: int = 16) -> JetFlowEngine:
+    """Wire the same model into a `JetFlowEngine` without touching the network."""
+    eng = object.__new__(JetFlowEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -102,9 +102,9 @@ def test_tree_batch_matches_single_stream_random():
         model = _tiny_model(seed)
         drafter = RandomTreeDrafter(128)
         # Single-stream references: build each prompt's tree on its own seeded RNG.
-        ref = [_single_tree(_tiny_nano(model), p, drafter, seed=100 + seed)
+        ref = [_single_tree(_tiny_jetflow(model), p, drafter, seed=100 + seed)
                for p in PROMPTS]
-        batched = _batch_tree(_tiny_nano(model), PROMPTS, drafter, seed=100 + seed)
+        batched = _batch_tree(_tiny_jetflow(model), PROMPTS, drafter, seed=100 + seed)
         for i in range(len(PROMPTS)):
             assert batched[i]["token_ids"] == ref[i], (
                 f"batched tree seq {i} diverged from single-stream (seed={seed})"
@@ -118,8 +118,8 @@ def test_tree_batch_matches_single_stream_echo():
     exactly AND accepting multiple tokens/round."""
     model = _tiny_model(0)
     drafter = TargetEchoTreeDrafter(model)
-    ref = [_single_tree(_tiny_nano(model), p, drafter) for p in PROMPTS]
-    batched = _batch_tree(_tiny_nano(model), PROMPTS, drafter)
+    ref = [_single_tree(_tiny_jetflow(model), p, drafter) for p in PROMPTS]
+    batched = _batch_tree(_tiny_jetflow(model), PROMPTS, drafter)
     for i in range(len(PROMPTS)):
         assert batched[i]["token_ids"] == ref[i], (
             f"batched tree (echo) seq {i} diverged from single-stream"
@@ -136,9 +136,9 @@ def test_tree_batch_block_sizes_match_single_stream():
         model = _tiny_model(seed)
         for block_size in (2, 4, 5):
             drafter = RandomTreeDrafter(128)
-            ref = [_single_tree(_tiny_nano(model), p, drafter, seed=7, block_size=block_size)
+            ref = [_single_tree(_tiny_jetflow(model), p, drafter, seed=7, block_size=block_size)
                    for p in PROMPTS]
-            batched = _batch_tree(_tiny_nano(model), PROMPTS, drafter, seed=7,
+            batched = _batch_tree(_tiny_jetflow(model), PROMPTS, drafter, seed=7,
                                   block_size=block_size)
             for i in range(len(PROMPTS)):
                 assert batched[i]["token_ids"] == ref[i], (
@@ -152,10 +152,10 @@ def test_tree_batch_cache_block_sizes_match_single_stream():
     model = _tiny_model(0)
     drafter = RandomTreeDrafter(128)
     for cache_block in (16, 4, 5):
-        ref = [_single_tree(_tiny_nano(model, cache_block), p, drafter, seed=3)
+        ref = [_single_tree(_tiny_jetflow(model, cache_block), p, drafter, seed=3)
                for p in PROMPTS]
         torch.manual_seed(3)
-        batched = _tiny_nano(model, cache_block).generate_tree_batch(
+        batched = _tiny_jetflow(model, cache_block).generate_tree_batch(
             PROMPTS, drafter, block_size=4, tree_width=2, budget=15, sampling_params=SP)
         for i in range(len(PROMPTS)):
             assert batched[i]["token_ids"] == ref[i], (
@@ -169,10 +169,10 @@ def test_tree_batch_order_invariant():
     deterministic (no RNG), so reversing the prompt order is a clean permutation."""
     model = _tiny_model(3)
     drafter = TargetEchoTreeDrafter(model)
-    forward = _tiny_nano(model).generate_tree_batch(
+    forward = _tiny_jetflow(model).generate_tree_batch(
         PROMPTS, drafter, block_size=4, tree_width=2, budget=15, sampling_params=SP)
     reversed_prompts = list(reversed(PROMPTS))
-    backward = _tiny_nano(model).generate_tree_batch(
+    backward = _tiny_jetflow(model).generate_tree_batch(
         reversed_prompts, drafter, block_size=4, tree_width=2, budget=15, sampling_params=SP)
     for i in range(len(PROMPTS)):
         assert backward[len(PROMPTS) - 1 - i]["token_ids"] == forward[i]["token_ids"], (
@@ -185,8 +185,8 @@ def test_tree_batch_singleton_matches_generate_tree():
     N2b == N1)."""
     model = _tiny_model(1)
     drafter = TargetEchoTreeDrafter(model)
-    ref = _single_tree(_tiny_nano(model), PROMPTS[0], drafter)
-    got = _batch_tree(_tiny_nano(model), [PROMPTS[0]], drafter)[0]["token_ids"]
+    ref = _single_tree(_tiny_jetflow(model), PROMPTS[0], drafter)
+    got = _batch_tree(_tiny_jetflow(model), [PROMPTS[0]], drafter)[0]["token_ids"]
     assert got == ref
 
 
@@ -198,12 +198,12 @@ def test_tree_batch_ragged_finish_keeps_survivors_lossless():
     model = _tiny_model(0)
     drafter = TargetEchoTreeDrafter(model)
     # Find a token that appears in seq 0's no-EOS stream to use as EOS.
-    plain = _tiny_nano(model)
+    plain = _tiny_jetflow(model)
     ref0_plain = plain.generate_tree(
         PROMPTS[0], drafter, block_size=4, tree_width=2, budget=15, sampling_params=SP)["token_ids"]
     eos_tok = ref0_plain[5] if len(ref0_plain) > 5 else ref0_plain[-1]
 
-    eng_eos = _tiny_nano(model)
+    eng_eos = _tiny_jetflow(model)
     eng_eos.eos_token_ids = {eos_tok}
     ref0 = eng_eos.generate_tree(
         PROMPTS[0], drafter, block_size=4, tree_width=2, budget=15, sampling_params=SP)["token_ids"]

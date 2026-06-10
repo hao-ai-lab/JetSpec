@@ -1,4 +1,4 @@
-"""Block-paged KV cache (nano_vllm N0 -> N2a).
+"""Block-paged KV cache (JetFlow N0 -> N2a).
 
 A drop-in for HF's `DynamicCache` that swaps contiguous per-layer `(B, H, S, D)`
 storage for a fixed-block pool (`block_size` tokens per block) plus a per-layer
@@ -807,7 +807,7 @@ class PagedKVCache(Cache):
         self._seq_metadata = {}
 
     def reorder_cache(self, beam_idx: torch.LongTensor) -> None:
-        """Beam reorder — nano is greedy; raise to catch misuse."""
+        """Beam reorder — JetFlow is greedy; raise to catch misuse."""
         raise NotImplementedError("PagedKVCache N2a does not support beam search")
 
     def batch_repeat_interleave(self, repeats: int) -> None:

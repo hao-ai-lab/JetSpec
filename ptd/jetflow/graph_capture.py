@@ -1,4 +1,4 @@
-"""CUDA-graph capture+replay over the compiled tree-VERIFY stack (nano_vllm N3, A3-GRAPH).
+"""CUDA-graph capture+replay over the compiled tree-VERIFY stack (JetFlow N3, A3-GRAPH).
 
 `CompiledVerifyStack` already removes the per-layer Python and fuses the GEMMs, but at
 B=1 single-stream the residual cost is the per-KERNEL CPU launch/dispatch — each of the
@@ -9,7 +9,8 @@ fused region eagerly); a captured CUDA graph collapses the whole forward into ON
 
 `GraphedVerify` wraps a built `CompiledVerifyStack` and, for each tree-N bucket in
 `_TREE_BUCKETS`, captures one `torch.cuda.CUDAGraph` of the compiled forward under a
-SINGLE shared graph pool (mirroring nano-vllm-ref `model_runner.capture_cudagraph`: a
+SINGLE shared graph pool (mirroring upstream nano-vllm-ref
+`model_runner.capture_cudagraph`: a
 per-bucket graph, persistent input/output buffers, copy-in then `graph.replay()`). A
 captured graph reads FIXED device addresses, so every per-round input must live in a
 pre-allocated persistent buffer the engine copies this round's values INTO before

@@ -1,6 +1,6 @@
-"""Tree-decode diagnostic fingerprint for nano_vllm on GSM8K.
+"""Tree-decode diagnostic fingerprint for JetFlow on GSM8K.
 
-Prints a fork-style ``metrics_report.txt`` key=value block so nano and the vLLM
+Prints a fork-style ``metrics_report.txt`` key=value block so JetFlow and the vLLM
 DFlash fork can be diffed directly on acceptance shape and tree shape.
 """
 import argparse
@@ -14,7 +14,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from ptd.engine.llm import SamplingParams
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 from ptd.models.draft_head import load_draft_head
 from ptd.draft_head_drafter import DraftHeadTreeDrafter
 
@@ -42,24 +42,28 @@ def summarize_tree_diag(
     output_tokens: int,
     num_samples: int,
     block_size: int,
+    max_depth: int = None,
 ) -> dict:
     rounds = len(accept_lengths)
-    hist_counts = [0] * block_size
+    depth_slots = block_size if max_depth is None else int(max_depth)
+    if depth_slots <= 0:
+        raise ValueError(f"max_depth must be positive; got {depth_slots}")
+    hist_counts = [0] * depth_slots
     for accept_len in accept_lengths:
         accepted_draft_len = int(accept_len) - 1
-        if accepted_draft_len < 0 or accepted_draft_len >= block_size:
+        if accepted_draft_len < 0 or accepted_draft_len >= depth_slots:
             raise ValueError(
                 f"accept length {accept_len} maps to draft length "
-                f"{accepted_draft_len}, outside [0, {block_size - 1}]"
+                f"{accepted_draft_len}, outside [0, {depth_slots - 1}]"
             )
         hist_counts[accepted_draft_len] += 1
 
     denom = rounds if rounds else 1
     nodes = [int(v) for v in tree_nodes_per_depth]
-    if len(nodes) < block_size:
-        nodes = nodes + [0] * (block_size - len(nodes))
+    if len(nodes) < depth_slots:
+        nodes = nodes + [0] * (depth_slots - len(nodes))
     else:
-        nodes = nodes[:block_size]
+        nodes = nodes[:depth_slots]
 
     return {
         "output_tokens": int(output_tokens),
@@ -70,10 +74,10 @@ def summarize_tree_diag(
         "acceptance_length_histogram": [c / denom for c in hist_counts],
         "per_depth_acceptance_rate": [
             sum(1 for accept_len in accept_lengths if int(accept_len) - 1 > depth) / denom
-            for depth in range(block_size - 1)
+            for depth in range(depth_slots - 1)
         ],
         "avg_tree_nodes_per_depth": [
-            nodes[depth] / denom for depth in range(1, block_size)
+            nodes[depth] / denom for depth in range(1, depth_slots)
         ],
     }
 
@@ -90,7 +94,7 @@ def format_metrics_report(
 ) -> str:
     lines = [
         "mode=dflash",
-        "engine=nano_vllm",
+        "engine=JetFlow",
         f"prompt_set={metrics.get('prompt_set', 'gsm8k')}",
         "prompt_format=chat_template",
         f"attention_backend={attention_backend}",
@@ -187,7 +191,10 @@ def run_tree_diag_measurement(
     dump_first_rounds: int = 0,
 ) -> tuple[dict, str]:
     all_accept_lengths: list[int] = []
-    tree_nodes_per_depth = [0] * block_size
+    depth_slots = block_size
+    if tree_kwargs.get("max_tree_depth") is not None:
+        depth_slots = int(tree_kwargs["max_tree_depth"]) + 1
+    tree_nodes_per_depth = [0] * depth_slots
     output_tokens = 0
     dump_text = ""
     recorder = (
@@ -204,7 +211,7 @@ def run_tree_diag_measurement(
         output_tokens += len(out["token_ids"])
         all_accept_lengths.extend(out["accept_lengths"])
         for depth, count in enumerate(out["tree_nodes_per_depth"]):
-            if depth < block_size:
+            if depth < depth_slots:
                 tree_nodes_per_depth[depth] += int(count)
         if prompt_index == 0 and recorder is not None:
             dump_text = format_draft_round_dump(
@@ -219,6 +226,7 @@ def run_tree_diag_measurement(
         output_tokens=output_tokens,
         num_samples=len(prompts),
         block_size=block_size,
+        max_depth=depth_slots,
     )
     return metrics, dump_text
 
@@ -251,7 +259,7 @@ def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[st
     return prompts
 
 
-def build_drafter(args, eng: NanoEngine):
+def build_drafter(args, eng: JetFlowEngine):
     head = load_draft_head(os.environ["PTD_DRAFT_HEAD"])
     tli, bs = head.target_layer_ids, head.block_size
     if args.drafter == "compiled":
@@ -282,14 +290,22 @@ def parse_args():
                     choices=["gsm8k", "math500", "humaneval", "aime"])
     ap.add_argument("--dump-first-rounds", type=int, default=0,
                     help="dump drafter top-k tokens/logprobs for the first K rounds of the first prompt")
+    ap.add_argument("--profile-json", default=None,
+                    help="profile_table JSON for profile-guided algos (bench/build_depth_rank_profile.py output)")
+    ap.add_argument("--tau", type=float, default=None,
+                    help="acceptance threshold kwarg for depth_rank_histogram")
+    ap.add_argument("--extend-budget", type=int, default=None,
+                    help="P1 ceiling raise: extension chain length (enables extend_kwargs)")
+    ap.add_argument("--extend-gap", type=float, default=1.0,
+                    help="P1 gate: mean top-2 gap threshold along the rank-1 chain")
     return ap.parse_args()
 
 
 @torch.inference_mode()
 def main():
     args = parse_args()
-    backend = os.environ.get("NANO_BACKEND", "triton_paged_tree_cudagraph")
-    eng = NanoEngine(
+    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
+    eng = JetFlowEngine(
         "Qwen/Qwen3-8B",
         device="cuda",
         dtype=torch.bfloat16,
@@ -314,6 +330,19 @@ def main():
         # capacity = the longest prompt in the set (session guard is loud, not growing)
         max_len = max(eng.tokenizer(p, return_tensors="pt").input_ids.shape[1] for p in prompts)
         tree_kwargs["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
+    if args.tau is not None:
+        tree_kwargs["algo_kwargs"] = {"tau": args.tau}
+    if args.extend_budget is not None:
+        tree_kwargs["extend_kwargs"] = {
+            "gap_threshold": args.extend_gap,
+            "ext_budget": args.extend_budget,
+            "mode": "chain",
+        }
+        tree_kwargs["max_tree_depth"] = (block_size - 1) + args.extend_budget
+    if args.profile_json is not None:
+        import json
+        with open(args.profile_json) as f:
+            tree_kwargs["profile_table"] = json.load(f)
 
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)

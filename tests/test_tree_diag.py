@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from ptd.draft import RandomTreeDrafter
-from tests.test_nano_tree import PROMPT, SP, _tiny_model, _tiny_nano
+from tests.test_jetflow_tree import PROMPT, SP, _tiny_model, _tiny_jetflow
 
 
 class _DeterministicTreeDrafter:
@@ -65,12 +65,42 @@ def test_tree_diag_metrics_formula_and_report_format():
     assert "avg_tree_nodes_per_depth=3.00,2.00,1.00" in report
 
 
+def test_tree_diag_summary_accepts_deeper_than_block_size_when_max_depth_set():
+    from bench.tree_diag import summarize_tree_diag
+
+    metrics = summarize_tree_diag(
+        accept_lengths=[1, 5, 6],
+        tree_nodes_per_depth=[3, 3, 3, 3, 3, 3],
+        output_tokens=12,
+        num_samples=1,
+        block_size=4,
+        max_depth=6,
+    )
+
+    assert metrics["acceptance_length_histogram"] == pytest.approx([
+        1 / 3,
+        0.0,
+        0.0,
+        0.0,
+        1 / 3,
+        1 / 3,
+    ])
+    assert metrics["per_depth_acceptance_rate"] == pytest.approx([
+        2 / 3,
+        2 / 3,
+        2 / 3,
+        2 / 3,
+        1 / 3,
+    ])
+    assert metrics["avg_tree_nodes_per_depth"] == pytest.approx([1.0] * 5)
+
+
 def test_generate_tree_diag_flag_preserves_tokens_and_counts_tree_depths():
     model = _tiny_model(0)
     drafter = RandomTreeDrafter(vocab_size=model.config.vocab_size)
 
     torch.manual_seed(1)
-    plain = _tiny_nano(model).generate_tree(
+    plain = _tiny_jetflow(model).generate_tree(
         PROMPT,
         drafter,
         block_size=4,
@@ -81,7 +111,7 @@ def test_generate_tree_diag_flag_preserves_tokens_and_counts_tree_depths():
     )
 
     torch.manual_seed(1)
-    diag = _tiny_nano(model).generate_tree(
+    diag = _tiny_jetflow(model).generate_tree(
         PROMPT,
         drafter,
         block_size=4,
@@ -116,7 +146,7 @@ def test_dump_first_rounds_records_drafter_topk_without_changing_metrics():
 
     plain_drafter = _DeterministicTreeDrafter(model.config.vocab_size)
     plain_metrics, plain_dump = run_tree_diag_measurement(
-        _tiny_nano(model),
+        _tiny_jetflow(model),
         [PROMPT],
         plain_drafter,
         tree_kwargs,
@@ -127,7 +157,7 @@ def test_dump_first_rounds_records_drafter_topk_without_changing_metrics():
 
     dump_drafter = _DeterministicTreeDrafter(model.config.vocab_size)
     dump_metrics, dump_text = run_tree_diag_measurement(
-        _tiny_nano(model),
+        _tiny_jetflow(model),
         [PROMPT],
         dump_drafter,
         tree_kwargs,

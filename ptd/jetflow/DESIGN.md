@@ -1,4 +1,4 @@
-# nano_vllm — design + milestone ladder
+# JetFlow — design + milestone ladder
 
 An owned, minimal high-throughput engine substrate, sitting beside `ptd/engine`
 (the HF/SDPA reference). Same one-way contract — it consumes `ptd.tree` and never
@@ -11,13 +11,15 @@ the reverse — so every tree algorithm runs unchanged; the engine choice change
 reproducibility, and correctness**. It is single-stream and tops out where the HF
 substrate does. The collaborator's vLLM fork gives the **throughput upper bound**
 (measured: `ptd_crossproduct` ≡ the fork's native tree, **7.55× decode**) —
-but it's an external, heavy dependency we don't own. `nano_vllm` is the **owned**
+but it's an external, heavy dependency we don't own. `JetFlow` is the **owned**
 substrate that aims at that ceiling with no external serving dependency, and it now
 reaches it: verify-only `decode_cuda_speedup` **7.31× (cudagraph) / 6.27× (compiled)**
 vs the fork's **7.55×** (see "N3 result" below).
+JetFlow follows the nano-vllm doctrine: the least code that reproduces
+big-engine performance, with the PTD tree path kept local and lossless.
 
 > Target to beat / approach: the fork's **7.55× decode_cuda_speedup** (gsm8k, B=255,
-> Qwen3-8B + epoch6 head). nano reaches parity: **7.31×** verify-only, cudagraph backend.
+> Qwen3-8B + epoch6 head). JetFlow reaches parity: **7.31×** verify-only, cudagraph backend.
 
 ## What it reuses (don't rebuild)
 
@@ -29,12 +31,12 @@ vs the fork's **7.55×** (see "N3 result" below).
 - **The persistent-cache verify pattern** — `ptd/engine/llm.py
   `_generate_tree_kv_cached` + `_select_kv_cache`: forward only the tree nodes
   against a cached prefix, then gather the accepted root-to-leaf path's KV back to
-  a linear prefix. nano's paged cache generalises exactly this gather to block
+  a linear prefix. JetFlow's paged cache generalises exactly this gather to block
   storage. Port the *logic*, swap the storage.
 
 ## The distinguisher vs `ptd/engine`
 
-| | `ptd/engine` | `nano_vllm` |
+| | `ptd/engine` | `JetFlow` |
 |---|---|---|
 | KV store | HF `DynamicCache` (contiguous) | **paged** (fixed blocks + block table) |
 | tree attn | SDPA 4D additive mask | 4D mask now; **tree-attn kernel** later |
@@ -62,13 +64,13 @@ vs the fork's **7.55×** (see "N3 result" below).
 
 **Status: N0–N2b shipped + merged to `master`** (`9fc9123` / `498ebd0` / `bce70c5`
 / `8e00dc0`); **N3 kernel shipped on `feat/draft-head`** (`457df8e` metadata builder
-· `b6158d5` triton kernel · `bdc665e` engine integration). nano does paged,
+· `b6158d5` triton kernel · `bdc665e` engine integration). JetFlow does paged,
 continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify
 with our own triton tree-attention kernel.
 
 **N3 result (`attn_backend="triton_paged_tree"`):** the paged tree-attn kernel is
 **correct + lossless** — `kernel == SDPA` on a random pool (30/30, fp32 2e-6 / bf16
-8e-3) and token-identical end-to-end (`test_nano_kernel_e2e.py`, 13/13). It **reaches
+8e-3) and token-identical end-to-end (`test_jetflow_kernel_e2e.py`, 13/13). It **reaches
 parity** with the fork: with `torch.compile` + a CUDA-graph verify, the **verify-only
 `decode_cuda_speedup` is 7.31× (cudagraph backend) / 6.27× (compiled backend) vs the
 fork's 7.55×** (Qwen3-8B, gsm8k, tree budget 255, width 7, epoch6 distill head, bf16,
@@ -122,13 +124,13 @@ the fork's **7.55× decode** (reached: verify-only 7.31× cudagraph; see "N3 res
 
 **Gates:**
 1. **Kernel == SDPA** on random inputs (b200) — the correctness gate. Then the full
-   nano suite (`test_nano_*`) must stay green with the kernel enabled (reuses the
+   JetFlow suite (`test_jetflow_*`) must stay green with the kernel enabled (reuses the
    existing per-seq lossless gates as end-to-end correctness).
 2. **Throughput** — `decode_cuda_speedup` / tok/s vs the SDPA path and vs the
    fork's 7.55×, at matched batch + budget.
 
 **Caveats / constraints:**
-- **GPU-bound.** Triton kernels can't be CPU-validated like the rest of nano — N3
+- **GPU-bound.** Triton kernels can't be CPU-validated like the rest of JetFlow — N3
   (Triton's interpret mode helps for small debugging only.)
 - **Hardest piece so far** — budget a focused multi-attempt session; correctness
   first (match SDPA), perf tuning (block sizes, memory coalescing) second.
@@ -139,9 +141,9 @@ the fork's **7.55× decode** (reached: verify-only 7.31× cudagraph; see "N3 res
 ## Module layout (to be created at N0)
 
 ```
-ptd/nano_vllm/
+ptd/jetflow/
   paged_kv_cache.py   # block pool + block table; allocate/append/gather/free
-  engine.py           # NanoEngine: prefill + decode loop (consumes ptd.tree)
+  engine.py           # JetFlowEngine: prefill + decode loop (consumes ptd.tree)
   scheduler.py        # (N2) admit/evict across sequences
   README.md / DESIGN.md
 ```

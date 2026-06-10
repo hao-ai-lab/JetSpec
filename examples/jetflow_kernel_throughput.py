@@ -1,7 +1,7 @@
-"""nano_vllm N3 throughput A/B: continuous-batched AR (`generate_batch`) under the
+"""JetFlow N3 throughput A/B: continuous-batched AR (`generate_batch`) under the
 SDPA path vs the paged tree-attention triton kernel, on a real model.
 
-    PTD_TEST_MODEL=Qwen/Qwen3-8B python examples/nano_kernel_throughput.py
+    PTD_TEST_MODEL=Qwen/Qwen3-8B python examples/jetflow_kernel_throughput.py
 
 Reports tok/s for each backend over a fixed batch (B=8, 64 new tokens, greedy). The
 SDPA N2a baseline reconstructs every seq's dense KV + pads + masks each step; the
@@ -13,7 +13,7 @@ import time
 import torch
 
 from ptd.engine.llm import SamplingParams
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 
 
 def _run(engine, prompts, sp):
@@ -45,7 +45,7 @@ def main():
 
     results = {}
     for backend in ("sdpa", "triton_paged_tree"):
-        engine = NanoEngine(model, device="cuda", dtype=dtype, attn_backend=backend)
+        engine = JetFlowEngine(model, device="cuda", dtype=dtype, attn_backend=backend)
         prompts = [
             engine.tokenizer(p, return_tensors="pt").input_ids.to("cuda") for p in raw
         ]

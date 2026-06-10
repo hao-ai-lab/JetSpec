@@ -2,7 +2,7 @@ name: CI
 
 # CPU-only CI. GitHub-hosted runners have no GPU/CUDA, so this gate runs only
 # the CPU-safe test subset: the engine-agnostic tree-construction unit tests and
-# the nano_vllm tests that build a tiny fp32 Qwen3 locally (no network, no GPU,
+# the JetFlow tests that build a tiny fp32 Qwen3 locally (no network, no GPU,
 # no triton). GPU-gated tests (PTD_TEST_MODEL / CUDA model load) run separately.
 on:
   push:
@@ -35,8 +35,8 @@ jobs:
           pytest -q \
             tests/test_build_from_topk.py \
             tests/test_depth_rank_histogram.py \
-            tests/test_nano_attn_metadata.py \
-            tests/test_nano_batch.py \
-            tests/test_nano_paged_multiseq.py \
-            tests/test_nano_tree.py \
-            tests/test_nano_tree_batch.py
+            tests/test_jetflow_attn_metadata.py \
+            tests/test_jetflow_batch.py \
+            tests/test_jetflow_paged_multiseq.py \
+            tests/test_jetflow_tree.py \
+            tests/test_jetflow_tree_batch.py

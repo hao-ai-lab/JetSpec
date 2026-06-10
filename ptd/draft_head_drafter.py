@@ -44,7 +44,36 @@ class _DraftHeadForward:
         self.dtype = next(head.parameters()).dtype
         self.mask_token_id = head.mask_token_id
 
-    def _forward_head(self, context_ids: torch.Tensor, target_hidden: torch.Tensor, depth: int) -> torch.Tensor:
+    def block_output_ids(self, context_ids: torch.Tensor, fill_tokens=None) -> torch.Tensor:
+        block_size = self.block_size
+        anchor = context_ids[0, -1].view(1, 1).to(self.device)
+        max_fill = block_size - 1
+        if fill_tokens is None:
+            fill = torch.full(
+                (1, max_fill), self.mask_token_id, dtype=anchor.dtype, device=self.device
+            )
+        else:
+            path = torch.as_tensor(fill_tokens, dtype=anchor.dtype, device=self.device).reshape(1, -1)
+            if path.shape[1] > max_fill:
+                path = path[:, :max_fill]
+            mask_len = max_fill - int(path.shape[1])
+            mask_fill = torch.full(
+                (1, mask_len), int(self.mask_token_id), dtype=anchor.dtype, device=self.device
+            )
+            fill = torch.cat([path, mask_fill], dim=1)
+        return torch.cat([anchor, fill], dim=1)
+
+    def noise_embedding(self, context_ids: torch.Tensor, fill_tokens=None) -> torch.Tensor:
+        block_output_ids = self.block_output_ids(context_ids, fill_tokens=fill_tokens)
+        return self.target.model.embed_tokens(block_output_ids)  # (1, block_size, H)
+
+    def _forward_head(
+        self,
+        context_ids: torch.Tensor,
+        target_hidden: torch.Tensor,
+        depth: int,
+        fill_tokens=None,
+    ) -> torch.Tensor:
         """Run the head once and return `(1, depth, V)` draft logits.
 
         `context_ids` (1, T): committed context; its last token is the anchor (the
@@ -58,14 +87,9 @@ class _DraftHeadForward:
                 "ModelRunner forward (output_hidden_states + target_layer_ids)."
             )
         block_size = self.block_size
-        anchor = context_ids[0, -1].view(1, 1).to(self.device)
-        # block_output_ids = [anchor, mask_id, mask_id, ...] of length block_size
-        # (benchmark.py:155,162 — the anchor seeds position 0, the rest are masked).
-        mask_fill = torch.full(
-            (1, block_size - 1), self.mask_token_id, dtype=anchor.dtype, device=self.device
-        )
-        block_output_ids = torch.cat([anchor, mask_fill], dim=1)  # (1, block_size)
-        noise_embedding = self.target.model.embed_tokens(block_output_ids)  # (1, block_size, H)
+        # block_output_ids = [anchor, fill...] of length block_size. Normal draft
+        # calls fill with masks; conditioned calls fill with path tokens then masks.
+        noise_embedding = self.noise_embedding(context_ids, fill_tokens=fill_tokens)
 
         ctx_len = target_hidden.shape[1]
         # The head's K/V context is [ctx_tokens ; block positions]; rotary needs
@@ -145,6 +169,21 @@ class DraftHeadTreeDrafter(TreeDrafter):
     ) -> torch.Tensor:
         return self._fwd._forward_head(context_ids, target_hidden, depth)  # (1, depth, V)
 
+    @torch.inference_mode()
+    def propose_logits_conditioned(
+        self,
+        context_ids: torch.Tensor,
+        path_tokens,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        return self._fwd._forward_head(
+            context_ids,
+            target_hidden,
+            self.block_size - 1,
+            fill_tokens=path_tokens,
+        )  # (1, block_size-1, V)
+
 
 _DRAFT_HEAD_CTX_BUCKETS = (512, 1024, 2048, 4096, 8192, 16384, 32768)
 
@@ -200,6 +239,7 @@ class CompiledDraftHead:
         self.mask_token_id = head.mask_token_id
         if self.mask_token_id is None:
             raise ValueError("DraftHead mask_token_id is required")
+        self._fwd = _DraftHeadForward(head, target, self.block_size, target_layer_ids, draft_shift)
         self._compiled_by_capacity = {}
 
     def bucket_for_ctx_len(self, ctx_len: int) -> int:
@@ -264,17 +304,8 @@ class CompiledDraftHead:
             mask[:, :, :, capacity:] = block.view(1, 1, self.block_size, self.block_size)
         return mask
 
-    def noise_embedding(self, context_ids: torch.Tensor) -> torch.Tensor:
-        block_size = self.block_size
-        anchor = context_ids[0, -1].view(1, 1).to(self.device)
-        mask_fill = torch.full(
-            (1, block_size - 1),
-            self.mask_token_id,
-            dtype=anchor.dtype,
-            device=self.device,
-        )
-        block_output_ids = torch.cat([anchor, mask_fill], dim=1)
-        return self.target.model.embed_tokens(block_output_ids)
+    def noise_embedding(self, context_ids: torch.Tensor, fill_tokens=None) -> torch.Tensor:
+        return self._fwd.noise_embedding(context_ids, fill_tokens=fill_tokens)
 
     def _forward_fixed(
         self,
@@ -315,13 +346,14 @@ class CompiledDraftHead:
         target_hidden_padded: torch.Tensor,
         real_ctx_len: int,
         depth: int,
+        fill_tokens=None,
     ) -> torch.Tensor:
         capacity = int(target_hidden_padded.shape[1])
         real_ctx_len = int(real_ctx_len)
         if real_ctx_len > capacity:
             raise ValueError(f"real_ctx_len={real_ctx_len} exceeds capacity={capacity}")
         target_hidden_padded = target_hidden_padded.to(device=self.device, dtype=self.dtype)
-        noise_embedding = self.noise_embedding(context_ids)
+        noise_embedding = self.noise_embedding(context_ids, fill_tokens=fill_tokens)
         position_ids = self._position_ids(real_ctx_len, capacity)
         attention_mask = self._attention_mask(real_ctx_len, capacity)
         logits = self._call_for_capacity(capacity)(
@@ -338,6 +370,7 @@ class CompiledDraftHead:
         context_ids: torch.Tensor,
         target_hidden: torch.Tensor,
         depth: int,
+        fill_tokens=None,
         **kwargs,
     ) -> torch.Tensor:
         if target_hidden is None:
@@ -348,7 +381,13 @@ class CompiledDraftHead:
         real_ctx_len = int(target_hidden.shape[1])
         capacity = self.bucket_for_ctx_len(real_ctx_len)
         target_hidden_padded = self.pad_target_hidden(target_hidden, capacity)
-        return self.forward_padded(context_ids, target_hidden_padded, real_ctx_len, depth)
+        return self.forward_padded(
+            context_ids,
+            target_hidden_padded,
+            real_ctx_len,
+            depth,
+            fill_tokens=fill_tokens,
+        )
 
     def propose_logits(
         self,
@@ -358,6 +397,20 @@ class CompiledDraftHead:
         **kwargs,
     ) -> torch.Tensor:
         return self(context_ids, target_hidden, depth)
+
+    def propose_logits_conditioned(
+        self,
+        context_ids: torch.Tensor,
+        path_tokens,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        return self(
+            context_ids,
+            target_hidden,
+            self.block_size - 1,
+            fill_tokens=path_tokens,
+        )
 
     def propose(
         self,
@@ -441,11 +494,11 @@ class GraphedDraftHead:
         buffers["position_ids"].copy_(position_ids)
         buffers["attention_mask"].copy_(attention_mask)
 
-    def _stage_inputs(self, context_ids: torch.Tensor, target_hidden: torch.Tensor):
+    def _stage_inputs(self, context_ids: torch.Tensor, target_hidden: torch.Tensor, fill_tokens=None):
         real_ctx_len = int(target_hidden.shape[1])
         capacity = self.compiled.bucket_for_ctx_len(real_ctx_len)
         target_hidden_padded = self.compiled.pad_target_hidden(target_hidden, capacity)
-        noise_embedding = self.compiled.noise_embedding(context_ids)
+        noise_embedding = self.compiled.noise_embedding(context_ids, fill_tokens=fill_tokens)
         position_ids = self.compiled._position_ids(real_ctx_len, capacity)
         attention_mask = self.compiled._attention_mask(real_ctx_len, capacity)
         buffers = self._buffers_for_capacity(
@@ -484,11 +537,12 @@ class GraphedDraftHead:
         context_ids: torch.Tensor,
         target_hidden: torch.Tensor,
         depth: int,
+        fill_tokens=None,
         **kwargs,
     ) -> torch.Tensor:
         if target_hidden is None:
             raise ValueError("GraphedDraftHead requires target_hidden")
-        capacity, buffers = self._stage_inputs(context_ids, target_hidden)
+        capacity, buffers = self._stage_inputs(context_ids, target_hidden, fill_tokens=fill_tokens)
         if capacity not in self.graphs:
             self._capture_bucket(capacity, buffers)
         self.graphs[capacity].replay()
@@ -502,6 +556,20 @@ class GraphedDraftHead:
         **kwargs,
     ) -> torch.Tensor:
         return self(context_ids, target_hidden, depth)
+
+    def propose_logits_conditioned(
+        self,
+        context_ids: torch.Tensor,
+        path_tokens,
+        target_hidden: torch.Tensor = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        return self(
+            context_ids,
+            target_hidden,
+            self.block_size - 1,
+            fill_tokens=path_tokens,
+        )
 
     def propose(
         self,

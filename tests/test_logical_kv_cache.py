@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from ptd.nano_vllm.paged_kv_cache import PagedKVCache
+from ptd.jetflow.paged_kv_cache import PagedKVCache
 
 
 def _seed_cache(num_layers=3, prompt_len=5, block_size=4):
