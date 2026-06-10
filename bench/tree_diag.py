@@ -294,6 +294,10 @@ def parse_args():
                     help="profile_table JSON for profile-guided algos (bench/build_depth_rank_profile.py output)")
     ap.add_argument("--tau", type=float, default=None,
                     help="acceptance threshold kwarg for depth_rank_histogram")
+    ap.add_argument("--extend-budget", type=int, default=None,
+                    help="P1 ceiling raise: extension chain length (enables extend_kwargs)")
+    ap.add_argument("--extend-gap", type=float, default=1.0,
+                    help="P1 gate: mean top-2 gap threshold along the rank-1 chain")
     return ap.parse_args()
 
 
@@ -328,6 +332,13 @@ def main():
         tree_kwargs["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
     if args.tau is not None:
         tree_kwargs["algo_kwargs"] = {"tau": args.tau}
+    if args.extend_budget is not None:
+        tree_kwargs["extend_kwargs"] = {
+            "gap_threshold": args.extend_gap,
+            "ext_budget": args.extend_budget,
+            "mode": "chain",
+        }
+        tree_kwargs["max_tree_depth"] = (block_size - 1) + args.extend_budget
     if args.profile_json is not None:
         import json
         with open(args.profile_json) as f:
