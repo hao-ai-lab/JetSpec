@@ -1,6 +1,6 @@
-"""Paged tree-attention metadata builder (nano_vllm N3, Unit 2).
+"""Paged tree-attention metadata builder (JetFlow N3, Unit 2).
 
-Pure-compute layer that turns nano's per-sequence engine state into the exact
+Pure-compute layer that turns JetFlow's per-sequence engine state into the exact
 input tensors the paged tree-attention triton kernel (`paged_tree_attn`, Unit 1)
 consumes. The kernel reads K/V straight from `PagedKVCache`'s block pool via a
 batched block table and folds the per-tree ancestor relation in as an additive

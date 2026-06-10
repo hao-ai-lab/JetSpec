@@ -15,7 +15,7 @@ pip install -e '.[test]'      # base deps + pytest (CPU test subset)
 
 Optional extras (install only what you need):
 
-- `pip install -e '.[kernel]'` — `triton`, for the `nano_vllm` tree-attention
+- `pip install -e '.[kernel]'` — `triton`, for the `JetFlow` tree-attention
   kernel (GPU only; imported lazily, so the rest of the package works without it).
 - `pip install -e '.[bench]'` — `datasets`, for the benchmark scripts under `bench/`.
 
@@ -30,7 +30,7 @@ engine):
 - **`ptd/engine/`** — the SDPA reference engine. HF `transformers` + SDPA; the
   single-clone correctness oracle. Its plain offline Qwen3-8B decode is the 1×
   denominator that speedups are measured against.
-- **`ptd/nano_vllm/`** — the high-throughput engine: paged KV cache, a triton
+- **`ptd/jetflow/`** — the high-throughput engine: paged KV cache, a triton
   tree-attention kernel, and a `torch.compile` + CUDA-graph verify path.
 - **`ptd/tree/`** — the engine-agnostic tree-construction *method*. Turns
   per-depth draft logits into a verification tree and selects the accepted path.
@@ -49,11 +49,11 @@ or operate on plain tensors, so they pass on any CPU-only box:
 pytest -q \
   tests/test_build_from_topk.py \
   tests/test_depth_rank_histogram.py \
-  tests/test_nano_attn_metadata.py \
-  tests/test_nano_batch.py \
-  tests/test_nano_paged_multiseq.py \
-  tests/test_nano_tree.py \
-  tests/test_nano_tree_batch.py
+  tests/test_jetflow_attn_metadata.py \
+  tests/test_jetflow_batch.py \
+  tests/test_jetflow_paged_multiseq.py \
+  tests/test_jetflow_tree.py \
+  tests/test_jetflow_tree_batch.py
 ```
 
 ### Full GPU gate
@@ -88,6 +88,6 @@ gates are run on the GPU box, not in CPU CI.
   the existing files. The codebase favors descriptive module/test docstrings that
   explain *why* a unit exists and what property it gates; mirror that.
 - Keep the `engine → tree` dependency one-way; the tree layer must not import from
-  `ptd.engine`, `ptd.nano_vllm`, or `ptd.draft`.
+  `ptd.engine`, `ptd.jetflow`, or `ptd.draft`.
 - Commit messages are single-line and prefixed by a tag (`[FIX]`, `[FEAT]`,
   `[DOCS]`, `[CHORE]`, etc.) describing the change.

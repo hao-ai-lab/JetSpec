@@ -1,4 +1,4 @@
-# nano_vllm — high-throughput engine substrate
+# JetFlow — high-throughput engine substrate
 
 A second decode **substrate**, sitting alongside [`ptd/engine`](../engine) in the
 same swappable-engine design. N0–N2b plus the N3 triton tree-attention kernel are
@@ -8,7 +8,7 @@ paged tree-attn kernel.
 | substrate | optimizes for | status |
 |---|---|---|
 | `ptd/engine` | clarity, single-clone reproducibility (HF + SDPA) | ✅ implemented |
-| `ptd/nano_vllm` | throughput (paged KV-cache, tree-attention kernel, batching) | ✅ shipped (N0–N2b + N3 kernel) |
+| `ptd/jetflow` | throughput (paged KV-cache, tree-attention kernel, batching) | ✅ shipped (N0–N2b + N3 kernel) |
 
 Both consume the **same** engine-agnostic tree contract — `get_algorithm(...)`,
 `build_ancestor_matrix(...)`, `tree_accept(...)` from [`ptd.tree`](../tree) — with
@@ -19,6 +19,8 @@ the tree builds or whether decoding is lossless.
 The goal is an owned, minimal high-throughput engine (single clone, no heavy
 external dependency) that reaches serving-class numbers, complementing the
 reference HF engine used for correctness and demos.
+JetFlow follows the nano-vllm doctrine: the least code that reproduces
+big-engine performance, adapted here to PTD's tree-speculative decode path.
 
 See [`DESIGN.md`](./DESIGN.md) for the architecture, what it reuses (the
 `ptd.tree.build_from_topk` contract + the persistent-cache verify pattern),

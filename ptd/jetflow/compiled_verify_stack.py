@@ -1,4 +1,4 @@
-"""Compiled read-only tree-VERIFY forward (nano_vllm N3, A3-INT).
+"""Compiled read-only tree-VERIFY forward (JetFlow N3, A3-INT).
 
 The verify leg of `generate_tree` runs the full Qwen3 stack over the N tree nodes
 against the cached prefix. Going through HF's `model.__call__` pays the per-layer
@@ -53,7 +53,7 @@ the real model handles), so it stays importable on a CPU/no-triton host — the
 import torch
 import torch.nn.functional as F
 
-from ptd.nano_vllm.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (registers ptd::paged_tree_attn)
+from ptd.jetflow.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (registers ptd::paged_tree_attn)
 
 
 def _cat_linear_params(modules):

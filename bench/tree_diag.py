@@ -1,6 +1,6 @@
-"""Tree-decode diagnostic fingerprint for nano_vllm on GSM8K.
+"""Tree-decode diagnostic fingerprint for JetFlow on GSM8K.
 
-Prints a fork-style ``metrics_report.txt`` key=value block so nano and the vLLM
+Prints a fork-style ``metrics_report.txt`` key=value block so JetFlow and the vLLM
 DFlash fork can be diffed directly on acceptance shape and tree shape.
 """
 import argparse
@@ -14,7 +14,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from ptd.engine.llm import SamplingParams
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 from ptd.models.draft_head import load_draft_head
 from ptd.draft_head_drafter import DraftHeadTreeDrafter
 
@@ -94,7 +94,7 @@ def format_metrics_report(
 ) -> str:
     lines = [
         "mode=dflash",
-        "engine=nano_vllm",
+        "engine=JetFlow",
         f"prompt_set={metrics.get('prompt_set', 'gsm8k')}",
         "prompt_format=chat_template",
         f"attention_backend={attention_backend}",
@@ -259,7 +259,7 @@ def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[st
     return prompts
 
 
-def build_drafter(args, eng: NanoEngine):
+def build_drafter(args, eng: JetFlowEngine):
     head = load_draft_head(os.environ["PTD_DRAFT_HEAD"])
     tli, bs = head.target_layer_ids, head.block_size
     if args.drafter == "compiled":
@@ -304,8 +304,8 @@ def parse_args():
 @torch.inference_mode()
 def main():
     args = parse_args()
-    backend = os.environ.get("NANO_BACKEND", "triton_paged_tree_cudagraph")
-    eng = NanoEngine(
+    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
+    eng = JetFlowEngine(
         "Qwen/Qwen3-8B",
         device="cuda",
         dtype=torch.bfloat16,

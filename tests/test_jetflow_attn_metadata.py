@@ -1,4 +1,4 @@
-"""nano_vllm N3 (Unit 2) gate: the paged tree-attention metadata builder packs the
+"""JetFlow N3 (Unit 2) gate: the paged tree-attention metadata builder packs the
 kernel's input tensors so that (a) `block_table` indexes the same logical KV the
 cache reconstructs, (b) `qq_bias` encodes the same allowed-set as the engine's 4D
 masks, and (c) the cu/seq-len arithmetic is internally consistent across decode /
@@ -11,8 +11,8 @@ of truth the kernel and engine use.
 """
 import torch
 
-from ptd.nano_vllm.attn_metadata import build_attn_metadata
-from ptd.nano_vllm.paged_kv_cache import PagedKVCache
+from ptd.jetflow.attn_metadata import build_attn_metadata
+from ptd.jetflow.paged_kv_cache import PagedKVCache
 from ptd.tree import DraftTree, build_ancestor_matrix
 
 

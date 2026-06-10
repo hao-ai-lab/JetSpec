@@ -1,4 +1,4 @@
-"""nano_vllm N2a gate: the multi-sequence PagedKVCache (shared pool + block
+"""JetFlow N2a gate: the multi-sequence PagedKVCache (shared pool + block
 ref-counting + fixed pool + LRU eviction) keeps every sequence's KV intact under
 interleaved append/gather/free across seqs.
 
@@ -9,13 +9,13 @@ compares it to an independently-maintained dense reference. The headline safety
 property — a gather or free on seq A NEVER corrupts seq B's KV — is checked
 directly: we mutate A and assert B's reconstruction is unchanged.
 
-Mirrors `tests/test_nano_engine.py`'s style (per-test seeding, dense reference
+Mirrors `tests/test_jetflow_engine.py`'s style (per-test seeding, dense reference
 tensors, `torch.equal` bitwise checks).
 """
 import torch
 import pytest
 
-from ptd.nano_vllm.paged_kv_cache import (
+from ptd.jetflow.paged_kv_cache import (
     PagedKVCache,
     EvictionRequired,
     EvictionFailed,

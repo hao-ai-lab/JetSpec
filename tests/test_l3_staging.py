@@ -1,6 +1,6 @@
 import torch
 
-from ptd.nano_vllm.engine import _LogicalRoundBuffers
+from ptd.jetflow.engine import _LogicalRoundBuffers
 
 
 def _ptrs(round_bufs, staged):

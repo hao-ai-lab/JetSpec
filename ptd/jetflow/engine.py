@@ -1,4 +1,4 @@
-"""NanoEngine — single-stream AR decode over a paged KV cache (nano_vllm N0).
+"""JetFlowEngine — single-stream AR decode over a paged KV cache (JetFlow N0).
 
 The owned-substrate analogue of `ptd.engine.llm.LLM.generate()`: plain
 greedy/temperature decode (prefill the prompt once, then single-token steps
@@ -26,8 +26,8 @@ from ptd.models.qwen3 import load_target
 from ptd.engine.llm import SamplingParams
 from ptd.engine.model_runner import ModelRunner
 from ptd.engine.sampler import sample
-from ptd.nano_vllm.paged_kv_cache import PagedKVCache
-from ptd.nano_vllm.scheduler import Scheduler, SequenceRequest
+from ptd.jetflow.paged_kv_cache import PagedKVCache
+from ptd.jetflow.scheduler import Scheduler, SequenceRequest
 
 # A3-BUCKET: tree-N bucket sizes for the compiled verify stack. `torch.compile(
 # dynamic=False)` specializes `_stack` on the concrete node count N, so a variable-N
@@ -238,7 +238,7 @@ class _LogicalRoundBuffers:
         return seq_step_b, pos_b, qq_bias_b, dummy, cu
 
 
-class NanoEngine:
+class JetFlowEngine:
     def __init__(
         self,
         model_name_or_path: str,
@@ -263,9 +263,9 @@ class NanoEngine:
         # weights/format; only the interface HF dispatches to is replaced). Affects
         # N0/N1/N2a; N2b stays on SDPA regardless (see generate_tree_batch).
         self.attn_backend = attn_backend
-        self.fuse_gemms = bool(fuse_gemms) or _env_flag("NANO_FUSE_GEMMS")
+        self.fuse_gemms = bool(fuse_gemms) or _env_flag("JETFLOW_FUSE_GEMMS")
         if attn_backend == "triton_paged_tree":
-            from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
+            from ptd.jetflow.paged_attn_backend import register_ptd_paged_tree
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
@@ -285,8 +285,8 @@ class NanoEngine:
             # verify stacks in per-bucket CUDA graphs (built lazily in generate_tree
             # once the pool is reserved + the bucket set known). `_use_cudagraph` gates
             # that extra layer; everything else is identical to the compiled backend.
-            from ptd.nano_vllm.paged_attn_backend import register_ptd_paged_tree
-            from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+            from ptd.jetflow.paged_attn_backend import register_ptd_paged_tree
+            from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
             register_ptd_paged_tree()
             self.model.config._attn_implementation = "ptd_paged_tree"
@@ -365,7 +365,7 @@ class NanoEngine:
             # only for the cudagraph backend; the compiled-non-graph path is left untouched
             # as the losslessness oracle.
             if getattr(self, "_use_cudagraph", False):
-                from ptd.nano_vllm.graph_capture import GraphedVerify
+                from ptd.jetflow.graph_capture import GraphedVerify
                 cfg = self.model.config
                 head_dim = (getattr(cfg, "head_dim", None)
                             or cfg.hidden_size // cfg.num_attention_heads)
@@ -473,7 +473,7 @@ class NanoEngine:
         we cache one compiled stack per distinct tap tuple (different heads tap
         different layers and need their own DCE'd graph). Robust to the test fixtures
         that bypass `__init__` (no `_compiled_verify_hidden` dict)."""
-        from ptd.nano_vllm.compiled_verify_stack import CompiledVerifyStack
+        from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
 
         cache = getattr(self, "_compiled_verify_hidden", None)
         if cache is None:
@@ -510,7 +510,7 @@ class NanoEngine:
         and graphs) whenever the pool tensor or width differs. Within one decode the pool
         + width are constant, so the entry is built once and every round replays it — the
         gate (no per-ROUND recapture) holds; a new prompt rebuilds once (per decode)."""
-        from ptd.nano_vllm.graph_capture import GraphedVerify
+        from ptd.jetflow.graph_capture import GraphedVerify
 
         cache = getattr(self, "_graphed_verify", None)
         if cache is None:
@@ -551,7 +551,7 @@ class NanoEngine:
                       profile_table: dict = None, tree_diag: bool = False,
                       session: bool = False, session_prompt_capacity: int = None,
                       max_tree_depth: int = None, extend_kwargs: dict = None) -> dict:
-        """Tree speculative decode over a PERSISTENT paged KV cache (nano_vllm N1).
+        """Tree speculative decode over a PERSISTENT paged KV cache (JetFlow N1).
 
         The owned-substrate analogue of `ptd.engine.llm.LLM._generate_tree_kv_cached`:
         each round the tree drafter emits per-depth logits, the tree algorithm builds
@@ -1081,7 +1081,7 @@ class NanoEngine:
     @torch.inference_mode()
     def generate_batch(self, prompts: list, sampling_params: SamplingParams = None) -> list:
         """Continuous-batched greedy/temperature AR over the shared multi-seq paged
-        cache (nano_vllm N2a). Returns a list of `{token_ids, text}` aligned to
+        cache (JetFlow N2a). Returns a list of `{token_ids, text}` aligned to
         `prompts`, each token-identical to `generate(prompt)` run alone — the N2a
         lossless gate.
 
@@ -1266,7 +1266,7 @@ class NanoEngine:
                             tree_width: int = 2, budget: int = 15, algo: str = "crossproduct",
                             algo_kwargs: dict = None, sampling_params: SamplingParams = None) -> list:
         """Batched per-sequence TREE-spec decode over the shared multi-seq paged
-        cache (nano_vllm N2b). Returns a list of `{token_ids, text, tpf}` aligned to
+        cache (JetFlow N2b). Returns a list of `{token_ids, text, tpf}` aligned to
         `prompts`, each token-identical to single-stream `generate_tree(prompt)` run
         alone — the N2b lossless gate.
 

@@ -6,7 +6,7 @@ distribution against one conditioned head forward that feeds only the accepted
 path prefix. Positions after the accepted path stay masked; the correction is
 the answer and is never fed to the draft head.
 
-    NANO_FUSE_GEMMS=1 NANO_BACKEND=triton_paged_tree_cudagraph_nogather ... \
+    JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather ... \
       python bench/reseed_probe.py --rounds 50 --samples 4 --budget 127
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ from bench.tree_diag import build_prompts
 from ptd.draft_head_drafter import DraftHeadTreeDrafter
 from ptd.engine.llm import SamplingParams
 from ptd.models.draft_head import load_draft_head
-from ptd.nano_vllm.engine import NanoEngine
+from ptd.jetflow.engine import JetFlowEngine
 
 
 BUCKETS = ("shallow", "mid", "deep")
@@ -417,10 +417,10 @@ def main() -> None:
         raise SystemExit("--samples must be positive")
 
     backend = args.attention_backend or os.environ.get(
-        "NANO_BACKEND",
+        "JETFLOW_BACKEND",
         "triton_paged_tree_cudagraph",
     )
-    eng = NanoEngine(
+    eng = JetFlowEngine(
         args.model,
         device="cuda",
         dtype=torch.bfloat16,

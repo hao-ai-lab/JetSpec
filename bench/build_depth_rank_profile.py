@@ -1,4 +1,4 @@
-"""Collect B2 depth-rank acceptance profiles on nano_vllm.
+"""Collect B2 depth-rank acceptance profiles on JetFlow.
 
 The output schema matches ``ptd.tree.profile_guided.depth_rank_histogram``:
 
@@ -218,7 +218,7 @@ def accumulate_generation_profile(
     tree_width: int,
     budget: int,
 ) -> None:
-    """Post-process one nano ``generate_tree`` output into profile counts."""
+    """Post-process one JetFlow ``generate_tree`` output into profile counts."""
 
     cursor = 1  # generate_tree emits the first sampled token before tree rounds.
     if len(records) != len(accept_lengths):
@@ -333,14 +333,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     from bench.tree_diag import build_drafter, build_prompts
     from ptd.engine.llm import SamplingParams
-    from ptd.nano_vllm.engine import NanoEngine
+    from ptd.jetflow.engine import JetFlowEngine
 
     args = parse_args()
     backend = args.attention_backend or os.environ.get(
-        "NANO_BACKEND",
+        "JETFLOW_BACKEND",
         "triton_paged_tree_cudagraph",
     )
-    eng = NanoEngine(
+    eng = JetFlowEngine(
         args.model,
         device="cuda",
         dtype=torch.bfloat16,
@@ -383,7 +383,7 @@ def main() -> None:
     table = build_profile_table(
         counts,
         meta={
-            "engine": "nano_vllm",
+            "engine": "JetFlow",
             "model": args.model,
             "head": args.draft_head or os.environ.get("PTD_DRAFT_HEAD"),
             "prompt_set": args.prompt_set,
