@@ -282,6 +282,10 @@ def parse_args():
                     choices=["gsm8k", "math500", "humaneval", "aime"])
     ap.add_argument("--dump-first-rounds", type=int, default=0,
                     help="dump drafter top-k tokens/logprobs for the first K rounds of the first prompt")
+    ap.add_argument("--profile-json", default=None,
+                    help="profile_table JSON for profile-guided algos (bench/build_depth_rank_profile.py output)")
+    ap.add_argument("--tau", type=float, default=None,
+                    help="acceptance threshold kwarg for depth_rank_histogram")
     return ap.parse_args()
 
 
@@ -314,6 +318,12 @@ def main():
         # capacity = the longest prompt in the set (session guard is loud, not growing)
         max_len = max(eng.tokenizer(p, return_tensors="pt").input_ids.shape[1] for p in prompts)
         tree_kwargs["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
+    if args.tau is not None:
+        tree_kwargs["algo_kwargs"] = {"tau": args.tau}
+    if args.profile_json is not None:
+        import json
+        with open(args.profile_json) as f:
+            tree_kwargs["profile_table"] = json.load(f)
 
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
     eng.generate_tree(prompts[0], drafter, **tree_kwargs)
