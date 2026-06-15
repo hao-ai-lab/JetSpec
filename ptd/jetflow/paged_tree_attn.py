@@ -320,7 +320,9 @@ def paged_tree_attn(
     total_num_q_blocks = total_q // BLOCK_Q + num_seqs
     num_kv_heads = k_pool.shape[2]
     # bf16/fp16 pools tile at 16; fp32 needs 32+ for a valid tl.dot tile.
-    TILE_SIZE = 16 if q.element_size() >= 2 else 32
+    # B2 lever: bf16 bumped 16->32 (16 was too small for the B200 tensor cores; the
+    # tree's N-scaling attn cost rides this tile). fp32 stays 32. Gate token+accept-len.
+    TILE_SIZE = 32 if q.element_size() >= 2 else 32
 
     _kernel_paged_tree_attn[(total_num_q_blocks, num_kv_heads)](
         output_ptr=out,
