@@ -74,6 +74,34 @@ def _env_flag(name: str) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _linearized_sdpa_mask(cu_seqlens: torch.Tensor, total_q: int, past_len: int,
+                          dtype: torch.dtype, device) -> torch.Tensor:
+    allowed = torch.zeros(total_q, past_len + total_q, dtype=torch.bool, device=device)
+    allowed[:, :past_len] = True
+    cu = cu_seqlens.detach().cpu().tolist()
+    for start, end in zip(cu, cu[1:]):
+        seg_len = int(end) - int(start)
+        if seg_len <= 0:
+            continue
+        causal = torch.ones(seg_len, seg_len, dtype=torch.bool, device=device).tril()
+        allowed[start:end, past_len + start:past_len + end] = causal
+    zero = torch.zeros((), dtype=dtype, device=device)
+    neg = torch.full((), torch.finfo(dtype).min, dtype=dtype, device=device)
+    return torch.where(allowed, zero, neg).view(1, 1, total_q, past_len + total_q)
+
+
+def _linearized_accepted_rows(plan, accepted_path: list[int]) -> torch.Tensor:
+    path = [int(node) for node in accepted_path]
+    cu = plan.cu_seqlens.detach().cpu().tolist()
+    nodes = plan.node_of_row.detach().cpu().tolist()
+    width = len(path)
+    for start, end in zip(cu, cu[1:]):
+        if int(end) - int(start) >= width and nodes[start:start + width] == path:
+            return torch.arange(start, start + width, dtype=torch.long,
+                                device=plan.node_of_row.device)
+    raise RuntimeError(f"accepted path {path} was not found in the linearized PathPlan")
+
+
 def _bucket_for_n(n: int) -> int:
     """Smallest bucket >= n (A3-BUCKET). For n beyond the largest bucket, rounds up to
     the next multiple of that largest bucket (keeps the stack from per-N recompiling on
@@ -608,6 +636,17 @@ class JetFlowEngine:
         compiled = backend in _COMPILED_BACKENDS
         logical_kv = backend in _LOGICAL_KV_BACKENDS   # L5 no-gather (compiled-only)
         Bmax = _bucket_for_n(budget)
+        linearize_verify = _env_flag("PTD_LINEARIZE_VERIFY")
+        linearize_mod = None
+        if linearize_verify:
+            if backend != "sdpa":
+                raise ValueError(
+                    "PTD_LINEARIZE_VERIFY currently supports only the eager SDPA "
+                    "generate_tree path; kernel/cudagraph wiring is UNIT-C."
+                )
+            if sp.temperature != 0.0:
+                raise ValueError("PTD_LINEARIZE_VERIFY supports greedy temperature=0.0 only")
+            import ptd.tree.linearize as linearize_mod
 
         tree_session = None
         session_is_new = False
@@ -622,6 +661,7 @@ class JetFlowEngine:
                 "max_new_tokens": int(sp.max_new_tokens),
                 "attn_backend": backend,
                 "logical_kv": bool(logical_kv),
+                "linearize_verify": bool(linearize_verify),
             }
             existing_session = getattr(self, "_tree_session", None)
             if existing_session is None:
@@ -843,11 +883,20 @@ class JetFlowEngine:
             past_len = (prompt_len + wlen) if logical_kv \
                 else cache.get_seq_length()                            # == committed.shape[1] - 1
             # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.
-            seq_step = tree.token_ids.view(1, -1)                      # (1, N)
+            linear_plan = None
+            if linearize_verify:
+                linear_plan = linearize_mod.expand_tree_to_paths(tree)
+                seq_step = linear_plan.token_ids.view(1, -1)           # (1, total_q)
+                posN = (past_len + linear_plan.positions).view(1, -1)  # RoPE: depth-based
+                cache_pos = torch.arange(
+                    past_len, past_len + seq_step.shape[1], device=self.device
+                )
+            else:
+                seq_step = tree.token_ids.view(1, -1)                  # (1, N)
             if logical_kv:
                 posN = None
                 cache_pos = None
-            else:
+            elif not linearize_verify:
                 depths = tree.depth.tolist()
                 posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
                 cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
@@ -991,19 +1040,36 @@ class JetFlowEngine:
                         output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
                     )
             else:
-                # 4D additive mask: queries = N nodes; keys = past_len cached prefix
-                # (all visible) + N nodes (ancestor mask, incl self).
-                allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-                allowed[:, :past_len] = True
-                allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
-                mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
-                                   torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+                if linearize_verify:
+                    # HF SDPA has no varlen `cu` seam, so the CPU validation path
+                    # expresses UNIT-A's causal path segments as an equivalent
+                    # block-diagonal causal mask. The kernel/cudagraph path is UNIT-C.
+                    total_q = int(seq_step.shape[1])
+                    mask = _linearized_sdpa_mask(
+                        linear_plan.cu_seqlens, total_q, past_len, dtype, self.device
+                    )
+                else:
+                    # 4D additive mask: queries = N nodes; keys = past_len cached prefix
+                    # (all visible) + N nodes (ancestor mask, incl self).
+                    allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
+                    allowed[:, :past_len] = True
+                    allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
+                    mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
+                                       torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
                 logits, cache, new_hidden = self.runner.forward(
                     seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
                     output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
                 )
-            target_logits = logits                                    # (1, N, V) — every row is a tree node
-            if sp.temperature == 0.0:
+            target_logits = logits
+            if linearize_verify:
+                greedy = target_logits.argmax(dim=-1).squeeze(0)      # (total_q,) device
+                accepted_path, acc, correction = linearize_mod.path_accept(
+                    linear_plan, greedy
+                )
+                path_t = torch.tensor(accepted_path, device=self.device, dtype=torch.long)
+                kv_path_t = _linearized_accepted_rows(linear_plan, accepted_path)
+                corr_t = torch.tensor(correction, device=self.device)
+            elif sp.temperature == 0.0:
                 # L2 (path-to-fork-tps): GPU-resident greedy accept — one .item()
                 # (accepted_len) instead of the oracle's posterior.tolist() +
                 # child-map python walk; the path/correction stay device tensors
@@ -1019,9 +1085,11 @@ class JetFlowEngine:
                     tree.token_ids, greedy, tree.parent_indices, tree.depth,
                     max_depth=actual_tree_depth,
                 )
+                kv_path_t = path_t
             else:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
                 path_t = torch.tensor(accepted_path, device=self.device)
+                kv_path_t = path_t
                 corr_t = torch.tensor(correction, device=self.device)
             if logical_kv:
                 # L5 slot-commit (replaces the O(context) gather): the accepted nodes'
@@ -1046,17 +1114,17 @@ class JetFlowEngine:
                 wlen += len(path_list)
             else:
                 # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
-                # rejected branches' KV. path_t = [0(root), …acc nodes], tree-ordered;
-                # their cache slots are past_len + path -> contiguous positions after gather.
+                # rejected branches' KV. `kv_path_t` is tree-node ids on the dense path
+                # and flattened PathPlan row ids on the linearized path.
                 keep = torch.cat([
                     torch.arange(past_len, device=self.device),
-                    past_len + path_t,
+                    past_len + kv_path_t,
                 ])
                 cache.gather(keep)                # cache length -> past_len + (acc + 1)
             if new_hidden is not None:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
-                hidden_append = new_hidden[:, path_t, :]
+                hidden_append = new_hidden[:, kv_path_t, :]
                 hidden_end = target_hidden_len + hidden_append.shape[1]
                 target_hidden_buf[:, target_hidden_len:hidden_end, :].copy_(hidden_append)
                 target_hidden_len = hidden_end
