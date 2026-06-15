@@ -639,10 +639,11 @@ class JetFlowEngine:
         linearize_verify = _env_flag("PTD_LINEARIZE_VERIFY")
         linearize_mod = None
         if linearize_verify:
-            if backend != "sdpa":
+            if backend not in ("sdpa", "triton_paged_tree"):
                 raise ValueError(
-                    "PTD_LINEARIZE_VERIFY currently supports only the eager SDPA "
-                    "generate_tree path; kernel/cudagraph wiring is UNIT-C."
+                    "PTD_LINEARIZE_VERIFY supports only the eager SDPA and "
+                    "triton_paged_tree generate_tree paths; compiled/cudagraph "
+                    "wiring is UNIT-C."
                 )
             if sp.temperature != 0.0:
                 raise ValueError("PTD_LINEARIZE_VERIFY supports greedy temperature=0.0 only")
@@ -904,8 +905,10 @@ class JetFlowEngine:
                 # Kernel path: prefix [0, past_len) is always-visible (handled by the
                 # kernel); the N tree nodes attend per the ancestor mask folded in as
                 # the fp32 (0/-inf) qq_bias. No dense 4D mask — attention_mask=None.
-                anc = build_ancestor_matrix(tree).to(device=self.device, dtype=torch.bool)
-                if logical_kv:
+                anc = None if linearize_verify else build_ancestor_matrix(tree).to(
+                    device=self.device, dtype=torch.bool
+                )
+                if linearize_verify or logical_kv:
                     qq_bias = None
                 else:
                     qq_bias = torch.where(
@@ -1034,7 +1037,14 @@ class JetFlowEngine:
                     # also remains the oracle the compiled need_hidden path is gated
                     # against in tests).
                     cache._handoff_seq_ids = [0]
-                    cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": qq_bias}
+                    if linearize_verify:
+                        cache._ptd_attn_meta = {
+                            "seq_ids": [0],
+                            "qq_bias": None,
+                            "cu_seqlens": linear_plan.cu_seqlens,
+                        }
+                    else:
+                        cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": qq_bias}
                     logits, cache, new_hidden = self.runner.forward(
                         seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
                         output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
