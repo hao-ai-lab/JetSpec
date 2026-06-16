@@ -114,6 +114,9 @@ class GraphedVerify:
         self.graphs = {}          # B -> torch.cuda.CUDAGraph
         self.outputs = {}         # B -> logits buffer or (logits, target_hidden) tuple
         self._pool = None         # shared graph memory pool (set on first capture)
+        self._block_tables_source_tag = None
+        self._node_offs_source_tag = None
+        self._cu_source_tag = None
         # (id(live k-pool), block_table_width) tag — the engine sets it so it can detect a
         # new prompt's pool/width and rebuild rather than replay graphs bound to a freed
         # pool's addresses. Initialized here so the attribute always exists.
@@ -176,7 +179,8 @@ class GraphedVerify:
 
     @torch.inference_mode()
     def replay(self, B, input_ids, cos, sin, block_tables, cu, seq_lens_k,
-               qq_bias, node_blks, node_offs, N):
+               qq_bias, node_blks, node_offs, N, *, static_block_tables=False,
+               static_node_offs=False, static_cu=False):
         """Copy this round's inputs into the persistent buffers and replay graph[B].
 
         Arguments mirror the engine's per-round verify call (already padded to bucket B):
@@ -197,21 +201,32 @@ class GraphedVerify:
         self.g_cos[:, :B].copy_(cos)
         self.g_sin[:, :B].copy_(sin)
         self.g_qq_bias[:B, :B].copy_(qq_bias)
-        self.g_cu.copy_(cu)
+        cu_tag = id(cu) if static_cu else None
+        if (not static_cu) or self._cu_source_tag != cu_tag:
+            self.g_cu.copy_(cu)
+            self._cu_source_tag = cu_tag
         self.g_seq_lens_k.copy_(seq_lens_k)
         # block_tables are per-layer: stack the per-round list into the fixed buffer in
         # ONE launch (was nlayers separate copy_). node_blks/node_offs are layer-shared
         # on the logical path ([x]*nlayers) -> broadcast-fill in one launch; fall back to
         # the per-layer loop if a caller ever passes distinct rows (e.g. a gather path).
-        torch.stack(block_tables, 0, out=self.g_block_tables)
+        block_tables_tag = tuple(id(bt) for bt in block_tables) \
+            if static_block_tables else None
+        if (not static_block_tables) or self._block_tables_source_tag != block_tables_tag:
+            torch.stack(block_tables, 0, out=self.g_block_tables)
+            self._block_tables_source_tag = block_tables_tag
         if all(nb is node_blks[0] for nb in node_blks) and \
                 all(no is node_offs[0] for no in node_offs):
             self.g_node_blks[:, :B].copy_(node_blks[0])
-            self.g_node_offs[:, :B].copy_(node_offs[0])
+            node_offs_tag = id(node_offs[0]) if static_node_offs else None
+            if (not static_node_offs) or self._node_offs_source_tag != node_offs_tag:
+                self.g_node_offs[:, :B].copy_(node_offs[0])
+                self._node_offs_source_tag = node_offs_tag
         else:
             for i in range(self.nlayers):
                 self.g_node_blks[i, :B].copy_(node_blks[i])
                 self.g_node_offs[i, :B].copy_(node_offs[i])
+            self._node_offs_source_tag = None
         if B not in self.graphs:
             self._capture_bucket(B)
         self.graphs[B].replay()

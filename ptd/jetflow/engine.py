@@ -970,7 +970,10 @@ class JetFlowEngine:
                                 logical_kv_bind=lk_bind)
                             logits, new_hidden = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs, N)
+                                qq_bias_b, node_blks, node_offs, N,
+                                static_block_tables=logical_kv,
+                                static_node_offs=logical_kv,
+                                static_cu=logical_kv)
                         else:
                             logits, new_hidden = stack(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
@@ -987,7 +990,10 @@ class JetFlowEngine:
                                 logical_kv_bind=lk_bind)
                             logits = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs, N)
+                                qq_bias_b, node_blks, node_offs, N,
+                                static_block_tables=logical_kv,
+                                static_node_offs=logical_kv,
+                                static_cu=logical_kv)
                         else:
                             logits = self.compiled_verify(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
