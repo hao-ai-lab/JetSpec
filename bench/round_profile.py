@@ -77,6 +77,9 @@ def main():
     ap.add_argument("--cprofile", action="store_true",
                     help="also run ONE decode under cProfile and print top host-side "
                          "functions by tottime (exposes the un-patched OTHER python work)")
+    ap.add_argument("--session", action="store_true",
+                    help="reserve + freeze the pool up front (matches tps_walltime --session "
+                         "/ the production config) so _grow_pool never fires in the hot loop")
     args = ap.parse_args()
 
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
@@ -106,6 +109,10 @@ def main():
     sp = SamplingParams(0.0, args.max_tokens)
     tkw = dict(block_size=bs, tree_width=args.tree_width, budget=args.budget,
                algo=args.algo, target_layer_ids=tli, return_stats=True)
+    if args.session:
+        tkw["session"] = True
+        max_len = max(len(eng.tokenizer(p)["input_ids"]) for p in prompts)
+        tkw["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
 
     # ---- phase patches (class / module / instance level so internally-created objects hit them) ----
     p_draft = Phase("drafter.propose_logits")
@@ -183,6 +190,7 @@ def main():
     torch.cuda.synchronize()
     for ph in (p_draft, p_verify, p_accept, p_reserve, p_release, p_gather, p_build, p_anc, p_stage):
         ph.reset()
+    eng_mod._COMMIT_MS[0] = 0.0
 
     # timed: total wall + per-phase.
     rounds = 0
@@ -206,6 +214,10 @@ def main():
         print(f"{ph.name:<28}{mr:>10.2f}{100*ph.ms/total_ms:>8.1f}%{ph.n/rounds:>13.2f}")
     print(f"{'OTHER (build*/assemble/commit/EOS host)':<28}{other/rounds:>10.2f}"
           f"{100*other/total_ms:>8.1f}%")
+    if eng_mod._COMMIT_MS[0]:
+        print(f"  [PTD_TIME_COMMIT] commit-proper (logical-commit + EOS): "
+              f"{eng_mod._COMMIT_MS[0]/rounds:.2f}ms/round  "
+              f"(the rest of OTHER = bs=1 bubbles + syncs + orchestration)")
     print("\n(note: instrumented per-phase sync inflates total vs the un-instrumented "
           "236 tok/s number; use the % split to RANK levers, not absolute ms.)")
 

@@ -19,6 +19,7 @@ mask, per-seq accept + ref-count-safe gather), token-identical to running
 `generate_tree` on each prompt alone (the N2b lossless gate).
 """
 import os
+import time
 import torch
 from transformers import DynamicCache
 
@@ -41,6 +42,12 @@ from ptd.jetflow.scheduler import Scheduler, SequenceRequest
 # 256 covers the budget=255 steady state (the dominant case). Padding adds at most
 # `bucket - N` dummy rows (here 1), a negligible verify-forward cost.
 _TREE_BUCKETS = (16, 32, 64, 128, 192, 256)
+
+# Optional commit-block timer (env PTD_TIME_COMMIT=1): isolates the logical-commit +
+# EOS cost from round_profile's OTHER catch-all, to compare commit-proper vs the fork's
+# 0.69ms commit timer. _COMMIT_MS accumulates ms; round_profile resets + reads it.
+_TIME_COMMIT = bool(os.environ.get("PTD_TIME_COMMIT"))
+_COMMIT_MS = [0.0]
 
 # A3-GRAPH backends. The compiled verify/AR stacks (A3-INT/A3-HIDDEN) ride two flag sets:
 #   - `_KERNEL_BACKENDS`: routes prefill + the verify forward through the paged tree-attn
@@ -1031,6 +1038,8 @@ class JetFlowEngine:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
                 path_t = torch.tensor(accepted_path, device=self.device)
                 corr_t = torch.tensor(correction, device=self.device)
+            if _TIME_COMMIT:
+                torch.cuda.synchronize(); _ct0 = time.perf_counter()
             if logical_kv:
                 # L5 slot-commit (replaces the O(context) gather): the accepted nodes'
                 # KV stays at the slots the verify wrote; only the WINDOW MAP is
@@ -1077,7 +1086,10 @@ class JetFlowEngine:
             tree_sizes.append(int(N))
             generated_len += round_generated
             committed_slice = committed_buf[0, commit_start:committed_len]
-            if eos_tensor is not None and bool(torch.isin(committed_slice, eos_tensor).any().item()):
+            _eos_hit = eos_tensor is not None and bool(torch.isin(committed_slice, eos_tensor).any().item())
+            if _TIME_COMMIT:
+                torch.cuda.synchronize(); _COMMIT_MS[0] += (time.perf_counter() - _ct0) * 1e3
+            if _eos_hit:
                 break
         generated_len = min(generated_len, sp.max_new_tokens)
         new_ids = [
