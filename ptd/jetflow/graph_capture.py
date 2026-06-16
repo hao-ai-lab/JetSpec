@@ -100,15 +100,16 @@ class GraphedVerify:
                                     dtype=torch.float32, device=device)
         self.g_cu = torch.zeros((2,), dtype=torch.int32, device=device)
         self.g_seq_lens_k = torch.zeros((1,), dtype=torch.int32, device=device)
-        # Per-layer staged scatter maps + block tables (each layer has its OWN physical
-        # block ids, so these are per-layer — mirroring reserve_tree_slots' return).
-        self.g_node_blks = [torch.zeros((Bmax,), dtype=torch.long, device=device)
-                            for _ in range(self.nlayers)]
-        self.g_node_offs = [torch.zeros((Bmax,), dtype=torch.long, device=device)
-                            for _ in range(self.nlayers)]
-        self.g_block_tables = [torch.zeros((1, self.block_table_width),
-                                           dtype=torch.int32, device=device)
-                               for _ in range(self.nlayers)]
+        # Per-layer staged scatter maps + block tables, kept as STACKED buffers
+        # (leading dim = layer) so replay refreshes them in ONE copy each instead of a
+        # per-layer Python loop (~108 copy_ launches/round -> ~3). Per-layer views
+        # (g_*[i]) feed the captured stack. block_tables are genuinely per-layer (each
+        # layer's own physical blocks); node_blks/node_offs are layer-shared on the
+        # logical path, so replay broadcast-fills them.
+        self.g_node_blks = torch.zeros((self.nlayers, Bmax), dtype=torch.long, device=device)
+        self.g_node_offs = torch.zeros((self.nlayers, Bmax), dtype=torch.long, device=device)
+        self.g_block_tables = torch.zeros((self.nlayers, 1, self.block_table_width),
+                                          dtype=torch.int32, device=device)
 
         self.graphs = {}          # B -> torch.cuda.CUDAGraph
         self.outputs = {}         # B -> logits buffer or (logits, target_hidden) tuple
@@ -133,12 +134,12 @@ class GraphedVerify:
             self.g_sin[:, :B],
             self.k_pools,
             self.v_pools,
-            [bt for bt in self.g_block_tables],
+            [self.g_block_tables[i] for i in range(self.nlayers)],
             self.g_cu,
             self.g_seq_lens_k,
             self.g_qq_bias[:B, :B],
-            [nb[:B] for nb in self.g_node_blks],
-            [no[:B] for no in self.g_node_offs],
+            [self.g_node_blks[i, :B] for i in range(self.nlayers)],
+            [self.g_node_offs[i, :B] for i in range(self.nlayers)],
             logical_kv_slots=lk[0] if lk is not None else None,
             logical_kv_starts=lk[1] if lk is not None else None,
             logical_kv_lens=lk[2] if lk is not None else None,
@@ -198,10 +199,19 @@ class GraphedVerify:
         self.g_qq_bias[:B, :B].copy_(qq_bias)
         self.g_cu.copy_(cu)
         self.g_seq_lens_k.copy_(seq_lens_k)
-        for i in range(self.nlayers):
-            self.g_block_tables[i].copy_(block_tables[i])
-            self.g_node_blks[i][:B].copy_(node_blks[i])
-            self.g_node_offs[i][:B].copy_(node_offs[i])
+        # block_tables are per-layer: stack the per-round list into the fixed buffer in
+        # ONE launch (was nlayers separate copy_). node_blks/node_offs are layer-shared
+        # on the logical path ([x]*nlayers) -> broadcast-fill in one launch; fall back to
+        # the per-layer loop if a caller ever passes distinct rows (e.g. a gather path).
+        torch.stack(block_tables, 0, out=self.g_block_tables)
+        if all(nb is node_blks[0] for nb in node_blks) and \
+                all(no is node_offs[0] for no in node_offs):
+            self.g_node_blks[:, :B].copy_(node_blks[0])
+            self.g_node_offs[:, :B].copy_(node_offs[0])
+        else:
+            for i in range(self.nlayers):
+                self.g_node_blks[i, :B].copy_(node_blks[i])
+                self.g_node_offs[i, :B].copy_(node_offs[i])
         if B not in self.graphs:
             self._capture_bucket(B)
         self.graphs[B].replay()
