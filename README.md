@@ -9,7 +9,7 @@
   <a href="https://hao-ai-lab.github.io/jetflow">Project Webpage</a>
 </p>
 
-JetFlow is an implementation of **parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000 TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
+JetFlow is an implementation of **parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
 
 
@@ -150,7 +150,7 @@ print("tokens per forward:", out["tpf"])
 
 ### Benchmarking Scripts
 
-The benchmark examples below use `Qwen/Qwen3-8B` with `JetFlow/jetflow-qwen3-8b`. 
+The benchmark examples below use `Qwen/Qwen3-8B` with drafter `JetFlow/jetflow-qwen3-8b`. 
 
 HF reference benchmark:
 
@@ -170,7 +170,7 @@ python bench/reference/benchmark.py \
   --warmup-samples-per-rank 1
 ```
 
-Optimized JetFlow wall-clock benchmark:
+Optimized JetFlow engine with wall-clock latency and throughput benchmarking:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -185,7 +185,7 @@ python bench/engine/tps_walltime.py \
   --session
 ```
 
-[`vLLM fork for JetFlow support`](https://github.com/snyhlxde1/vllm-jetflow) MATH-500 reference test:
+Run [`our vLLM v1 integration with JetFlow support`](https://github.com/snyhlxde1/vllm-jetflow) on MATH-500 for performance test:
 
 ```bash
 VLLM_FORK_DIR=/path/to/vllm-jetflow
@@ -220,7 +220,7 @@ bash examples/offline_inference/dflash_profiling_math500_causal_tree_budget_bsz_
   --max-num-batched-tokens 16384
 ```
 
-The [`vLLM fork`](https://github.com/snyhlxde1/vllm-jetflow) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/dflash_profiling_humaneval_causal_tree_unit_kvlayout_dgx_pod.sh`.
+The [`vLLM integration`](https://github.com/snyhlxde1/vllm-jetflow) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/dflash_profiling_humaneval_causal_tree_unit_kvlayout_dgx_pod.sh`.
 
 
 
@@ -228,7 +228,7 @@ The [`vLLM fork`](https://github.com/snyhlxde1/vllm-jetflow) supports MATH-500 t
 
 ### Engine Results
 
-The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with the [`vLLM fork for JetFlow support`](https://github.com/snyhlxde1/vllm-jetflow).
+The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with [`Our vLLM v1 integration`](https://github.com/snyhlxde1/vllm-jetflow).
 
 | dataset | JetFlow engine TPS | accept_len |
 |---|---:|---:|
