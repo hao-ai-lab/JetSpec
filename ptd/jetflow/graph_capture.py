@@ -235,3 +235,89 @@ class GraphedVerify:
             logits, target_hidden = out
             return logits[:, :N, :], target_hidden[:, :N, :]
         return out[:, :N, :]
+
+
+class GraphedTreeAccept:
+    """CUDA-graph replay wrapper for the device-side greedy accept walk.
+
+    The host sync for accepted length remains outside the graph; this only captures
+    the fixed-shape tensor walk that produces the path buffer and correction token.
+    """
+
+    def __init__(self, num_nodes, max_depth, device, score_dtype):
+        self.num_nodes = int(num_nodes)
+        self.max_depth = int(max_depth)
+        self.device = torch.device(device)
+        self.score_dtype = score_dtype
+        self.g_tree_tokens = torch.empty(self.num_nodes, dtype=torch.long, device=self.device)
+        self.g_greedy_targets = torch.empty(self.num_nodes, dtype=torch.long, device=self.device)
+        self.g_parent_indices = torch.empty(self.num_nodes, dtype=torch.long, device=self.device)
+        self.g_depths = torch.empty(self.num_nodes, dtype=score_dtype, device=self.device)
+        self.g_path_buf = torch.empty(self.max_depth + 1, dtype=torch.long, device=self.device)
+        self.g_accepted_depth = torch.empty((), dtype=score_dtype, device=self.device)
+        self.g_correction = torch.empty((), dtype=torch.long, device=self.device)
+        self.node_ids = torch.arange(self.num_nodes, device=self.device)
+        self.later_node = self.node_ids[None, :] > self.node_ids[:, None]
+        self.neg_ones = torch.empty(self.num_nodes, dtype=score_dtype, device=self.device).fill_(-1)
+        self.graph = None
+        self._pool = None
+
+    def _call(self):
+        safe_parents = self.g_parent_indices.clamp(min=0, max=self.num_nodes - 1)
+        valid_parent = (self.g_parent_indices >= 0) & (self.g_parent_indices < self.num_nodes)
+        same_parent = self.g_parent_indices[:, None] == self.g_parent_indices[None, :]
+        same_token = self.g_tree_tokens[:, None] == self.g_tree_tokens[None, :]
+        overwritten = (same_parent & same_token & self.later_node).any(dim=1)
+
+        match = (
+            valid_parent
+            & ~overwritten
+            & (self.g_tree_tokens == self.g_greedy_targets[safe_parents])
+        ) | (self.node_ids == 0)
+
+        prefix_match = match.clone()
+        jump = safe_parents.clone()
+        for _ in range(max(1, self.max_depth.bit_length())):
+            prefix_match = prefix_match & prefix_match[jump]
+            jump = jump[jump]
+
+        score = torch.where(prefix_match, self.g_depths, self.neg_ones)
+        best_node = torch.argmax(score)
+        best_idx = best_node.view(1)
+        accepted_depth = torch.gather(self.g_depths, 0, best_idx).squeeze(0)
+        correction = torch.gather(self.g_greedy_targets, 0, best_idx).squeeze(0)
+
+        current = best_idx
+        for depth in range(self.max_depth, -1, -1):
+            self.g_path_buf[depth:depth + 1].copy_(current)
+            current = torch.gather(safe_parents, 0, current)
+        self.g_accepted_depth.copy_(accepted_depth)
+        self.g_correction.copy_(correction)
+
+    @torch.inference_mode()
+    def _capture(self):
+        self._call()
+        self._call()
+        torch.cuda.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self._pool):
+            self._call()
+        if self._pool is None:
+            self._pool = graph.pool()
+        self.graph = graph
+        torch.cuda.synchronize()
+
+    @torch.inference_mode()
+    def replay(self, tree_tokens, greedy_targets, parent_indices, depths):
+        self.g_tree_tokens.copy_(tree_tokens)
+        greedy_targets = greedy_targets.squeeze(0) if greedy_targets.dim() == 2 else greedy_targets
+        self.g_greedy_targets.copy_(greedy_targets)
+        self.g_parent_indices.copy_(parent_indices)
+        self.g_depths.copy_(depths)
+        if self.graph is None:
+            self._capture()
+        self.graph.replay()
+        accepted_len = int(self.g_accepted_depth.item())
+        valid_start = self.max_depth - accepted_len
+        accepted_path = self.g_path_buf[valid_start:self.max_depth + 1].contiguous()
+        return accepted_path, accepted_len, self.g_correction

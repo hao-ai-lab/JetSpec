@@ -48,6 +48,7 @@ _TREE_BUCKETS = (16, 32, 64, 128, 192, 256)
 # 0.69ms commit timer. _COMMIT_MS accumulates ms; round_profile resets + reads it.
 _TIME_COMMIT = bool(os.environ.get("PTD_TIME_COMMIT"))
 _COMMIT_MS = [0.0]
+_GRAPH_ACCEPT_MIN_N = 96
 
 # A3-GRAPH backends. The compiled verify/AR stacks (A3-INT/A3-HIDDEN) ride two flag sets:
 #   - `_KERNEL_BACKENDS`: routes prefill + the verify forward through the paged tree-attn
@@ -79,6 +80,13 @@ _LOGICAL_KV_BACKENDS = ("triton_paged_tree_compiled_nogather",
 def _env_flag(name: str) -> bool:
     value = os.environ.get(name, "")
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_flag_enabled(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    return value.lower() not in {"0", "false", "no", "off"}
 
 
 def _bucket_for_n(n: int) -> int:
@@ -549,6 +557,22 @@ class JetFlowEngine:
             gv.pool_tag = tag
             cache[key] = gv
         return gv
+
+    def _get_graphed_tree_accept(self, num_nodes, max_depth, score_dtype):
+        from ptd.jetflow.graph_capture import GraphedTreeAccept
+
+        cache = getattr(self, "_graphed_tree_accept", None)
+        if cache is None:
+            cache = {}
+            self._graphed_tree_accept = cache
+        key = (int(num_nodes), int(max_depth), score_dtype)
+        gta = cache.get(key)
+        if gta is None:
+            gta = GraphedTreeAccept(
+                int(num_nodes), int(max_depth), torch.device(self.device), score_dtype
+            )
+            cache[key] = gta
+        return gta
 
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
@@ -1036,10 +1060,18 @@ class JetFlowEngine:
                 # (gpu_tree_accept is greedy-only).
                 from ptd.tree._core.accept import gpu_tree_accept
                 greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
-                path_t, acc, corr_t = gpu_tree_accept(
-                    tree.token_ids, greedy, tree.parent_indices, tree.depth,
-                    max_depth=actual_tree_depth,
-                )
+                if logical_kv and getattr(self, "_use_cudagraph", False) \
+                        and N >= _GRAPH_ACCEPT_MIN_N \
+                        and _env_flag_enabled("PTD_GRAPH_ACCEPT", True):
+                    gta = self._get_graphed_tree_accept(
+                        N, actual_tree_depth, tree.depth.dtype)
+                    path_t, acc, corr_t = gta.replay(
+                        tree.token_ids, greedy, tree.parent_indices, tree.depth)
+                else:
+                    path_t, acc, corr_t = gpu_tree_accept(
+                        tree.token_ids, greedy, tree.parent_indices, tree.depth,
+                        max_depth=actual_tree_depth,
+                    )
             else:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
                 path_t = torch.tensor(accepted_path, device=self.device)
