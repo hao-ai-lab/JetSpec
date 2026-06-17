@@ -62,16 +62,21 @@ If you use `uv`, the project includes extra build dependency metadata for `flash
 
 ## Model Weights
 
-| Component | Default |
+JetFlow draft heads are published under the [`JetFlow`](https://huggingface.co/JetFlow) Hugging Face organization.
+
+| Target family | Draft head |
 |---|---|
-| Target model | `Qwen/Qwen3-8B` |
-| Hugging Face org | [`JetFlow`](https://huggingface.co/JetFlow) |
-| Draft head | `JetFlow/jetflow-qwen3-8b-fkl-epoch6-3e-4-no-gamma`(https://huggingface.co/JetFlow/jetflow-qwen3-8b-fkl-epoch6-3e-4-no-gamma) |
+| Qwen3-8B | [`JetFlow/jetflow-qwen3-8b`](https://huggingface.co/JetFlow/jetflow-qwen3-8b) |
+| Qwen3-30B-A3B | [`JetFlow/jetflow-qwen3-30b-a3b`](https://huggingface.co/JetFlow/jetflow-qwen3-30b-a3b) |
+| Qwen3.6-35B-A3B | [`JetFlow/jetflow-Qwen3.6-35B-A3B`](https://huggingface.co/JetFlow/jetflow-Qwen3.6-35B-A3B) |
+| Gemma4-26B-A4B0-it | [`JetFlow/jetflow-gemma4-26B-A4B0-it`](https://huggingface.co/JetFlow/jetflow-gemma4-26B-A4B0-it) |
+| GPT-OSS-20B | [`JetFlow/jetflow-gpt-oss-20b`](https://huggingface.co/JetFlow/jetflow-gpt-oss-20b) |
+| Step3p7-Flash | [`JetFlow/jetflow-step3p7-flash`](https://huggingface.co/JetFlow/jetflow-step3p7-flash) |
 
 Most benchmark and diagnostic scripts read the draft head from `JETFLOW_DRAFT_HEAD`:
 
 ```bash
-export JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo>
+export JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b
 ```
 
 
@@ -123,7 +128,7 @@ engine = JetFlowEngine(
     "Qwen/Qwen3-8B",
     attn_backend="triton_paged_tree_compiled",
 )
-head = load_draft_head("JetFlow/<draft-head-repo>")
+head = load_draft_head("JetFlow/jetflow-qwen3-8b")
 drafter = DraftHeadTreeDrafter(
     head,
     target=engine.model,
@@ -145,11 +150,13 @@ print("tokens per forward:", out["tpf"])
 
 ### Example Benchmarking Script
 
+The benchmark examples below use `Qwen/Qwen3-8B` with `JetFlow/jetflow-qwen3-8b`. 
+
 HF reference benchmark:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo> \
+JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b \
 python bench/reference/benchmark.py \
   --model Qwen/Qwen3-8B \
   --attn-implementation flash_attention_2 \
@@ -169,7 +176,7 @@ Optimized JetFlow wall-clock benchmark:
 CUDA_VISIBLE_DEVICES=0 \
 JETFLOW_FUSE_GEMMS=1 \
 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
-JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo> \
+JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b \
 python bench/engine/tps_walltime.py \
   --prompt-set gsm8k \
   --samples 64 \
