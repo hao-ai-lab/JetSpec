@@ -22,7 +22,7 @@ JetFlow is an implementation of **parallel tree drafting** for fast LLM speculat
 - [Usage](#usage)
   - [HF References](#hf-references)
   - [JetFlow Inference Engine](#jetflow-inference-engine)
-  - [Benchmarks](#benchmarks)
+  - [Benchmarking Scripts](#benchmarking_scripts)
 - [Results](#results)
   - [Engine Results](#engine-results)
   - [Tree Algorithms](#tree-algorithms)
@@ -148,7 +148,7 @@ print(out["text"])
 print("tokens per forward:", out["tpf"])
 ```
 
-### Example Benchmarking Script
+### Benchmarking Scripts
 
 The benchmark examples below use `Qwen/Qwen3-8B` with `JetFlow/jetflow-qwen3-8b`. 
 
