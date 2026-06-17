@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "parallel-tree-decoding"
+name = "jetflow"
 version = "0.0.1"
-description = "PTD — lightweight offline tree-speculative decoding on top of HF transformers (Qwen3-8B)."
+description = "JetFlow — lightweight offline tree-speculative decoding on top of HF transformers (Qwen3-8B)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -18,8 +18,19 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 kernel = ["triton"]
-bench = ["datasets"]
+bench = [
+    "datasets",
+    "psutil",
+    "ninja",
+    "packaging",
+]
+flash-attn = [
+    "flash-attn",
+]
+
+[tool.uv.extra-build-dependencies]
+flash-attn = ["psutil", "packaging", "ninja"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ptd*"]
+include = ["jetflow*"]
