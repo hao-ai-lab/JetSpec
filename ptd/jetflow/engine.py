@@ -19,6 +19,7 @@ mask, per-seq accept + ref-count-safe gather), token-identical to running
 `generate_tree` on each prompt alone (the N2b lossless gate).
 """
 import os
+import time
 import torch
 from transformers import DynamicCache
 
@@ -41,6 +42,13 @@ from ptd.jetflow.scheduler import Scheduler, SequenceRequest
 # 256 covers the budget=255 steady state (the dominant case). Padding adds at most
 # `bucket - N` dummy rows (here 1), a negligible verify-forward cost.
 _TREE_BUCKETS = (16, 32, 64, 128, 192, 256)
+
+# Optional commit-block timer (env PTD_TIME_COMMIT=1): isolates the logical-commit +
+# EOS cost from round_profile's OTHER catch-all, to compare commit-proper vs the fork's
+# 0.69ms commit timer. _COMMIT_MS accumulates ms; round_profile resets + reads it.
+_TIME_COMMIT = bool(os.environ.get("PTD_TIME_COMMIT"))
+_COMMIT_MS = [0.0]
+_GRAPH_ACCEPT_MIN_N = 96
 
 # A3-GRAPH backends. The compiled verify/AR stacks (A3-INT/A3-HIDDEN) ride two flag sets:
 #   - `_KERNEL_BACKENDS`: routes prefill + the verify forward through the paged tree-attn
@@ -72,6 +80,13 @@ _LOGICAL_KV_BACKENDS = ("triton_paged_tree_compiled_nogather",
 def _env_flag(name: str) -> bool:
     value = os.environ.get(name, "")
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_flag_enabled(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return bool(default)
+    return value.lower() not in {"0", "false", "no", "off"}
 
 
 def _bucket_for_n(n: int) -> int:
@@ -543,6 +558,22 @@ class JetFlowEngine:
             cache[key] = gv
         return gv
 
+    def _get_graphed_tree_accept(self, num_nodes, max_depth, score_dtype):
+        from ptd.jetflow.graph_capture import GraphedTreeAccept
+
+        cache = getattr(self, "_graphed_tree_accept", None)
+        if cache is None:
+            cache = {}
+            self._graphed_tree_accept = cache
+        key = (int(num_nodes), int(max_depth), score_dtype)
+        gta = cache.get(key)
+        if gta is None:
+            gta = GraphedTreeAccept(
+                int(num_nodes), int(max_depth), torch.device(self.device), score_dtype
+            )
+            cache[key] = gta
+        return gta
+
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
@@ -591,7 +622,7 @@ class JetFlowEngine:
         dtype = self.dtype
         neg = torch.finfo(dtype).min
         need_hidden = target_layer_ids is not None and block_size > 1
-        new_ids, rounds = [], 0
+        generated_len, rounds = 0, 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         tree_diag_bins = (
             torch.zeros(commit_slack, dtype=torch.long, device=self.device)
@@ -733,26 +764,28 @@ class JetFlowEngine:
             reserve_prompt_len = tree_session["prompt_capacity"] if session else prompt_len
             should_reserve = (not session) or session_is_new
             if logical_kv:
-                # L5 no-gather: without gather's compaction, every committed token can
-                # in the worst case pin its own retained block, so the POOL must be
-                # sized for prompt + 16*(max_new + commit_slack) + Bmax tokens — while
+                # L5 no-gather: to keep the accepted path device-resident, the engine
+                # does not pull path_t to host to selectively release rejected round
+                # blocks. Instead, transient logical round blocks stay leased until the
+                # decode cache drops/resets, so the POOL must be sized for every round's
+                # block-aligned reservation — while
                 # the kernel-visible block-table WIDTH keeps today's (much smaller)
                 # prompt + max_new + Bmax bound (it drives the dynamo guard + graph
                 # staging and must not inflate with the pool). freeze_pool() turns any
                 # later silent `_grow_pool` (a torch.cat = pool relocation under live
                 # CUDA graphs) into a loud error.
-                # Pool = the prefix (per-layer ids, via total_tokens) + the no-compaction
-                # worst case as LAYER-SHARED ids (every committed token pinning its own
-                # retained block, + one in-flight round) — shared because
-                # reserve_logical_slots hands every layer the same block ids; sizing
-                # this through total_tokens would multiply it ~num_layers-fold (174GB
-                # at max_new=2048, the G2 OOM). Width keeps the kernel-visible bound.
+                # Pool = the prefix (per-layer ids, via total_tokens) + logical round
+                # reservations as LAYER-SHARED ids. `reserve_logical_slots` hands every
+                # layer the same block ids; sizing this through total_tokens would
+                # multiply it by num_layers. Width keeps the kernel-visible bound.
                 if should_reserve:
+                    logical_round_blocks = (Bmax + self.block_size - 1) // self.block_size
                     cache.reserve_capacity(
                         reserve_prompt_len,
                         block_table_tokens=reserve_prompt_len + sp.max_new_tokens + Bmax,
-                        extra_shared_blocks=(sp.max_new_tokens + commit_slack
-                                             + (Bmax + self.block_size - 1) // self.block_size + 1),
+                        extra_shared_blocks=(
+                            (sp.max_new_tokens + commit_slack) * logical_round_blocks + 1
+                        ),
                     )
                     cache.freeze_pool()
                 nlayers_lk = self.model.config.num_hidden_layers
@@ -788,12 +821,13 @@ class JetFlowEngine:
             tree_session["cache"] = cache
             self._tree_session = tree_session
         first_tok = sample(logits[:, -1:, :], sp.temperature)
-        new_ids.append(int(first_tok.item()))
+        first_tok_id = int(first_tok.item())
+        generated_len = 1
         committed_buf[:, committed_len:committed_len + 1].copy_(first_tok.view(1, 1))
         committed_len += 1
         committed = committed_buf[:, :committed_len]       # anchor; NOT yet cached
-        if int(first_tok.item()) in self.eos_token_ids:
-            new_ids = new_ids[: sp.max_new_tokens]
+        if first_tok_id in self.eos_token_ids:
+            new_ids = [first_tok_id][: sp.max_new_tokens]
             out = {
                 "token_ids": new_ids,
                 "text": self.tokenizer.decode(new_ids, skip_special_tokens=True),
@@ -806,7 +840,12 @@ class JetFlowEngine:
         # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
         # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
         # the anchor (= tree root), which enters the cache via the verify forward.
-        while len(new_ids) < sp.max_new_tokens:
+        eos_tensor = (
+            torch.tensor(sorted(self.eos_token_ids), dtype=committed.dtype, device=self.device)
+            if self.eos_token_ids else None
+        )
+
+        while generated_len < sp.max_new_tokens:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
@@ -910,7 +949,7 @@ class JetFlowEngine:
                         # covers committed + in-flight nodes (the fork's
                         # persisted_len + qlen pattern). Block tables stay the frozen
                         # prefill ones (values ignored for window positions).
-                        nb_lk, round_blocks = cache.reserve_logical_slots(B)
+                        nb_lk, _round_blocks = cache.reserve_logical_slots(B)
                         offs = round_bufs.node_offsets(B)
                         round_bufs.stage_slots(wlen, nb_lk, B)
                         node_blks = [nb_lk] * len(bts0)   # layer-shared ids, one row
@@ -955,7 +994,10 @@ class JetFlowEngine:
                                 logical_kv_bind=lk_bind)
                             logits, new_hidden = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs, N)
+                                qq_bias_b, node_blks, node_offs, N,
+                                static_block_tables=logical_kv,
+                                static_node_offs=logical_kv,
+                                static_cu=logical_kv)
                         else:
                             logits, new_hidden = stack(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
@@ -972,7 +1014,10 @@ class JetFlowEngine:
                                 logical_kv_bind=lk_bind)
                             logits = gv.replay(
                                 B, seq_step_b, cos, sin, bts, cu, slk,
-                                qq_bias_b, node_blks, node_offs, N)
+                                qq_bias_b, node_blks, node_offs, N,
+                                static_block_tables=logical_kv,
+                                static_node_offs=logical_kv,
+                                static_cu=logical_kv)
                         else:
                             logits = self.compiled_verify(
                                 seq_step_b, cos, sin, k_pools, v_pools, bts, cu, slk,
@@ -1015,14 +1060,24 @@ class JetFlowEngine:
                 # (gpu_tree_accept is greedy-only).
                 from ptd.tree._core.accept import gpu_tree_accept
                 greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
-                path_t, acc, corr_t = gpu_tree_accept(
-                    tree.token_ids, greedy, tree.parent_indices, tree.depth,
-                    max_depth=actual_tree_depth,
-                )
+                if logical_kv and getattr(self, "_use_cudagraph", False) \
+                        and N >= _GRAPH_ACCEPT_MIN_N \
+                        and _env_flag_enabled("PTD_GRAPH_ACCEPT", True):
+                    gta = self._get_graphed_tree_accept(
+                        N, actual_tree_depth, tree.depth.dtype)
+                    path_t, acc, corr_t = gta.replay(
+                        tree.token_ids, greedy, tree.parent_indices, tree.depth)
+                else:
+                    path_t, acc, corr_t = gpu_tree_accept(
+                        tree.token_ids, greedy, tree.parent_indices, tree.depth,
+                        max_depth=actual_tree_depth,
+                    )
             else:
                 accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
                 path_t = torch.tensor(accepted_path, device=self.device)
                 corr_t = torch.tensor(correction, device=self.device)
+            if _TIME_COMMIT:
+                torch.cuda.synchronize(); _ct0 = time.perf_counter()
             if logical_kv:
                 # L5 slot-commit (replaces the O(context) gather): the accepted nodes'
                 # KV stays at the slots the verify wrote; only the WINDOW MAP is
@@ -1030,20 +1085,11 @@ class JetFlowEngine:
                 # the overlapping write-back is safe; path_t[0]=0 maps wlen->wlen) down
                 # to the committed region, then advance the window. O(acc+1) work.
                 kept = round_bufs.slots[:, wlen + path_t]
-                round_bufs.slots[:, wlen:wlen + int(kept.shape[1])] = kept
-                # Free policy: a round's reservation is block-aligned, so block j of
-                # EVERY layer holds exactly nodes [16j, 16j+16) of THIS round — a block
-                # survives iff it holds an accepted node; pure-rejected (incl. pad)
-                # blocks recycle now. Dead slots inside kept blocks leak until the
-                # per-decode cache drops (~bounded by reserve_capacity's formula).
-                # path_t is already on host for the EOS/commit step below — one small
-                # DtoH, same data the round syncs anyway.
-                path_list = path_t.tolist()
-                kept_j = {p // self.block_size for p in path_list}
-                freed_idx = [j for j in range(len(round_blocks))
-                             if j not in kept_j]
-                cache.release_round_blocks(round_blocks, freed_idx)
-                wlen += len(path_list)
+                kept_len = int(kept.shape[1])
+                round_bufs.slots[:, wlen:wlen + kept_len] = kept
+                # No host path ids here: rejected logical blocks stay leased until the
+                # decode cache is dropped/reset. The reservation above bounds this leak.
+                wlen += kept_len
             else:
                 # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
                 # rejected branches' KV. path_t = [0(root), …acc nodes], tree-ordered;
@@ -1073,15 +1119,26 @@ class JetFlowEngine:
             committed_len += 1
             committed = committed_buf[:, :committed_len]
             rounds += 1
-            accept_lengths.append(committed_len - commit_start)   # acc + 1, matches reference accept-len
+            round_generated = committed_len - commit_start
+            accept_lengths.append(round_generated)   # acc + 1, matches reference accept-len
             tree_sizes.append(int(N))
-            for t in committed_buf[0, commit_start:committed_len].tolist():
-                new_ids.append(int(t))
-                if int(t) in self.eos_token_ids:
-                    break
-            if new_ids and new_ids[-1] in self.eos_token_ids:
+            generated_len += round_generated
+            committed_slice = committed_buf[0, commit_start:committed_len]
+            _eos_hit = eos_tensor is not None and bool(torch.isin(committed_slice, eos_tensor).any().item())
+            if _TIME_COMMIT:
+                torch.cuda.synchronize(); _COMMIT_MS[0] += (time.perf_counter() - _ct0) * 1e3
+            if _eos_hit:
                 break
-        new_ids = new_ids[: sp.max_new_tokens]
+        generated_len = min(generated_len, sp.max_new_tokens)
+        new_ids = [
+            int(t)
+            for t in committed_buf[0, prompt_len:prompt_len + generated_len].tolist()
+        ]
+        if self.eos_token_ids:
+            for idx, token in enumerate(new_ids):
+                if token in self.eos_token_ids:
+                    new_ids = new_ids[:idx + 1]
+                    break
         text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
         out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
         if return_stats:

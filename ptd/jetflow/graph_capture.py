@@ -100,19 +100,23 @@ class GraphedVerify:
                                     dtype=torch.float32, device=device)
         self.g_cu = torch.zeros((2,), dtype=torch.int32, device=device)
         self.g_seq_lens_k = torch.zeros((1,), dtype=torch.int32, device=device)
-        # Per-layer staged scatter maps + block tables (each layer has its OWN physical
-        # block ids, so these are per-layer — mirroring reserve_tree_slots' return).
-        self.g_node_blks = [torch.zeros((Bmax,), dtype=torch.long, device=device)
-                            for _ in range(self.nlayers)]
-        self.g_node_offs = [torch.zeros((Bmax,), dtype=torch.long, device=device)
-                            for _ in range(self.nlayers)]
-        self.g_block_tables = [torch.zeros((1, self.block_table_width),
-                                           dtype=torch.int32, device=device)
-                               for _ in range(self.nlayers)]
+        # Per-layer staged scatter maps + block tables, kept as STACKED buffers
+        # (leading dim = layer) so replay refreshes them in ONE copy each instead of a
+        # per-layer Python loop (~108 copy_ launches/round -> ~3). Per-layer views
+        # (g_*[i]) feed the captured stack. block_tables are genuinely per-layer (each
+        # layer's own physical blocks); node_blks/node_offs are layer-shared on the
+        # logical path, so replay broadcast-fills them.
+        self.g_node_blks = torch.zeros((self.nlayers, Bmax), dtype=torch.long, device=device)
+        self.g_node_offs = torch.zeros((self.nlayers, Bmax), dtype=torch.long, device=device)
+        self.g_block_tables = torch.zeros((self.nlayers, 1, self.block_table_width),
+                                          dtype=torch.int32, device=device)
 
         self.graphs = {}          # B -> torch.cuda.CUDAGraph
         self.outputs = {}         # B -> logits buffer or (logits, target_hidden) tuple
         self._pool = None         # shared graph memory pool (set on first capture)
+        self._block_tables_source_tag = None
+        self._node_offs_source_tag = None
+        self._cu_source_tag = None
         # (id(live k-pool), block_table_width) tag — the engine sets it so it can detect a
         # new prompt's pool/width and rebuild rather than replay graphs bound to a freed
         # pool's addresses. Initialized here so the attribute always exists.
@@ -133,12 +137,12 @@ class GraphedVerify:
             self.g_sin[:, :B],
             self.k_pools,
             self.v_pools,
-            [bt for bt in self.g_block_tables],
+            [self.g_block_tables[i] for i in range(self.nlayers)],
             self.g_cu,
             self.g_seq_lens_k,
             self.g_qq_bias[:B, :B],
-            [nb[:B] for nb in self.g_node_blks],
-            [no[:B] for no in self.g_node_offs],
+            [self.g_node_blks[i, :B] for i in range(self.nlayers)],
+            [self.g_node_offs[i, :B] for i in range(self.nlayers)],
             logical_kv_slots=lk[0] if lk is not None else None,
             logical_kv_starts=lk[1] if lk is not None else None,
             logical_kv_lens=lk[2] if lk is not None else None,
@@ -175,7 +179,8 @@ class GraphedVerify:
 
     @torch.inference_mode()
     def replay(self, B, input_ids, cos, sin, block_tables, cu, seq_lens_k,
-               qq_bias, node_blks, node_offs, N):
+               qq_bias, node_blks, node_offs, N, *, static_block_tables=False,
+               static_node_offs=False, static_cu=False):
         """Copy this round's inputs into the persistent buffers and replay graph[B].
 
         Arguments mirror the engine's per-round verify call (already padded to bucket B):
@@ -196,12 +201,32 @@ class GraphedVerify:
         self.g_cos[:, :B].copy_(cos)
         self.g_sin[:, :B].copy_(sin)
         self.g_qq_bias[:B, :B].copy_(qq_bias)
-        self.g_cu.copy_(cu)
+        cu_tag = id(cu) if static_cu else None
+        if (not static_cu) or self._cu_source_tag != cu_tag:
+            self.g_cu.copy_(cu)
+            self._cu_source_tag = cu_tag
         self.g_seq_lens_k.copy_(seq_lens_k)
-        for i in range(self.nlayers):
-            self.g_block_tables[i].copy_(block_tables[i])
-            self.g_node_blks[i][:B].copy_(node_blks[i])
-            self.g_node_offs[i][:B].copy_(node_offs[i])
+        # block_tables are per-layer: stack the per-round list into the fixed buffer in
+        # ONE launch (was nlayers separate copy_). node_blks/node_offs are layer-shared
+        # on the logical path ([x]*nlayers) -> broadcast-fill in one launch; fall back to
+        # the per-layer loop if a caller ever passes distinct rows (e.g. a gather path).
+        block_tables_tag = tuple(id(bt) for bt in block_tables) \
+            if static_block_tables else None
+        if (not static_block_tables) or self._block_tables_source_tag != block_tables_tag:
+            torch.stack(block_tables, 0, out=self.g_block_tables)
+            self._block_tables_source_tag = block_tables_tag
+        if all(nb is node_blks[0] for nb in node_blks) and \
+                all(no is node_offs[0] for no in node_offs):
+            self.g_node_blks[:, :B].copy_(node_blks[0])
+            node_offs_tag = id(node_offs[0]) if static_node_offs else None
+            if (not static_node_offs) or self._node_offs_source_tag != node_offs_tag:
+                self.g_node_offs[:, :B].copy_(node_offs[0])
+                self._node_offs_source_tag = node_offs_tag
+        else:
+            for i in range(self.nlayers):
+                self.g_node_blks[i, :B].copy_(node_blks[i])
+                self.g_node_offs[i, :B].copy_(node_offs[i])
+            self._node_offs_source_tag = None
         if B not in self.graphs:
             self._capture_bucket(B)
         self.graphs[B].replay()
@@ -210,3 +235,89 @@ class GraphedVerify:
             logits, target_hidden = out
             return logits[:, :N, :], target_hidden[:, :N, :]
         return out[:, :N, :]
+
+
+class GraphedTreeAccept:
+    """CUDA-graph replay wrapper for the device-side greedy accept walk.
+
+    The host sync for accepted length remains outside the graph; this only captures
+    the fixed-shape tensor walk that produces the path buffer and correction token.
+    """
+
+    def __init__(self, num_nodes, max_depth, device, score_dtype):
+        self.num_nodes = int(num_nodes)
+        self.max_depth = int(max_depth)
+        self.device = torch.device(device)
+        self.score_dtype = score_dtype
+        self.g_tree_tokens = torch.empty(self.num_nodes, dtype=torch.long, device=self.device)
+        self.g_greedy_targets = torch.empty(self.num_nodes, dtype=torch.long, device=self.device)
+        self.g_parent_indices = torch.empty(self.num_nodes, dtype=torch.long, device=self.device)
+        self.g_depths = torch.empty(self.num_nodes, dtype=score_dtype, device=self.device)
+        self.g_path_buf = torch.empty(self.max_depth + 1, dtype=torch.long, device=self.device)
+        self.g_accepted_depth = torch.empty((), dtype=score_dtype, device=self.device)
+        self.g_correction = torch.empty((), dtype=torch.long, device=self.device)
+        self.node_ids = torch.arange(self.num_nodes, device=self.device)
+        self.later_node = self.node_ids[None, :] > self.node_ids[:, None]
+        self.neg_ones = torch.empty(self.num_nodes, dtype=score_dtype, device=self.device).fill_(-1)
+        self.graph = None
+        self._pool = None
+
+    def _call(self):
+        safe_parents = self.g_parent_indices.clamp(min=0, max=self.num_nodes - 1)
+        valid_parent = (self.g_parent_indices >= 0) & (self.g_parent_indices < self.num_nodes)
+        same_parent = self.g_parent_indices[:, None] == self.g_parent_indices[None, :]
+        same_token = self.g_tree_tokens[:, None] == self.g_tree_tokens[None, :]
+        overwritten = (same_parent & same_token & self.later_node).any(dim=1)
+
+        match = (
+            valid_parent
+            & ~overwritten
+            & (self.g_tree_tokens == self.g_greedy_targets[safe_parents])
+        ) | (self.node_ids == 0)
+
+        prefix_match = match.clone()
+        jump = safe_parents.clone()
+        for _ in range(max(1, self.max_depth.bit_length())):
+            prefix_match = prefix_match & prefix_match[jump]
+            jump = jump[jump]
+
+        score = torch.where(prefix_match, self.g_depths, self.neg_ones)
+        best_node = torch.argmax(score)
+        best_idx = best_node.view(1)
+        accepted_depth = torch.gather(self.g_depths, 0, best_idx).squeeze(0)
+        correction = torch.gather(self.g_greedy_targets, 0, best_idx).squeeze(0)
+
+        current = best_idx
+        for depth in range(self.max_depth, -1, -1):
+            self.g_path_buf[depth:depth + 1].copy_(current)
+            current = torch.gather(safe_parents, 0, current)
+        self.g_accepted_depth.copy_(accepted_depth)
+        self.g_correction.copy_(correction)
+
+    @torch.inference_mode()
+    def _capture(self):
+        self._call()
+        self._call()
+        torch.cuda.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, pool=self._pool):
+            self._call()
+        if self._pool is None:
+            self._pool = graph.pool()
+        self.graph = graph
+        torch.cuda.synchronize()
+
+    @torch.inference_mode()
+    def replay(self, tree_tokens, greedy_targets, parent_indices, depths):
+        self.g_tree_tokens.copy_(tree_tokens)
+        greedy_targets = greedy_targets.squeeze(0) if greedy_targets.dim() == 2 else greedy_targets
+        self.g_greedy_targets.copy_(greedy_targets)
+        self.g_parent_indices.copy_(parent_indices)
+        self.g_depths.copy_(depths)
+        if self.graph is None:
+            self._capture()
+        self.graph.replay()
+        accepted_len = int(self.g_accepted_depth.item())
+        valid_start = self.max_depth - accepted_len
+        accepted_path = self.g_path_buf[valid_start:self.max_depth + 1].contiguous()
+        return accepted_path, accepted_len, self.g_correction
