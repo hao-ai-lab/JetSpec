@@ -9,12 +9,9 @@
   <a href="https://jet-flow.github.io/jetflow">Project Webpage</a>
 </p>
 
-JetFlow is a lightweight implementation of **parallel tree drafting** for fast LLM speculative decoding inference. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
+JetFlow is an implementation of **parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length on coding and math tasks. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
 This repository contains both a torch-based reference implementation and an optimized JetFlow inference engine with paged KV, custom Triton tree attention, CUDA graphs, and benchmark scripts.
-
-Project webpage: [https://jet-flow.github.io/jetflow](https://jet-flow.github.io/jetflow)
-
 
 
 ## Contents
@@ -39,7 +36,7 @@ Speculative decoding is fast when the target accepts many draft tokens and draft
 
 JetFlow keeps the one-pass drafting efficiency and restores causal branch conditioning. The draft head reads fused hidden states from the frozen target and emits per-depth logits in a single parallel pass. Tree construction spends a draft budget over high-probability branches, and the target verifies every node in one batched/tree-masked forward.
 
-On Qwen3-8B evaluations, JetFlow reaches up to **9.64x** end-to-end speedup on MATH-500, with strong gains across reasoning, code, and chat workloads: **7.82x** on GSM8K, **8.78x** on AIME25, **7.12x** on HumanEval, **6.73x** on MBPP, **7.67x** on LCB, and **4.58x** on MT-Bench at budget 256.
+On Qwen3-8B evaluations, JetFlow reaches up to **9.64x** end-to-end speedup on MATH-500, with strong gains across reasoning, code, and chat workloads: **7.82x** on GSM8K, **8.78x** on AIME25, **7.12x** on HumanEval, **6.73x** on MBPP, **7.67x** on LCB, and **4.58x** on MT-Bench.
 
 
 <p align="center">
@@ -70,15 +67,14 @@ If you use `uv`, the project includes extra build dependency metadata for `flash
 |---|---|
 | Target model | `Qwen/Qwen3-8B` |
 | Hugging Face org | [`JetFlow`](https://huggingface.co/JetFlow) |
-| Draft head | `JetFlow/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma` |
+| Draft head | `JetFlow/<draft-head-repo>` or a local draft-head checkpoint |
 
 Most benchmark and diagnostic scripts read the draft head from `JETFLOW_DRAFT_HEAD`:
 
 ```bash
-export JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma
+export JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo>
 ```
 
-You can also pass `--draft-head` directly to scripts that expose the flag. If you see `set --draft-head or JETFLOW_DRAFT_HEAD`, the environment variable is missing.
 
 ## Repo Overview
 
@@ -138,7 +134,7 @@ engine = JetFlowEngine(
     "Qwen/Qwen3-8B",
     attn_backend="triton_paged_tree_compiled",
 )
-head = load_draft_head("JetFlow/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma")
+head = load_draft_head("JetFlow/<draft-head-repo>")
 drafter = DraftHeadTreeDrafter(
     head,
     target=engine.model,
@@ -158,13 +154,13 @@ print(out["text"])
 print("tokens per forward:", out["tpf"])
 ```
 
-### Benchmarks
+### Example Benchmarking Script
 
 HF reference benchmark:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
-JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo> \
 python bench/benchmark.py \
   --model Qwen/Qwen3-8B \
   --attn-implementation flash_attention_2 \
@@ -184,7 +180,7 @@ Optimized JetFlow wall-clock benchmark:
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
 JETFLOW_FUSE_GEMMS=1 \
 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
-JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo> \
 python bench/tps_walltime.py \
   --prompt-set gsm8k \
   --samples 64 \
@@ -193,32 +189,34 @@ python bench/tps_walltime.py \
   --session
 ```
 
-[`vLLM fork for JetFlow support`](https://github.com/snyhlxde1/vllm-jetflow) reference test:
+[`vLLM fork for JetFlow support`](https://github.com/snyhlxde1/vllm-jetflow) MATH-500 reference test:
 
 ```bash
+TP_SIZE=4
+BATCH_SIZE=1
 PYTHONPATH="/root/workspace/vllm-parallel-drafting:/root/workspace/optimus_jit_local/src:${PYTHONPATH:-}" \
 GPU_MEMORY_UTILIZATION=0.90 \
-bash examples/offline_inference/dflash_profiling_humaneval_causal_tree_unit_kvlayout_dgx_pod.sh \
+bash examples/offline_inference/dflash_profiling_math500_causal_tree_budget_bsz_sweep_dgx_pod.sh \
   --model /mnt/lanxiangh/models/Qwen3-30B-A3B \
   --draft-model /mnt/lanxiangh/checkpoints/specforge/ptd-qwen3-30b-a3b-fkl-epoch6-3e-4-no-gamma/ \
-  --profiler-dir /root/data/vllm-ptd/ptd_qwen3_30b_a3b_bsz1_budget127_tp4_ep_cg_default_samples16_0615 \
+  --profiler-dir /root/data/vllm-ptd/ptd_qwen3_30b_a3b_math500_bsz1_budget127_tp4_ep_cg_default_samples16_0615 \
   --tree-attn-kernel triton \
-  --tp-size 4 \
-  --batch-size 1 \
-  --max-num-seqs 1 \
-  --max-tree-budget 127 \
-  --max-samples 16 \
-  --max-tokens 512 \
-  --max-model-len 3072 \
-  --max-num-batched-tokens 16384 \
-  --num-warmup-runs 1 \
-  --cudagraph-mode default \
   --enable-expert-parallel \
   --disable-cascade-attn \
-  --profiler none
+  --cudagraph-mode default \
+  --tp-size "${TP_SIZE}" \
+  --batch-sizes "${BATCH_SIZE}" \
+  --max-num-seqs "${BATCH_SIZE}" \
+  --tree-budgets 127 \
+  --max-tokens 512 \
+  --max-samples 16 \
+  --num-warmup-runs 1 \
+  --profiler none \
+  --max-model-len 3072 \
+  --max-num-batched-tokens 16384
 ```
 
-The [`vLLM fork`](https://github.com/snyhlxde1/vllm-jetflow) supports both HumanEval testing through the command above and MATH-500 testing through `examples/offline_inference/dflash_profiling_math500_causal_tree_budget_bsz_sweep_dgx_pod.sh`.
+The [`vLLM fork`](https://github.com/snyhlxde1/vllm-jetflow) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/dflash_profiling_humaneval_causal_tree_unit_kvlayout_dgx_pod.sh`.
 
 
 
@@ -226,14 +224,13 @@ The [`vLLM fork`](https://github.com/snyhlxde1/vllm-jetflow) supports both Human
 
 ### Engine Results
 
-The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Headline wall-clock measurements on B200, bf16, budget 127, width 7, trained epoch6 distill head, 2048-token generation window, compared against the [`snyhlxde1/vllm-jetflow`](https://github.com/snyhlxde1/vllm-jetflow) fork:
+The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with the [`vLLM fork for JetFlow support`](https://github.com/snyhlxde1/vllm-jetflow).
 
-
-| dataset | JetFlow engine | vLLM JetFlow fork | ratio | accept_len |
-|---|---:|---:|---:|---:|
-| HumanEval (164) | **738.6 tok/s** | 718.9 tok/s | **1.03x** | 7.25 |
-| MATH-500 (100) | **910.3 tok/s** | 930.3 tok/s | 0.98x | 9.60 |
-| GSM8K (64) | **791.0 tok/s** | 820.7 tok/s | 0.96x | 7.72 |
+| dataset | JetFlow engine TPS | accept_len |
+|---|---:|---:|
+| HumanEval (164) | **738.6 tok/s** | 7.25 |
+| MATH-500 (100) | **910.3 tok/s** | 9.60 |
+| GSM8K (64) | **791.0 tok/s** | 7.72 |
 
 Production configuration:
 
@@ -243,9 +240,6 @@ attn_backend="triton_paged_tree_cudagraph_nogather"
 session=True
 ```
 
-The public JetFlow project page reports paper-level speedups up to **9.64x** on MATH-500 for Qwen3-8B greedy decoding at budget 256, with accepted length `tau=10.76`. This repo reports measured implementation numbers and includes scripts to reproduce the local B200 runs.
-
-Losslessness note: fp32 paths are token-identical to an SDPA oracle. In bf16, tree speculative decoding is lossless-by-construction because committed tokens come from the target verifier, but exact token equality against an AR KV-cache baseline can differ at borderline argmaxes due to kernel reduction order.
 
 ### Tree Algorithms
 
@@ -260,30 +254,7 @@ Common algorithms exposed by `bench/benchmark.py`:
 | `class_histogram` | class-conditioned profile-guided tree shaping |
 | `depth_rank_histogram` | offline profile table over `(depth, rank)` acceptance |
 
-Same-day production picks:
 
-| workload | pick | tok/s | accept_len |
-|---|---|---:|---:|
-| GSM8K | `top2gap_fanout`, budget 63 | **827.0** | 7.43 |
-| MATH-500 | `top2gap_fanout`, budget 63 | **931.5** | 9.38 |
-| HumanEval | `crossproduct`, budget 127 | **740.5** | 7.25 |
-
-### Test Yourself
-
-Fast local validation:
-
-```bash
-PYTHONPATH=. pytest -q
-```
-
-Full real-model gates require CUDA and an explicit model:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 \
-JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
-JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
-PYTHONPATH=. pytest tests/
-```
 
 ## Citation
 
