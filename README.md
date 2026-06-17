@@ -66,7 +66,7 @@ If you use `uv`, the project includes extra build dependency metadata for `flash
 |---|---|
 | Target model | `Qwen/Qwen3-8B` |
 | Hugging Face org | [`JetFlow`](https://huggingface.co/JetFlow) |
-| Draft head | `JetFlow/<draft-head-repo>` or a local draft-head checkpoint |
+| Draft head | `JetFlow/jetflow-qwen3-8b-fkl-epoch6-3e-4-no-gamma`(https://huggingface.co/JetFlow/jetflow-qwen3-8b-fkl-epoch6-3e-4-no-gamma) |
 
 Most benchmark and diagnostic scripts read the draft head from `JETFLOW_DRAFT_HEAD`:
 
@@ -92,14 +92,11 @@ jetflow/
   draft_head_adapter.py # trained draft-head adapter
 ```
 
-The dependency direction is strict: engines consume `jetflow.tree`, while tree algorithms never import either execution backend. Import tree behavior through the public `jetflow.tree` API rather than `jetflow.tree._core`.
 
 
 ## Usage
 
 ### HF References
-
-The reference core is intentionally small: HuggingFace model, `DynamicCache`, explicit positions, and tree verification.
 
 ```python
 from jetflow import LLM, SamplingParams
