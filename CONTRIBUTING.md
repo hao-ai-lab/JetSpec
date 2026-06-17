@@ -1,4 +1,4 @@
-# Contributing to jetflow
+# Contributing to JetFlow
 
 Thanks for your interest in contributing. This guide covers local setup, how to
 run the tests, and the PR process.
@@ -8,39 +8,54 @@ run the tests, and the PR process.
 Single clone, single install — no submodules.
 
 ```bash
-git clone https://github.com/snyhlxde1/jetflow
-cd jetflow
+git clone https://github.com/snyhlxde1/parallel-tree-decoding
+cd parallel-tree-decoding
 pip install -e '.[test]'      # base deps + pytest (CPU test subset)
 ```
 
 Optional extras (install only what you need):
 
-- `pip install -e '.[kernel]'` — `triton`, for the `JetFlow` tree-attention
+- `pip install -e '.[kernel]'` — `triton`, for the JetFlow tree-attention
   kernel (GPU only; imported lazily, so the rest of the package works without it).
-- `pip install -e '.[bench]'` — `datasets`, for the benchmark scripts under `bench/`.
+- `pip install -e '.[bench]'` — `datasets`, `psutil`, `ninja`, and `packaging`,
+  for benchmark scripts and profiling helpers under `bench/`.
+- `pip install -e '.[flash-attn]'` — `flash-attn`, for FA2 reference benchmarks.
 
-You can combine them: `pip install -e '.[test,kernel,bench]'`.
+You can combine them: `pip install -e '.[test,kernel,bench,flash-attn]'`.
+The project also declares `uv` build dependency metadata for `flash-attn`
+(`psutil`, `packaging`, `ninja`).
 
 ## Repository layout
 
-The code is organized as two decode engines plus an engine-agnostic tree-method
-layer, with a strict one-way dependency (engine → tree; the tree never imports an
-engine):
+The code is organized as a HuggingFace reference core, an optimized inference
+engine, and an engine-agnostic tree layer, with a strict one-way dependency
+(engine -> tree; the tree never imports an engine):
 
-- **`jetflow/core/`** — the SDPA reference engine. HF `transformers` + SDPA; the
-  single-clone correctness oracle. Its plain offline Qwen3-8B decode is the 1×
-  denominator that speedups are measured against.
-- **`jetflow/inference_engine/`** — the high-throughput engine: paged KV cache, a triton
-  tree-attention kernel, and a `torch.compile` + CUDA-graph verify path.
+- **`jetflow/core/`** — the lightweight HF reference core: `LLM`, `ModelRunner`,
+  sampling, and the tree-attention hook used by reference benchmarks.
+- **`jetflow/inference_engine/`** — the optimized serving engine: paged KV cache,
+  scheduler, Triton tree attention, and CUDA graph paths.
 - **`jetflow/tree/`** — the engine-agnostic tree-construction *method*. Turns
   per-depth draft logits into a verification tree and selects the accepted path.
   Pure torch/numpy; imports nothing from an engine. **Import it only through the
   public API `jetflow.tree` — never `jetflow.tree._core`** (the `_core` package is
   internal and may change without notice).
+- **`jetflow/models/`** — target/draft-head model loading and model utilities.
+- **`jetflow/draft.py`** and **`jetflow/draft_head_adapter.py`** — simple test
+  drafters and trained draft-head adapters.
+
+Top-level scripts are grouped by purpose:
+
+- **`bench/reference/`** — HF/reference benchmarks and raw HF FA2 sanity checks.
+- **`bench/engine/`** — optimized JetFlow engine throughput scripts.
+- **`bench/profiling/`** — profiling and profile-table builders.
+- **`bench/debug/`** — diagnostics and probes.
+- **`examples/basic/`**, **`examples/tree/`**, **`examples/engine/`** — runnable
+  examples grouped by scope.
 
 ## Running tests
 
-### CPU subset (no GPU, no triton)
+### CPU Subset
 
 These are the tests CI runs. They build a tiny fp32 Qwen3 locally (no network)
 or operate on plain tensors, so they pass on any CPU-only box:
@@ -56,19 +71,36 @@ pytest -q \
   tests/inference_engine/test_jetflow_tree_batch.py
 ```
 
-### Full GPU gate
+### Full Suite
 
-The remaining tests load a real model (offline decode, engine parity, draft-head
-and compiled-verify losslessness) and need a CUDA GPU. Point them at the target
-model via `JETFLOW_TEST_MODEL` and run the whole suite:
+Run everything locally with:
 
 ```bash
-JETFLOW_TEST_MODEL=Qwen/Qwen3-8B pytest tests/
+PYTHONPATH=. pytest tests/
 ```
 
-The losslessness tests are exact in fp32; in bf16 a block/compiled verify can flip
-a borderline argmax after tens of exact tokens (a known bf16 caveat), so those
-gates are run on the GPU box, not in CPU CI.
+Most tests use tiny local models. Real-model gates are opt-in and require CUDA
+plus explicit model/checkpoint environment variables:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
+JETFLOW_DRAFT_HEAD=/path/to/draft-head-or-hf-repo \
+PYTHONPATH=. pytest tests/
+```
+
+The fp32 gates are token-identical. In bf16, a block/tree verify can flip a
+borderline argmax after many exact tokens due to kernel reduction order; GPU
+gates account for that caveat.
+
+### Test Buckets
+
+- `tests/core/` — HF core generation, draft-head adapter, and KV tree verify.
+- `tests/tree/` — tree algorithms, registry, top-k construction, and acceptance.
+- `tests/inference_engine/` — paged KV, batching, kernels, CUDA graph helpers,
+  and JetFlow engine parity against the HF core.
+- `tests/bench/` — benchmark/profile helper unit tests.
+- `tests/integration/` — real-model or end-to-end parity checks.
 
 ## Pull request process
 
