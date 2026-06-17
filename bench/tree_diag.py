@@ -13,10 +13,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
 
 
 GSM8K_PROMPT = (
@@ -260,7 +260,7 @@ def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[st
 
 
 def build_drafter(args, eng: JetFlowEngine):
-    head = load_draft_head(os.environ["PTD_DRAFT_HEAD"])
+    head = load_draft_head(os.environ["JETFLOW_DRAFT_HEAD"])
     tli, bs = head.target_layer_ids, head.block_size
     drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
                                    target_layer_ids=tli, draft_shift=False)

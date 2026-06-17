@@ -8,10 +8,10 @@ import time
 import torch
 from torch.profiler import profile, ProfilerActivity
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -23,7 +23,7 @@ def dev_us(k):
 
 def main():
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph_nogather")
-    head_id = os.environ["PTD_DRAFT_HEAD"]
+    head_id = os.environ["JETFLOW_DRAFT_HEAD"]
     eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                         attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)

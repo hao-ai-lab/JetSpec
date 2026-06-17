@@ -13,10 +13,10 @@ optimization — the reference engine gets exactness that way). So we compare
 against a *recompute* greedy and assert high token agreement, not byte-identity.
 
 Needs CUDA + a real Qwen3-8B target + a trained head; run on b200 (GPU 0-3, the
-PTD lane):
+JetFlow lane):
 
-    CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
-      PTD_DRAFT_HEAD="<insert-trained-dflash-head-checkpoint-path>" \
+    CUDA_VISIBLE_DEVICES=0 JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
+      JETFLOW_DRAFT_HEAD="<insert-trained-dflash-head-checkpoint-path>" \
       pytest tests/test_draft_head_lossless.py -x -s
 """
 import os
@@ -25,12 +25,12 @@ import pytest
 import torch
 from transformers import DynamicCache
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadDrafter, DraftHeadTreeDrafter
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadDrafter, DraftHeadTreeDrafter
 
-MODEL = os.environ.get("PTD_TEST_MODEL", "Qwen/Qwen3-8B")
-DRAFT_HEAD = os.environ.get("PTD_DRAFT_HEAD")
+MODEL = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
+DRAFT_HEAD = os.environ.get("JETFLOW_DRAFT_HEAD")
 MAX_NEW = 128
 # Exact-prefix floor: a working engine matches recompute-greedy for many tokens,
 # then (in bf16) a single SDPA reduction-order flip cascades. A structural bug
@@ -40,7 +40,7 @@ EXACT_PREFIX_FLOOR = 16
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available() or not DRAFT_HEAD,
-    reason="needs CUDA + a real Qwen3-8B target + PTD_DRAFT_HEAD checkpoint",
+    reason="needs CUDA + a real Qwen3-8B target + JETFLOW_DRAFT_HEAD checkpoint",
 )
 
 PROMPT = "What is 127 times 384? Reason step by step, then give the final number."

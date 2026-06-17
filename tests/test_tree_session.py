@@ -2,9 +2,9 @@ import pytest
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.engine import SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.jetflow.engine import JetFlowEngine
+from jetflow.core import SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.inference_engine.engine import JetFlowEngine
 
 
 class _StubTokenizer:

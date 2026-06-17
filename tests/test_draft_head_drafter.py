@@ -5,8 +5,8 @@ from torch import nn
 from transformers import Qwen3Config
 
 from bench import reseed_probe
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
-from ptd.models.draft_head import DFlashDraftModel
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.models.draft_head import DFlashDraftModel
 
 
 class _TinyTarget(nn.Module):

@@ -15,7 +15,7 @@ tensors, `torch.equal` bitwise checks).
 import torch
 import pytest
 
-from ptd.jetflow.paged_kv_cache import (
+from jetflow.inference_engine.paged_kv_cache import (
     PagedKVCache,
     EvictionRequired,
     EvictionFailed,

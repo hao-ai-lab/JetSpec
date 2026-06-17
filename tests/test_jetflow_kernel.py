@@ -23,9 +23,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 if torch.cuda.is_available():
-    from ptd.jetflow.paged_tree_attn import paged_tree_attn
-from ptd.tree import build_ancestor_matrix
-from ptd.tree._core.base import DraftTree
+    from jetflow.inference_engine.paged_tree_attn import paged_tree_attn
+from jetflow.tree import build_ancestor_matrix
+from jetflow.tree._core.base import DraftTree
 
 DEVICE = "cuda"
 

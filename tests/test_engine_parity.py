@@ -1,6 +1,6 @@
 """Engine parity / regression guard: on aligned gsm8k samples (identical
 shuffle+formatting to the reference `causal_parallel_drafting/benchmark.py`),
-the ptd tree engine must reproduce the reference's acceptance behavior. This is
+the jetflow tree engine must reproduce the reference's acceptance behavior. This is
 the guard that catches drafting/verify regressions — e.g. an off-distribution
 prompt or a broken target_hidden update collapses accept_len from ~9 to ~3.
 
@@ -9,8 +9,8 @@ budget 255, sdpa, single-pass, gsm8k shuffle seed=0): accept_len 9.48,
 per-position d0/d1/d2/d3 = 1.00/0.96/0.92/0.84. Our engine matches within a few
 percent (the residual is the bf16 recompute-vs-KV-cache tail divergence).
 
-    CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
-      PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    CUDA_VISIBLE_DEVICES=0 JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
+      JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       pytest tests/test_engine_parity.py -x -s
 """
@@ -19,12 +19,12 @@ import os
 import pytest
 import torch
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
 
-MODEL = os.environ.get("PTD_TEST_MODEL", "Qwen/Qwen3-8B")
-DRAFT_HEAD = os.environ.get("PTD_DRAFT_HEAD")
+MODEL = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
+DRAFT_HEAD = os.environ.get("JETFLOW_DRAFT_HEAD")
 N_SAMPLES, WIDTH, BUDGET, MAX_NEW = 3, 7, 255, 192
 # Regression floor: a healthy engine on this config gets ~9; raw-prompt or broken
 # target_hidden drops it to ~3. Floor at 6 catches that class without flaking on
@@ -33,7 +33,7 @@ ACCEPT_LEN_FLOOR = 6.0
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available() or not DRAFT_HEAD,
-    reason="needs CUDA + Qwen3-8B target + PTD_DRAFT_HEAD checkpoint",
+    reason="needs CUDA + Qwen3-8B target + JETFLOW_DRAFT_HEAD checkpoint",
 )
 
 

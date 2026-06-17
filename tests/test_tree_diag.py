@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from ptd.draft import RandomTreeDrafter
+from jetflow.draft import RandomTreeDrafter
 from tests.test_jetflow_tree import PROMPT, SP, _tiny_model, _tiny_jetflow
 
 

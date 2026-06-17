@@ -6,18 +6,18 @@ build path produces a valid tree the verifier accepts correctly.
 
 Needs CUDA + Qwen3-8B; run on b200:
 
-    PTD_TEST_MODEL=Qwen/Qwen3-8B pytest tests/test_tree_algos_lossless.py -x
+    JETFLOW_TEST_MODEL=Qwen/Qwen3-8B pytest tests/test_tree_algos_lossless.py -x
 """
 import os
 
 import pytest
 import torch
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.draft import RandomTreeDrafter
-from ptd.tree import list_algorithms
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.draft import RandomTreeDrafter
+from jetflow.tree import list_algorithms
 
-MODEL = os.environ.get("PTD_TEST_MODEL", "Qwen/Qwen3-8B")
+MODEL = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="needs CUDA + a real Qwen3-8B checkpoint"
@@ -42,7 +42,8 @@ PROMPT = "Solve: what is 17 times 23? Answer:"
 def test_active_kwargs_cover_every_registered_algo():
     """The test config must be exhaustive — a newly-registered algorithm with
     no active-knob entry should fail here rather than go silently untested."""
-    assert set(list_algorithms()) == set(ACTIVE_KWARGS), (
+    public_algos = {name for name in list_algorithms() if not name.startswith("_")}
+    assert public_algos == set(ACTIVE_KWARGS), (
         f"registry {sorted(list_algorithms())} != "
         f"test config {sorted(ACTIVE_KWARGS)}"
     )

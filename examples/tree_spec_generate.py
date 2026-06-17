@@ -11,15 +11,15 @@ Usage:
     python examples/tree_spec_generate.py [model] [draft_head]
 
 Needs a CUDA GPU and a trained draft head. Defaults to Qwen3-8B with the
-published head `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`.
+published head `Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma`.
 """
 import sys
 
-from ptd import load_draft_head, DraftHeadTreeDrafter
-from ptd.jetflow import JetFlowEngine, SamplingParams
+from jetflow import load_draft_head, DraftHeadTreeDrafter
+from jetflow.inference_engine import JetFlowEngine, SamplingParams
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-8B"
-DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma"
+DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma"
 
 
 def main():

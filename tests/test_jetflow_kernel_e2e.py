@@ -19,10 +19,10 @@ pytestmark = pytest.mark.skipif(
 
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.engine.llm import SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.jetflow.engine import JetFlowEngine
+from jetflow.core.llm import SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetflow.inference_engine.engine import JetFlowEngine
 
 DEVICE = "cuda"
 
@@ -61,10 +61,10 @@ def _tiny_jetflow(model, attn_backend: str, block_size: int = 16) -> JetFlowEngi
     eng.eos_token_ids = set()            # no EOS -> deterministic length
     eng.attn_backend = attn_backend
     if attn_backend == "triton_paged_tree":
-        from ptd.jetflow.paged_attn_backend import register_ptd_paged_tree
+        from jetflow.inference_engine.paged_attn_backend import register_jetflow_paged_tree
 
-        register_ptd_paged_tree()
-        model.config._attn_implementation = "ptd_paged_tree"
+        register_jetflow_paged_tree()
+        model.config._attn_implementation = "jetflow_paged_tree"
     else:
         model.config._attn_implementation = "sdpa"
     return eng

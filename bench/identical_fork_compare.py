@@ -20,7 +20,7 @@ Matched conditions (fork -> here):
   tree_draft            accum_logp  +              algo="crossproduct"  (both = cumulative-logprob
   tree_construction     breadth_first +              breadth-biased heap, per-depth top-k width,
   max_draft_passes      0                            budget-capped: byte-for-byte the same heap loop)
-  head_type             causal                     epoch6 causal distill head (PTD_DRAFT_HEAD)
+  head_type             causal                     epoch6 causal distill head (JETFLOW_DRAFT_HEAD)
   max_num_seqs / bs     1 / 1                      single-stream
   samples               4                          --samples (default 4)
   output tokens/sample  ~208                       --max-tokens (default 210)
@@ -30,7 +30,7 @@ tree-attn vs the fork's FLASH_ATTN flash-varlen. That is the comparison SUBJECT,
 a condition to match.
 
     JETFLOW_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
-    PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
     python bench/identical_fork_compare.py --samples 4 --max-tokens 210
 """
 import argparse
@@ -40,10 +40,10 @@ import statistics
 import torch
 from torch.cuda import Event
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
 
 # Fork-exact gsm8k prompt format (dflash_profiling.py `load_dataset_prompt_bank`).
 GSM8K_FMT = ("{question}\n"
@@ -91,7 +91,7 @@ def main():
     args = ap.parse_args()
 
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_compiled")
-    head_id = os.environ["PTD_DRAFT_HEAD"]
+    head_id = os.environ["JETFLOW_DRAFT_HEAD"]
     eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
@@ -140,7 +140,7 @@ def main():
         # verify no longer routes through it, so wrapping replay is what captures the
         # tree leg. Wrapping both is safe: AR -> stack, tree -> replay, disjoint.
         eng.runner.forward = prefill.wrap(eng.runner.forward)
-        from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
+        from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
         CompiledVerifyStack.__call__ = verify.wrap(CompiledVerifyStack.__call__)
         if backend == "triton_paged_tree_cudagraph":
             # The tree verify leg is `GraphedVerify.replay` (copy-in + `g.replay()`). The
@@ -151,7 +151,7 @@ def main():
             # `graphs` dict growing) — recording it to a separate `capture` timer instead.
             # The reported verify/round is then pure per-round cost (copy-in + launch),
             # matching how the compiled leg times only its per-round forward.
-            from ptd.jetflow.graph_capture import GraphedVerify
+            from jetflow.inference_engine.graph_capture import GraphedVerify
             _orig_replay = GraphedVerify.replay
 
             def _timed_replay(self, *a, **k):

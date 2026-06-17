@@ -11,7 +11,7 @@ want to see). The total is the real (un-instrumented-inner) generate_tree wall.
 
     JETFLOW_BACKEND=triton_paged_tree_cudagraph \
       CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
-      PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+      JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       python bench/round_profile.py --samples 3 --budget 255
 """
 import argparse
@@ -20,11 +20,11 @@ import time
 
 import torch
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
-import ptd.jetflow.engine as eng_mod
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
+import jetflow.inference_engine.engine as eng_mod
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -81,7 +81,7 @@ def main():
     args = ap.parse_args()
 
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
-    head_id = os.environ["PTD_DRAFT_HEAD"]
+    head_id = os.environ["JETFLOW_DRAFT_HEAD"]
     eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
@@ -115,29 +115,29 @@ def main():
     drafter.propose_logits = p_draft.wrap(drafter.propose_logits)
     patched.append("drafter.propose_logits")
 
-    from ptd.jetflow.graph_capture import GraphedVerify
-    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
+    from jetflow.inference_engine.graph_capture import GraphedVerify
+    from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
     if _try_patch_class(p_verify, GraphedVerify, "replay"):
         patched.append("GraphedVerify.replay")
     CompiledVerifyStack.__call__ = p_verify.wrap(CompiledVerifyStack.__call__)
     patched.append("CompiledVerifyStack.__call__")
 
-    # tree_accept / ancestor build: generate_tree does `from ptd.tree import ...`
-    # INSIDE the function body each call, so patch the ptd.tree namespace (the
+    # tree_accept / ancestor build: generate_tree does `from jetflow.tree import ...`
+    # INSIDE the function body each call, so patch the jetflow.tree namespace (the
     # old eng_mod patch never fired — engine has no module-level tree_accept).
-    import ptd.tree as ptree
+    import jetflow.tree as ptree
     if _try_patch_class(p_accept, ptree, "tree_accept"):
-        patched.append("ptd.tree.tree_accept")
+        patched.append("jetflow.tree.tree_accept")
     # greedy path uses the L2 GPU accept (engine.py:797 imports it per round)
-    import ptd.tree._core.accept as pacc
+    import jetflow.tree._core.accept as pacc
     if _try_patch_class(p_accept, pacc, "gpu_tree_accept"):
         patched.append("gpu_tree_accept")
     p_anc = Phase("build_ancestor_matrix")
     if _try_patch_class(p_anc, ptree, "build_ancestor_matrix"):
-        patched.append("ptd.tree.build_ancestor_matrix")
+        patched.append("jetflow.tree.build_ancestor_matrix")
     # staging (L3 round buffers: qq_bias fill + pads + cu/slk)
     p_stage = Phase("stage_tree_inputs")
-    from ptd.jetflow.engine import _LogicalRoundBuffers
+    from jetflow.inference_engine.engine import _LogicalRoundBuffers
     if _try_patch_class(p_stage, _LogicalRoundBuffers, "stage_tree_inputs"):
         patched.append("_LogicalRoundBuffers.stage_tree_inputs")
 
@@ -146,7 +146,7 @@ def main():
     # gather-backend name and shows 0 calls on nogather).
     p_release = Phase("release_round_blocks")
     try:
-        from ptd.jetflow.paged_kv_cache import PagedKVCache
+        from jetflow.inference_engine.paged_kv_cache import PagedKVCache
         if _try_patch_class(p_reserve, PagedKVCache, "reserve_tree_slots"):
             patched.append("PagedKVCache.reserve_tree_slots")
         if _try_patch_class(p_reserve, PagedKVCache, "reserve_logical_slots"):
@@ -162,10 +162,10 @@ def main():
     # internally; the old fanout_cap_builder patch caught 0 calls — crossproduct's
     # build does not route through it on this path).
     try:
-        from ptd.tree.baselines.crossproduct import CrossProduct
+        from jetflow.tree.baselines.crossproduct import CrossProduct
         if _try_patch_class(p_build, CrossProduct, "build"):
             patched.append("CrossProduct.build")
-        import ptd.tree._core.fanout_cap_builder as fcb
+        import jetflow.tree._core.fanout_cap_builder as fcb
         if _try_patch_class(p_build, fcb, "build_with_per_depth_cap"):
             patched.append("build_with_per_depth_cap")
     except Exception as e:
@@ -204,7 +204,7 @@ def main():
     print(f"{'OTHER (build*/assemble/commit/EOS host)':<28}{other/rounds:>10.2f}"
           f"{100*other/total_ms:>8.1f}%")
     if eng_mod._COMMIT_MS[0]:
-        print(f"  [PTD_TIME_COMMIT] commit-proper (logical-commit + EOS): "
+        print(f"  [JETFLOW_TIME_COMMIT] commit-proper (logical-commit + EOS): "
               f"{eng_mod._COMMIT_MS[0]/rounds:.2f}ms/round  "
               f"(the rest of OTHER = bs=1 bubbles + syncs + orchestration)")
     print("\n(note: instrumented per-phase sync inflates total vs the un-instrumented "

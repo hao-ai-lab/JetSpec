@@ -1,10 +1,10 @@
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.jetflow.engine import JetFlowEngine
+from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.inference_engine.engine import JetFlowEngine
 
 
 class _StubTokenizer:
@@ -62,7 +62,6 @@ def _run_ref(llm, drafter, *, seed: int, prompt=PROMPT, sp=SP, tree_block_size=4
         block_size=tree_block_size,
         tree_width=2,
         budget=15,
-        kv_cache_verify=True,
         sampling_params=sp,
         return_stats=True,
     )
@@ -126,7 +125,6 @@ def _run_long_echo_ref(llm, model, *, seed: int = 1):
         block_size=4,
         tree_width=1,
         budget=4,
-        kv_cache_verify=True,
         sampling_params=SamplingParams(0.0, 80),
         return_stats=True,
     )

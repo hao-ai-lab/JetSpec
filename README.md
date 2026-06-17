@@ -1,101 +1,261 @@
-# parallel-tree-decoding
+<p align="center">
+  <img src="assets/jetflow_icon.png" alt="JetFlow" width="180" align="center">
+</p>
 
-Lightweight **offline tree-speculative decoding** for LLM inference — a small drafter proposes multi-token, tree-structured drafts; the target verifies them in one batched forward, accepting the longest path consistent with its own logits. Single clone, single install, no submodules.
+<div align="center"><h1>JetFlow: Parallel Tree Drafting</h1></div>
 
-Built on top of HF `transformers` (the target is a standard `AutoModelForCausalLM`; the draft head subclasses the HF per-architecture model and shares the target's embedding + LM head). We supply the offline spec-decode loop, the tree construction + verify, and (later) a dedicated tree-attention kernel.
+<p align="center">
+  <a href="https://github.com/snyhlxde1/parallel-tree-decoding">Code</a> ·
+  <a href="https://huggingface.co/JetFlow">Hugging Face</a> ·
+  <a href="https://github.com/aaronzhfeng/jetflow-web">Project Page</a> ·
+  <a href="#citation">BibTeX</a>
+</p>
 
-## Status
+JetFlow is a lightweight implementation of **parallel tree-speculative decoding** for LLM inference. A causal-parallel draft head proposes a scored token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected from the target's own logits, so decoding is lossless by construction.
 
-**Shipped: paged, continuous-batched, lossless tree-speculative decode.** The `JetFlow` engine does paged-KV, continuous-batched, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. The trained draft head is published at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`. On Qwen3-8B (B200, bf16, single-stream) it reaches **96–103% of the reference vLLM-based fork's wall-clock TPS** with the default tree algorithm, and **meets or beats the fork on all three benchmarks with the per-workload pick** — 740.5 vs 718.9 tok/s on humaneval, 827.0 vs 820.7 on gsm8k, 931.5 vs 930.3 on math500 — from an engine core of ~3.8k lines vs vLLM's ~560k. See [Results](#results). The HF + SDPA `ptd/engine` substrate remains the single-clone correctness reference.
+This repository contains both a correctness-first HuggingFace reference core and an optimized JetFlow inference engine with paged KV, custom Triton tree attention, compiled verification, CUDA graphs, and benchmark scripts for Qwen3-8B.
 
-## Quickstart
+## Contents
+
+- [Introduction](#introduction)
+- [Installation](#installation)
+- [Model Weights](#model-weights)
+- [Usage](#usage)
+  - [HF Reference Core](#hf-reference-core)
+  - [JetFlow Inference Engine](#jetflow-inference-engine)
+  - [Benchmarks](#benchmarks)
+- [Architecture](#architecture)
+- [Results](#results)
+- [Tree Algorithms](#tree-algorithms)
+- [Testing](#testing)
+- [Citation](#citation)
+
+## Introduction
+
+Speculative decoding is fast when the target accepts many draft tokens and drafting remains cheap. Prior heads often trade off those two terms: autoregressive drafters condition on each path but pay a forward pass per depth, while block-diffusion drafters draft many positions in one pass but score branches independently.
+
+JetFlow keeps the one-pass drafting efficiency and restores causal branch conditioning. The draft head reads fused hidden states from the frozen target and emits per-depth logits in a single parallel pass. Tree construction spends a draft budget over high-probability branches, and the target verifies every node in one batched/tree-masked forward.
+
+The project has two execution paths:
+
+- `jetflow/core/`: a small HuggingFace-based reference core for correctness and benchmark alignment.
+- `jetflow/inference_engine/`: the optimized owned engine used for wall-clock throughput.
+
+## Installation
+
+Create an environment and install the package:
 
 ```bash
-git clone https://github.com/snyhlxde1/parallel-tree-decoding
-cd parallel-tree-decoding
-pip install -e '.[kernel]'                    # [kernel] pulls triton for the tree-spec path
-python examples/tree_spec_generate.py         # trained-head tree-spec on Qwen3-8B (needs a CUDA GPU)
-python examples/simple_generate.py            # offline greedy baseline
+cd /root/workspace/parallel-tree-decoding
+pip install -e '.[bench,kernel]'
 ```
 
-```python
-from ptd import load_draft_head, DraftHeadTreeDrafter
-from ptd.jetflow import JetFlowEngine, SamplingParams
+For FlashAttention 2 benchmarks, install the extra after build dependencies are available:
 
-# Compiled tree-attention verify path (the contribution); "triton_paged_tree" runs it un-compiled.
-engine = JetFlowEngine("Qwen/Qwen3-8B", attn_backend="triton_paged_tree_compiled")
-head = load_draft_head("Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma")
-drafter = DraftHeadTreeDrafter(head, target=engine.model, block_size=head.block_size,
-                               target_layer_ids=head.target_layer_ids)
-out = engine.generate_tree("The three primary colors are", drafter,
-                           block_size=head.block_size, tree_width=7, budget=63,
-                           target_layer_ids=head.target_layer_ids,
-                           sampling_params=SamplingParams(temperature=0.0, max_new_tokens=64))
-print(out["text"], "\ntokens-per-forward:", out["tpf"])
+```bash
+pip install -e '.[bench,flash-attn]'
 ```
 
-```python
-from ptd import LLM, SamplingParams           # the SDPA reference baseline
+If you use `uv`, the project includes extra build dependency metadata for `flash-attn`.
 
-llm = LLM("Qwen/Qwen3-8B")
-out = llm.generate("The three primary colors are", SamplingParams(temperature=0.0, max_new_tokens=64))
+## Model Weights
+
+| Component | Default |
+|---|---|
+| Target model | `Qwen/Qwen3-8B` |
+| Hugging Face org | [`JetFlow`](https://huggingface.co/JetFlow) |
+| Draft head | `Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma` |
+
+Most benchmark and diagnostic scripts read the draft head from `JETFLOW_DRAFT_HEAD`:
+
+```bash
+export JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma
+```
+
+You can also pass `--draft-head` directly to scripts that expose the flag. If you see `set --draft-head or JETFLOW_DRAFT_HEAD`, the environment variable is missing.
+
+## Usage
+
+### HF Reference Core
+
+The reference core is intentionally small: HuggingFace model, `DynamicCache`, explicit positions, and tree verification.
+
+```python
+from jetflow import LLM, SamplingParams
+
+llm = LLM("Qwen/Qwen3-8B", attn_implementation="flash_attention_2")
+out = llm.generate(
+    "The three primary colors are",
+    SamplingParams(temperature=0.0, max_new_tokens=64),
+)
 print(out["text"])
 ```
 
+Raw HF + FA2 single-token decode smoke test:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python bench/hf_fa2_kv_decode.py \
+  --model Qwen/Qwen3-8B \
+  --max-new 256 \
+  --warmup 1
+```
+
+### JetFlow Inference Engine
+
+The optimized engine uses paged KV, a Triton tree-attention backend, compiled verification, CUDA graphs, and optional session reuse.
+
+```python
+from jetflow import load_draft_head, DraftHeadTreeDrafter
+from jetflow.inference_engine import JetFlowEngine, SamplingParams
+
+engine = JetFlowEngine(
+    "Qwen/Qwen3-8B",
+    attn_backend="triton_paged_tree_compiled",
+)
+head = load_draft_head("Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma")
+drafter = DraftHeadTreeDrafter(
+    head,
+    target=engine.model,
+    block_size=head.block_size,
+    target_layer_ids=head.target_layer_ids,
+)
+out = engine.generate_tree(
+    "The three primary colors are",
+    drafter,
+    block_size=head.block_size,
+    tree_width=7,
+    budget=63,
+    target_layer_ids=head.target_layer_ids,
+    sampling_params=SamplingParams(temperature=0.0, max_new_tokens=64),
+)
+print(out["text"])
+print("tokens per forward:", out["tpf"])
+```
+
+### Benchmarks
+
+HF reference benchmark:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
+JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+python bench/benchmark.py \
+  --model Qwen/Qwen3-8B \
+  --attn-implementation flash_attention_2 \
+  --tree-attn triton \
+  --dataset gsm8k \
+  --samples 64 \
+  --algos crossproduct \
+  --width 7 \
+  --budget 255 \
+  --max-new 256 \
+  --warmup-samples-per-rank 1
+```
+
+Optimized JetFlow wall-clock benchmark:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
+JETFLOW_FUSE_GEMMS=1 \
+JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
+JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+python bench/tps_walltime.py \
+  --prompt-set gsm8k \
+  --samples 64 \
+  --max-tokens 2048 \
+  --budget 127 \
+  --session
+```
+
+For 8 GPUs, use `torchrun` with the same command; benchmark scripts shard prompts across ranks.
+
 ## Architecture
 
-Two layers with a strict one-way dependency, so they can be owned and evolved independently:
+```text
+jetflow/
+  core/                 # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
+  inference_engine/     # optimized JetFlow engine: paged KV, scheduler, kernels, CUDA graphs
+  tree/                 # engine-agnostic tree construction and acceptance
+  models/               # target/draft-head loading and model utilities
+  draft.py              # simple drafters used in tests and correctness gates
+  draft_head_drafter.py # trained draft-head adapter
+```
 
-- **`ptd/tree/` — the tree-drafting *method*** (engine-agnostic). Turns per-depth draft logits into a verification tree and selects the accepted path. Pure torch/numpy; imports nothing from the engine. Public contract: `get_algorithm(name).build(...) → DraftTree`, `build_ancestor_matrix(tree)`, `tree_accept(tree, target_logits, temperature)`.
-- **`ptd/engine/` — the decode *substrate*** (`LLM`, KV cache, verify forward). Consumes `ptd.tree` one-way (engine → tree); the tree never imports the engine.
-
-The tree is decoupled from the backend on purpose: the same `ptd.tree` plugs into this HF engine today and a serving-engine (vLLM / SGLang) integration later. Import the tree only through its public API (`ptd.tree`), never `ptd.tree._core`.
+The dependency direction is strict: engines consume `jetflow.tree`, while tree algorithms never import either execution backend. Import tree behavior through the public `jetflow.tree` API rather than `jetflow.tree._core`.
 
 ## Results
 
-The `JetFlow` engine ships paged, lossless tree-spec decode via `torch.compile` + CUDA-graph verify and drafter, fused qkv/gate-up GEMMs, cross-prompt session reuse, and our own triton tree-attention kernel. Headline numbers — **wall-clock tokens/sec**, the number a user actually sees (Qwen3-8B, B200, bf16, single-stream, tree budget 127, width 7, trained epoch6 distill head, 2048-token generation window, full-dataset sample counts):
+The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Headline wall-clock measurements on B200, bf16, budget 127, width 7, trained epoch6 distill head, 2048-token generation window:
 
-| dataset | this engine | reference fork (full vLLM) | ratio | accept_len (ours / fork) |
-|---|---|---|---|---|
-| humaneval (164) | **738.6** | 718.9 | **1.03×** | 7.25 / 7.23 |
-| math500 (100) | **910.3** | 930.3 | 0.98× | 9.60 / 9.76 |
-| gsm8k (64) | **791.0** | 820.7 | 0.96× | 7.72 / 8.01 |
+| dataset | JetFlow engine | reference fork | ratio | accept_len |
+|---|---:|---:|---:|---:|
+| HumanEval (164) | **738.6 tok/s** | 718.9 tok/s | **1.03x** | 7.25 |
+| MATH-500 (100) | **910.3 tok/s** | 930.3 tok/s | 0.98x | 9.60 |
+| GSM8K (64) | **791.0 tok/s** | 820.7 tok/s | 0.96x | 7.72 |
 
-- Both engines run the same published draft head, the same prompts, the same budget, on the same GPU; the fork rows are our own measurements of its production configuration (triton kernel + logical KV layout + CUDA graphs), not paper claims.
-- **5.8–7.7× wall-clock speedup** over the same stack's autoregressive decode (dataset-dependent; math500 highest).
-- The engine core is **~3.8k lines** (vs ~560k lines of Python in vLLM): the condensation is the point — fork-class throughput from a codebase you can read in an afternoon.
-- **Lossless:** fp32 token-identical to an SDPA oracle; bf16 is lossless-by-construction (each accepted token is target-greedy) but not bitwise-equal to AR greedy — borderline-argmax flips move with kernel reduction order. fp32 is exact.
+Production configuration:
 
-Production configuration: `JETFLOW_FUSE_GEMMS=1`, `attn_backend="triton_paged_tree_cudagraph_nogather"`, reference-style draft head, `session=True`. Reproduce the table with `bench/tps_walltime.py` (add `--algo top2gap_fanout --budget 63` for the rows below; per-dataset fingerprints: `bench/tree_diag.py`); verify-only GPU-time comparison: `bench/identical_fork_compare.py`.
+```text
+JETFLOW_FUSE_GEMMS=1
+attn_backend="triton_paged_tree_cudagraph_nogather"
+session=True
+```
 
-### Choosing a tree algorithm
+The public JetFlow project page reports paper-level speedups up to **9.64x** on MATH-500 for Qwen3-8B greedy decoding at budget 256, with accepted length `tau=10.76`. This repo reports measured implementation numbers and includes scripts to reproduce the local B200 runs.
 
-The default `crossproduct` is the robust pick: it spends the whole budget breadth-first by cumulative logprob, no tuning. `top2gap_fanout` reads the live per-depth top-2 logprob gap and stops fanning out where the drafter is confident, so it buys crossproduct-class or better throughput from **half the budget** — and budget-63 trees verify in the 64-node CUDA-graph bucket, whose rounds are cheaper than the 128 bucket. Same-day pairs, same configuration as the table above:
+Losslessness note: fp32 paths are token-identical to an SDPA oracle. In bf16, tree speculative decoding is lossless-by-construction because committed tokens come from the target verifier, but exact token equality against an AR KV-cache baseline can differ at borderline argmaxes due to kernel reduction order.
 
-| workload | pick | tok/s | accept_len | same-day `crossproduct`@127 |
-|---|---|---|---|---|
-| gsm8k | `top2gap_fanout` @ budget 63 | **827.0** | 7.43 | 800.0 (+3.4%) |
-| math500 | `top2gap_fanout` @ budget 63 | **931.5** | 9.38 | 912.1 (+2.1%) |
-| humaneval | `crossproduct` @ budget 127 | **740.5** | 7.25 | `top2gap`@63: 734.2 (≈ tie) |
+## Tree Algorithms
 
-The advantage grows as the budget shrinks (same day, gsm8k): at budget 63, top2gap 827.0 vs crossproduct 727.1 (+14%); at budget 31, **816.9 vs 567.9 (+44%)** — crossproduct cannot reach depth with few nodes, top2gap can. Code prompts give the drafter lower per-token confidence, so full-budget breadth keeps the crown on humaneval. Both algorithms pass the same fp32 token-identity gate as the table above. (Day-to-day B200 wall-clock moves ~1%: the same-day crossproduct gsm8k re-measurement reads 800.0 against the table's 791.0.)
+Common algorithms exposed by `bench/benchmark.py`:
 
-## Roadmap
+| Algorithm | Purpose |
+|---|---|
+| `crossproduct` | robust breadth-first cumulative-logprob tree; default baseline |
+| `top2gap_fanout` | adaptive fanout using the per-depth top-2 logprob gap |
+| `task_router` | prompt/task-aware routing over tree shapes |
+| `reasoning_router` | reasoning-pattern-aware routing |
+| `class_histogram` | class-conditioned profile-guided tree shaping |
+| `depth_rank_histogram` | offline profile table over `(depth, rank)` acceptance |
 
-| stage | what | status |
-|---|---|---|
-| **Offline baseline** | offline Qwen3-8B autoregressive decode | ✅ validated, byte-identical to HF greedy |
-| **Chain spec decode** | `Drafter` + `LLM.generate_chain` (accept-longest-prefix) | ✅ validated, lossless |
-| **Tree spec decode** | crossproduct + 4D ancestor mask + `tree_accept` | ✅ validated, lossless |
-| **Trained draft head** | JF-trained `DraftHead` (`draft.py`, `draft_shift`/I-DLM param) → tokens-per-forward | ✅ shipped (head at HF `Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma`) |
-| **Tree-attention kernel** | owned paged triton tree-attention kernel → wall-clock TPS | ✅ shipped, lossless-verified |
-| **Fanout + bench + recipes** | per-depth fanout cap, benchmarks, recipes, HF checkpoint | ✅ shipped |
+Same-day production picks:
 
-> The baseline + chain + tree verify loops are **recompute-based** (correctness-first; KV-reuse is a later optimization). Speculative decoding is lossless, so the chain + tree paths were validated with stub drafters — output byte-identical to plain greedy — before the trained drafter checkpoint.
+| workload | pick | tok/s | accept_len |
+|---|---|---:|---:|
+| GSM8K | `top2gap_fanout`, budget 63 | **827.0** | 7.43 |
+| MATH-500 | `top2gap_fanout`, budget 63 | **931.5** | 9.38 |
+| HumanEval | `crossproduct`, budget 127 | **740.5** | 7.25 |
 
-## Tests
+## Testing
+
+Fast local validation:
 
 ```bash
-PTD_TEST_MODEL=Qwen/Qwen3-8B pytest tests/   # the validation gate; needs CUDA + the model
+PYTHONPATH=. pytest -q
 ```
-The gate asserts the offline engine is token-identical to HF greedy generation and reuses the KV cache (the prefix is never reprocessed). On CPU/CI it is skipped.
+
+Full real-model gates require CUDA and an explicit model:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
+JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+PYTHONPATH=. pytest tests/
+```
+
+Recent remap validation:
+
+```text
+234 passed, 10 skipped
+```
+
+## Citation
+
+```bibtex
+@inproceedings{jetflow2026,
+  title = {JetFlow: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting},
+  author = {Hu, Lanxiang and Feng, Zhaoxiang and Wu, Yulun and Yuan, Haoran and Zhao, Yujie and Qian, Yu-Yang and Wang, Bojun and Jiang, Daxin and Zhu, Yibo and Rosing, Tajana and Zhang, Hao},
+  year = {2026},
+  note = {Preprint}
+}
+```

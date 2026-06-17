@@ -9,29 +9,29 @@ to expand everything.
 
 Needs CUDA + a real Qwen3-8B target + a trained DFlash head; run on b200:
 
-    CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
-      PTD_DRAFT_HEAD="Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma" \
+    CUDA_VISIBLE_DEVICES=0 JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
+      JETFLOW_DRAFT_HEAD="Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma" \
       HF_HOME=/path/to/hf_cache \
       python examples/tree_algo_sweep.py
 
-Env knobs: PTD_SWEEP_BUDGETS (comma list, default "15,63,127"),
-PTD_SWEEP_WIDTH (tree_width, default 7), PTD_SWEEP_MAXNEW (default 128).
+Env knobs: JETFLOW_SWEEP_BUDGETS (comma list, default "15,63,127"),
+JETFLOW_SWEEP_WIDTH (tree_width, default 7), JETFLOW_SWEEP_MAXNEW (default 128).
 """
 import os
 
 import torch
 from transformers import DynamicCache
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
-from ptd.tree import list_algorithms
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.tree import list_algorithms
 
-MODEL = os.environ.get("PTD_TEST_MODEL", "Qwen/Qwen3-8B")
-DRAFT_HEAD = os.environ.get("PTD_DRAFT_HEAD")
-BUDGETS = [int(b) for b in os.environ.get("PTD_SWEEP_BUDGETS", "15,63,127").split(",")]
-WIDTH = int(os.environ.get("PTD_SWEEP_WIDTH", "7"))
-MAX_NEW = int(os.environ.get("PTD_SWEEP_MAXNEW", "128"))
+MODEL = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
+DRAFT_HEAD = os.environ.get("JETFLOW_DRAFT_HEAD")
+BUDGETS = [int(b) for b in os.environ.get("JETFLOW_SWEEP_BUDGETS", "15,63,127").split(",")]
+WIDTH = int(os.environ.get("JETFLOW_SWEEP_WIDTH", "7"))
+MAX_NEW = int(os.environ.get("JETFLOW_SWEEP_MAXNEW", "128"))
 
 # The drafter conditions on the target's hidden states in the *chat-formatted*
 # distribution it was trained on; a raw, untemplated prompt gives off-distribution
@@ -76,7 +76,7 @@ def _exact_prefix(a, b):
 
 def main():
     if not DRAFT_HEAD:
-        raise SystemExit("set PTD_DRAFT_HEAD to a trained DFlash head checkpoint")
+        raise SystemExit("set JETFLOW_DRAFT_HEAD to a trained DFlash head checkpoint")
     llm = LLM(MODEL)
     head = load_draft_head(DRAFT_HEAD)
     tli = head.target_layer_ids

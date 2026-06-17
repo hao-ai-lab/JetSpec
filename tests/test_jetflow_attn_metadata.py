@@ -6,14 +6,14 @@ tree / mixed batches.
 
 Pure CPU (no GPU, no model, no triton): builds a tiny `PagedKVCache` with random
 KV and small `DraftTree`s constructed directly, and cross-checks against
-`PagedKVCache._logical_kv` and `ptd.tree.build_ancestor_matrix` — the same sources
+`PagedKVCache._logical_kv` and `jetflow.tree.build_ancestor_matrix` — the same sources
 of truth the kernel and engine use.
 """
 import torch
 
-from ptd.jetflow.attn_metadata import build_attn_metadata
-from ptd.jetflow.paged_kv_cache import PagedKVCache
-from ptd.tree import DraftTree, build_ancestor_matrix
+from jetflow.inference_engine.attn_metadata import build_attn_metadata
+from jetflow.inference_engine.paged_kv_cache import PagedKVCache
+from jetflow.tree import DraftTree, build_ancestor_matrix
 
 
 def _tree(parents):

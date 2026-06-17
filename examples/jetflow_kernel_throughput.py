@@ -1,7 +1,7 @@
 """JetFlow N3 throughput A/B: continuous-batched AR (`generate_batch`) under the
 SDPA path vs the paged tree-attention triton kernel, on a real model.
 
-    PTD_TEST_MODEL=Qwen/Qwen3-8B python examples/jetflow_kernel_throughput.py
+    JETFLOW_TEST_MODEL=Qwen/Qwen3-8B python examples/jetflow_kernel_throughput.py
 
 Reports tok/s for each backend over a fixed batch (B=8, 64 new tokens, greedy). The
 SDPA N2a baseline reconstructs every seq's dense KV + pads + masks each step; the
@@ -12,8 +12,8 @@ import time
 
 import torch
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
 
 
 def _run(engine, prompts, sp):
@@ -28,7 +28,7 @@ def _run(engine, prompts, sp):
 
 
 def main():
-    model = os.environ.get("PTD_TEST_MODEL", "Qwen/Qwen3-8B")
+    model = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
     dtype = torch.bfloat16
     sp = SamplingParams(temperature=0.0, max_new_tokens=64)
     # B=8 distinct prompts (ragged lengths exercise the per-seq pool).

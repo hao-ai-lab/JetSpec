@@ -1,6 +1,6 @@
 import torch
 
-from ptd.jetflow.engine import _LogicalRoundBuffers
+from jetflow.inference_engine.engine import _LogicalRoundBuffers
 
 
 def _ptrs(round_bufs, staged):

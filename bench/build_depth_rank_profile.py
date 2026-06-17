@@ -1,6 +1,6 @@
 """Collect B2 depth-rank acceptance profiles on JetFlow.
 
-The output schema matches ``ptd.tree.profile_guided.depth_rank_histogram``:
+The output schema matches ``jetflow.tree.profile_guided.depth_rank_histogram``:
 
     {"depth_rank_accept": [[...]], "meta": {...}}
 
@@ -30,8 +30,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from ptd.tree import get_algorithm
-from ptd.tree._core.base import DraftTree
+from jetflow.tree import get_algorithm
+from jetflow.tree._core.base import DraftTree
 
 
 @dataclass
@@ -331,8 +331,8 @@ def parse_args() -> argparse.Namespace:
 @torch.inference_mode()
 def main() -> None:
     from bench.tree_diag import build_drafter, build_prompts
-    from ptd.engine.llm import SamplingParams
-    from ptd.jetflow.engine import JetFlowEngine
+    from jetflow.core.llm import SamplingParams
+    from jetflow.inference_engine.engine import JetFlowEngine
 
     args = parse_args()
     backend = args.attention_backend or os.environ.get(
@@ -384,7 +384,7 @@ def main() -> None:
         meta={
             "engine": "JetFlow",
             "model": args.model,
-            "head": args.draft_head or os.environ.get("PTD_DRAFT_HEAD"),
+            "head": args.draft_head or os.environ.get("JETFLOW_DRAFT_HEAD"),
             "prompt_set": args.prompt_set,
             "samples": len(prompts),
             "block_size": block_size,

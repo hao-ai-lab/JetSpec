@@ -7,7 +7,7 @@ GPU-self-time, drafter-excluded). The production configuration behind the
 README Results table:
 
     JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
-      PYTHONPATH=. PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+      PYTHONPATH=. JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       python bench/tps_walltime.py --samples 64 --max-tokens 2048 --budget 127 \
         --session --prompt-set gsm8k
 
@@ -22,10 +22,10 @@ import time
 import torch
 import torch.distributed as dist
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -148,7 +148,7 @@ def main():
         torch.cuda.set_device(local_rank)
 
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
-    head_id = args.draft_head or os.environ["PTD_DRAFT_HEAD"]
+    head_id = args.draft_head or os.environ["JETFLOW_DRAFT_HEAD"]
     eng = JetFlowEngine(
         args.model,
         device=device,

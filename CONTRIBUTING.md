@@ -1,4 +1,4 @@
-# Contributing to parallel-tree-decoding
+# Contributing to jetflow
 
 Thanks for your interest in contributing. This guide covers local setup, how to
 run the tests, and the PR process.
@@ -8,8 +8,8 @@ run the tests, and the PR process.
 Single clone, single install — no submodules.
 
 ```bash
-git clone https://github.com/snyhlxde1/parallel-tree-decoding
-cd parallel-tree-decoding
+git clone https://github.com/snyhlxde1/jetflow
+cd jetflow
 pip install -e '.[test]'      # base deps + pytest (CPU test subset)
 ```
 
@@ -27,15 +27,15 @@ The code is organized as two decode engines plus an engine-agnostic tree-method
 layer, with a strict one-way dependency (engine → tree; the tree never imports an
 engine):
 
-- **`ptd/engine/`** — the SDPA reference engine. HF `transformers` + SDPA; the
+- **`jetflow/core/`** — the SDPA reference engine. HF `transformers` + SDPA; the
   single-clone correctness oracle. Its plain offline Qwen3-8B decode is the 1×
   denominator that speedups are measured against.
-- **`ptd/jetflow/`** — the high-throughput engine: paged KV cache, a triton
+- **`jetflow/inference_engine/`** — the high-throughput engine: paged KV cache, a triton
   tree-attention kernel, and a `torch.compile` + CUDA-graph verify path.
-- **`ptd/tree/`** — the engine-agnostic tree-construction *method*. Turns
+- **`jetflow/tree/`** — the engine-agnostic tree-construction *method*. Turns
   per-depth draft logits into a verification tree and selects the accepted path.
   Pure torch/numpy; imports nothing from an engine. **Import it only through the
-  public API `ptd.tree` — never `ptd.tree._core`** (the `_core` package is
+  public API `jetflow.tree` — never `jetflow.tree._core`** (the `_core` package is
   internal and may change without notice).
 
 ## Running tests
@@ -60,10 +60,10 @@ pytest -q \
 
 The remaining tests load a real model (offline decode, engine parity, draft-head
 and compiled-verify losslessness) and need a CUDA GPU. Point them at the target
-model via `PTD_TEST_MODEL` and run the whole suite:
+model via `JETFLOW_TEST_MODEL` and run the whole suite:
 
 ```bash
-PTD_TEST_MODEL=Qwen/Qwen3-8B pytest tests/
+JETFLOW_TEST_MODEL=Qwen/Qwen3-8B pytest tests/
 ```
 
 The losslessness tests are exact in fp32; in bf16 a block/compiled verify can flip
@@ -88,6 +88,6 @@ gates are run on the GPU box, not in CPU CI.
   the existing files. The codebase favors descriptive module/test docstrings that
   explain *why* a unit exists and what property it gates; mirror that.
 - Keep the `engine → tree` dependency one-way; the tree layer must not import from
-  `ptd.engine`, `ptd.jetflow`, or `ptd.draft`.
+  `jetflow.core`, `jetflow.inference_engine`, or `jetflow.draft`.
 - Commit messages are single-line and prefixed by a tag (`[FIX]`, `[FEAT]`,
   `[DOCS]`, `[CHORE]`, etc.) describing the change.

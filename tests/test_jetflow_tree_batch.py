@@ -22,10 +22,10 @@ tokens — the same class as the bf16 borderline-argmax caveat.)
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.engine.llm import SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.jetflow.engine import JetFlowEngine
+from jetflow.core.llm import SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetflow.inference_engine.engine import JetFlowEngine
 
 
 class _StubTokenizer:

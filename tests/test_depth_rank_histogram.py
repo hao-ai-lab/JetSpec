@@ -8,7 +8,7 @@ which now includes depth_rank_histogram in ACTIVE_KWARGS).
 """
 import torch
 
-from ptd.tree import get_algorithm
+from jetflow.tree import get_algorithm
 
 DEV = torch.device("cpu")
 BLOCK, WIDTH, BUDGET = 4, 4, 63   # D = block_size - 1 = 3 depths, top-4 per depth

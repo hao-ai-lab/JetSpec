@@ -2,17 +2,17 @@
 equal plain greedy regardless of draft quality — and the verify loop must accept the
 target's own drafts (multi-token accept). Needs CUDA + Qwen3-8B; run on b200.
 
-    PTD_TEST_MODEL=Qwen/Qwen3-8B pytest tests/test_chain_lossless.py -x
+    JETFLOW_TEST_MODEL=Qwen/Qwen3-8B pytest tests/test_chain_lossless.py -x
 """
 import os
 
 import pytest
 import torch
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.draft import RepeatDrafter, TargetEchoDrafter
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.draft import RepeatDrafter, TargetEchoDrafter
 
-MODEL = os.environ.get("PTD_TEST_MODEL", "Qwen/Qwen3-8B")
+MODEL = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="needs CUDA + a real Qwen3-8B checkpoint"

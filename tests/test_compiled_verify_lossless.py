@@ -32,8 +32,8 @@ pytestmark = pytest.mark.skipif(
 # compiles every variant instead of falling back. Test-only, no production effect.
 torch._dynamo.config.recompile_limit = 64
 
-from ptd.engine.llm import SamplingParams
-from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
 from tests.test_jetflow_kernel_e2e import _tiny_model, _tiny_jetflow, PROMPT, SP
 
 
@@ -47,8 +47,8 @@ def _add_compiled_backend(cudagraph: bool = False):
     stacks, but the per-round tree verify replays a per-bucket captured graph instead of
     calling the stack directly. The compiled-non-graph build (`cudagraph=False`) stays the
     untouched oracle the graph path is diffed against."""
-    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
-    from ptd.jetflow.engine import _env_flag
+    from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
+    from jetflow.inference_engine.engine import _env_flag
 
     def build(model):
         eng = _tiny_jetflow(model, "triton_paged_tree")     # registers interface + flips impl
@@ -153,7 +153,7 @@ def test_n1_compiled_verify_need_hidden_matches_sdpa(target_layer_ids):
 # token-identical to SDPA (the lossless oracle). A broken pad (e.g. real rows attending
 # pad keys, or a pad row leaking into accept) would flip tokens here.
 
-import ptd.jetflow.engine as _eng_mod
+import jetflow.inference_engine.engine as _eng_mod
 
 
 def _force_bucket(monkeypatch, pad: int):
@@ -261,9 +261,9 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
     prefix + node KV and returns `new_hidden`), then run the compiled stack over a
     FRESH pool seeded the same way, and compare the two taps over the same node rows.
     """
-    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
-    from ptd.jetflow.engine import _env_flag
-    from ptd.jetflow.paged_kv_cache import PagedKVCache
+    from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
+    from jetflow.inference_engine.engine import _env_flag
+    from jetflow.inference_engine.paged_kv_cache import PagedKVCache
 
     model = _tiny_model(0)
     device = next(model.parameters()).device
@@ -278,7 +278,7 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
         cache = PagedKVCache(block_size=eng.block_size, device=device, dtype=torch.float32)
         cache._paged_handoff = True
         cache._handoff_seq_ids = [0]
-        cache._ptd_attn_meta = {"seq_ids": [0], "qq_bias": None}
+        cache._jetflow_attn_meta = {"seq_ids": [0], "qq_bias": None}
         eng.runner.forward(prefix, cache, torch.arange(past_len, device=device).unsqueeze(0))
         return cache
 
@@ -287,7 +287,7 @@ def test_compiled_verify_hidden_matches_eager_kernel(target_layer_ids):
     # Eager-kernel oracle: the verify forward returns new_hidden (= the engine's tap).
     cache_e = _fresh_kernel_cache(eng)
     cache_e._handoff_seq_ids = [0]
-    cache_e._ptd_attn_meta = {"seq_ids": [0], "qq_bias": None}
+    cache_e._jetflow_attn_meta = {"seq_ids": [0], "qq_bias": None}
     _, _, eager_hidden = eng.runner.forward(
         seq_step, cache_e, posN, attention_mask=None,
         cache_position=torch.arange(past_len, past_len + N, device=device),
@@ -394,7 +394,7 @@ def test_cudagraph_captures_once_per_bucket_no_recapture():
     """A full decode captures each tree-N bucket ONCE and never recaptures (the A3-GRAPH
     gate). We monkeypatch `_bucket_for_n` to a constant so every round hits ONE bucket,
     count `_capture_bucket` calls over a multi-round decode, and assert exactly one."""
-    import ptd.jetflow.graph_capture as _gc_mod
+    import jetflow.inference_engine.graph_capture as _gc_mod
 
     model = _tiny_model(0)
     drafter = TargetEchoTreeDrafter(model)

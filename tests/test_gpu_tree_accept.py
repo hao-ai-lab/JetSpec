@@ -3,8 +3,8 @@ import random
 import pytest
 import torch
 
-from ptd.tree._core.accept import gpu_tree_accept, tree_accept
-from ptd.tree._core.base import DraftTree
+from jetflow.tree._core.accept import gpu_tree_accept, tree_accept
+from jetflow.tree._core.base import DraftTree
 
 
 def _tree(token_ids, parent_indices):

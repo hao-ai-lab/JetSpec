@@ -16,7 +16,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 if torch.cuda.is_available():
-    from ptd.jetflow.paged_tree_attn import paged_tree_attn
+    from jetflow.inference_engine.paged_tree_attn import paged_tree_attn
 
 DEVICE = "cuda"
 

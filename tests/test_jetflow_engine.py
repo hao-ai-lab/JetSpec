@@ -1,5 +1,5 @@
 """JetFlow N0 gate: a paged KV cache + single-stream AR engine that is
-token-identical to `ptd.engine` on a tiny fp32 Qwen3.
+token-identical to `jetflow.core` on a tiny fp32 Qwen3.
 
 Runs on CPU with a tiny randomly-initialized fp32 model (no network, no GPU): in
 fp32 the paged store and HF's `DynamicCache` are bitwise-equal (the gather/append
@@ -11,10 +11,10 @@ of exact tokens — the same class as the existing bf16 borderline-argmax caveat
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.jetflow.paged_kv_cache import PagedKVCache
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.inference_engine.paged_kv_cache import PagedKVCache
 
 
 class _StubTokenizer:
@@ -108,7 +108,7 @@ def test_paged_cache_multi_layer_isolation_and_free():
     assert torch.equal(gk0, k0[:, :, :4])                    # surviving KV intact
 
 
-# --- JetFlowEngine lossless gate (token-identical to ptd.engine) ----------------
+# --- JetFlowEngine lossless gate (token-identical to jetflow.core) ----------------
 
 def test_jetflow_ar_matches_llm_greedy_fp32():
     """JetFlowEngine greedy == LLM greedy, token-for-token, across seeds and block
@@ -120,7 +120,7 @@ def test_jetflow_ar_matches_llm_greedy_fp32():
         for block_size in (16, 4, 5):
             got = _tiny_jetflow(model, block_size).generate(PROMPT, SP)["token_ids"]
             assert got == ref, (
-                f"JetFlow AR diverged from ptd.engine (seed={seed}, block_size={block_size})"
+                f"JetFlow AR diverged from jetflow.core (seed={seed}, block_size={block_size})"
             )
         assert len(ref) == SP.max_new_tokens
 
@@ -134,7 +134,7 @@ def test_jetflow_ar_cache_reuse_grows_by_one():
     pos = torch.arange(PROMPT.shape[1]).unsqueeze(0)
     logits, cache, _ = eng.runner.forward(PROMPT, cache, pos)
     assert cache.get_seq_length(0) == PROMPT.shape[1]
-    from ptd.engine.sampler import sample
+    from jetflow.core.sampler import sample
     tok = sample(logits[:, -1:, :], 0.0)
     for step in range(5):
         cur = PROMPT.shape[1] + step

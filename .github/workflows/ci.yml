@@ -3,7 +3,7 @@ name: CI
 # CPU-only CI. GitHub-hosted runners have no GPU/CUDA, so this gate runs only
 # the CPU-safe test subset: the engine-agnostic tree-construction unit tests and
 # the JetFlow tests that build a tiny fp32 Qwen3 locally (no network, no GPU,
-# no triton). GPU-gated tests (PTD_TEST_MODEL / CUDA model load) run separately.
+# no triton). GPU-gated tests (JETFLOW_TEST_MODEL / CUDA model load) run separately.
 on:
   push:
     branches: [main]

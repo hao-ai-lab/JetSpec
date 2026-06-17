@@ -30,10 +30,10 @@ from bench.build_depth_rank_profile import (
     rebuild_recorded_tree,
 )
 from bench.tree_diag import build_prompts
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
-from ptd.engine.llm import SamplingParams
-from ptd.models.draft_head import load_draft_head
-from ptd.jetflow.engine import JetFlowEngine
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.models.draft_head import load_draft_head
+from jetflow.inference_engine.engine import JetFlowEngine
 
 
 BUCKETS = ("shallow", "mid", "deep")
@@ -427,7 +427,7 @@ def main() -> None:
         attn_backend=backend,
         block_size=16,
     )
-    head = load_draft_head(args.draft_head or os.environ["PTD_DRAFT_HEAD"])
+    head = load_draft_head(args.draft_head or os.environ["JETFLOW_DRAFT_HEAD"])
     target_layer_ids, block_size = head.target_layer_ids, head.block_size
     drafter = DraftHeadTreeDrafter(
         head,

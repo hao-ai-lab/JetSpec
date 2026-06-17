@@ -1,6 +1,6 @@
 """JetFlow N1 gate: single-stream TREE-spec decode over the paged KV cache must
 be token-identical to (a) plain greedy AR and (b) the `DynamicCache` reference
-tree verify (`LLM.generate_tree(kv_cache_verify=True)`) — losslessness is
+tree verify (`LLM.generate_tree`) — losslessness is
 preserved by the `PagedKVCache.gather` that keeps only the accepted root-to-leaf
 path's KV (the paged analogue of `_select_kv_cache`).
 
@@ -15,13 +15,13 @@ class as the bf16 borderline-argmax caveat; validated separately on b200.)
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.engine.llm import LLM, SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.tree import DraftTree
-from ptd.tree._core.base import TreeAlgorithm
-from ptd.tree._core.registry import register_tree_algo
+from jetflow.core.llm import LLM, SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.tree import DraftTree
+from jetflow.tree._core.base import TreeAlgorithm
+from jetflow.tree._core.registry import register_tree_algo
 
 
 class _StubTokenizer:
@@ -156,11 +156,11 @@ def _jetflow_tree(eng, drafter, *, seed=1, return_stats=False):
 
 
 def _ref_tree(llm, drafter, *, seed=1):
-    # the DynamicCache reference path (LLM.generate_tree(kv_cache_verify=True)).
+    # the DynamicCache reference path (LLM.generate_tree).
     torch.manual_seed(seed)
     return llm.generate_tree(
         PROMPT, drafter, block_size=4, tree_width=2, budget=15,
-        kv_cache_verify=True, sampling_params=SP,
+        sampling_params=SP,
     )
 
 
@@ -223,7 +223,7 @@ def test_jetflow_tree_lossless_deep_tree_beyond_block_depth():
     based. This tree is depth 20 with 33 nodes, so depth and N fall in different
     compiled buckets.
     """
-    from ptd.jetflow.engine import _bucket_for_n
+    from jetflow.inference_engine.engine import _bucket_for_n
 
     model = _tiny_model(0)
     depth = 20

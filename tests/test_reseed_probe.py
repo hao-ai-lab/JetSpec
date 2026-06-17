@@ -3,7 +3,7 @@ from collections import Counter
 import pytest
 import torch
 
-from ptd.tree._core.base import DraftTree
+from jetflow.tree._core.base import DraftTree
 
 from bench import reseed_probe
 

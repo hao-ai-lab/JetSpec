@@ -8,7 +8,7 @@ non-GEMM, non-attention kernel time; GEMM efficiency = GEMM time vs the
 weight-streaming floor (~2.3ms @ 8TB/s for 16GB bf16 weights).
 
     JETFLOW_BACKEND=triton_paged_tree_compiled_nogather HF_DATASETS_CACHE=... \
-      CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. PTD_DRAFT_HEAD=... \
+      CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. JETFLOW_DRAFT_HEAD=... \
       python bench/verify_kernel_profile.py --max-tokens 256 --budget 127
 """
 import argparse
@@ -17,10 +17,10 @@ import os
 import torch
 from torch.profiler import ProfilerActivity, profile
 
-from ptd.engine.llm import SamplingParams
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import DraftHeadTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.models.draft_head import load_draft_head
+from jetflow.draft_head_drafter import DraftHeadTreeDrafter
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -53,7 +53,7 @@ def main():
     args = ap.parse_args()
 
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_compiled_nogather")
-    head_id = os.environ["PTD_DRAFT_HEAD"]
+    head_id = os.environ["JETFLOW_DRAFT_HEAD"]
     eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)

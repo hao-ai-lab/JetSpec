@@ -25,8 +25,8 @@ pytestmark = pytest.mark.skipif(
 # process exceed dynamo's default recompile_limit; test-only, no production effect.
 torch._dynamo.config.recompile_limit = 64
 
-from ptd.engine.llm import SamplingParams
-from ptd.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetflow.core.llm import SamplingParams
+from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
 from tests.test_jetflow_kernel_e2e import _tiny_model, _tiny_jetflow, PROMPT, SP
 
 
@@ -34,8 +34,8 @@ def _add_backend(backend: str):
     """Builder for any compiled-family backend over the tiny model (mirrors
     `test_compiled_verify_lossless._add_compiled_backend`, parameterized by the
     backend string so the logical-KV no-gather variants ride the same fixture)."""
-    from ptd.jetflow.compiled_verify_stack import CompiledVerifyStack
-    from ptd.jetflow.engine import _CUDAGRAPH_BACKENDS, _env_flag
+    from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
+    from jetflow.inference_engine.engine import _CUDAGRAPH_BACKENDS, _env_flag
 
     def build(model):
         eng = _tiny_jetflow(model, "triton_paged_tree")

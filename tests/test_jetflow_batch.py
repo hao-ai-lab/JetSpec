@@ -15,11 +15,11 @@ argmax after ~tens of exact tokens — the same class as the bf16 borderline-arg
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from ptd.engine.llm import SamplingParams
-from ptd.engine.model_runner import ModelRunner
-from ptd.jetflow.engine import JetFlowEngine
-from ptd.jetflow.scheduler import Scheduler, SequenceRequest
-from ptd.jetflow.paged_kv_cache import PagedKVCache
+from jetflow.core.llm import SamplingParams
+from jetflow.core.model_runner import ModelRunner
+from jetflow.inference_engine.engine import JetFlowEngine
+from jetflow.inference_engine.scheduler import Scheduler, SequenceRequest
+from jetflow.inference_engine.paged_kv_cache import PagedKVCache
 
 
 class _StubTokenizer:

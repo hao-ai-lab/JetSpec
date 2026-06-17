@@ -1,6 +1,6 @@
 """Minimal raw-HF Qwen3-8B + FlashAttention2 KV-cache decode smoke test.
 
-This intentionally bypasses PTD wrappers. It measures the same baseline class as
+This intentionally bypasses JetFlow wrappers. It measures the same baseline class as
 the reference benchmark: prompt prefill once, then one-token-at-a-time greedy
 decode through an HF `DynamicCache`.
 

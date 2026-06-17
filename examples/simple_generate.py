@@ -4,7 +4,7 @@
 """
 import sys
 
-from ptd import LLM, SamplingParams
+from jetflow import LLM, SamplingParams
 
 
 def main():
