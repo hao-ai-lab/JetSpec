@@ -263,10 +263,24 @@ class JetFlowEngine:
         attn_implementation: str = "sdpa",
         attn_backend: str = "sdpa",
         fuse_gemms: bool = False,
+        torch_compile: bool = False,
+        fused_moe: bool = False,
     ):
         self.model, self.tokenizer = load_target(
-            model_name_or_path, device, dtype, attn_implementation
+            model_name_or_path, device, dtype, attn_implementation,
+            torch_compile=False,
         )
+        self.resolved_attn_implementation = getattr(
+            self.model, "_ptd_attn_implementation", attn_implementation
+        )
+        self.fused_moe_blocks = 0
+        if fused_moe:
+            from ptd.models.moe_fused import patch_qwen3_moe_with_grouped_mm
+
+            self.fused_moe_blocks = patch_qwen3_moe_with_grouped_mm(self.model)
+        if torch_compile:
+            self.model = torch.compile(self.model, dynamic=True)
+            self.model._ptd_attn_implementation = self.resolved_attn_implementation
         self.runner = ModelRunner(self.model)
         self.device = device
         self.dtype = dtype

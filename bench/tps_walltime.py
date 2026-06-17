@@ -10,12 +10,17 @@ README Results table:
       PYTHONPATH=. PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       python bench/tps_walltime.py --samples 64 --max-tokens 2048 --budget 127 \
         --drafter graphed --session --prompt-set gsm8k
+
+The same script also runs under torchrun; each rank owns a disjoint prompt shard
+and rank 0 reports aggregate throughput using total tokens / slowest-rank wall
+time, matching data-parallel benchmark accounting.
 """
 import argparse
 import os
 import time
 
 import torch
+import torch.distributed as dist
 
 from ptd.engine.llm import SamplingParams
 from ptd.jetflow.engine import JetFlowEngine
@@ -50,9 +55,24 @@ def _load_prompt_bank(prompt_set: str, n: int) -> list:
     raise ValueError(f"unknown prompt set: {prompt_set}")
 
 
-def _walltime(fn, prompts):
+def _dist_info():
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if world_size > 1 and not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+    return rank, local_rank, world_size
+
+
+def _barrier(world_size: int):
+    if world_size > 1:
+        dist.barrier()
+
+
+def _walltime(fn, prompts, world_size: int):
     """Return (total_tokens, wall_seconds, per_prompt_outputs)."""
     torch.cuda.synchronize()
+    _barrier(world_size)
     t0 = time.perf_counter()
     outs = [fn(p) for p in prompts]
     torch.cuda.synchronize()
@@ -61,8 +81,70 @@ def _walltime(fn, prompts):
     return ntok, dt, outs
 
 
+def _sum_and_max(local_tokens: int, local_seconds: float, device: str, world_size: int):
+    stats = torch.tensor(
+        [float(local_tokens), float(local_seconds)],
+        dtype=torch.float64,
+        device=device,
+    )
+    if world_size > 1:
+        token_stats = stats[:1].clone()
+        time_stats = stats[1:].clone()
+        dist.all_reduce(token_stats, op=dist.ReduceOp.SUM)
+        dist.all_reduce(time_stats, op=dist.ReduceOp.MAX)
+        return int(token_stats.item()), float(time_stats.item())
+    return local_tokens, local_seconds
+
+
+def _sum_pair(local_a: float, local_b: float, device: str, world_size: int):
+    stats = torch.tensor([local_a, local_b], dtype=torch.float64, device=device)
+    if world_size > 1:
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+    return float(stats[0].item()), float(stats[1].item())
+
+
+def _rank_details(values: list[float], device: str, world_size: int):
+    local = torch.tensor(values, dtype=torch.float64, device=device)
+    if world_size <= 1:
+        return [local.cpu().tolist()]
+    gathered = [torch.empty_like(local) for _ in range(world_size)]
+    dist.all_gather(gathered, local)
+    return [item.cpu().tolist() for item in gathered]
+
+
+def _build_drafter(kind: str, head, eng: JetFlowEngine, block_size: int, target_layer_ids):
+    if kind == "compiled":
+        from ptd.draft_head_drafter import CompiledDraftHead
+
+        return CompiledDraftHead(
+            head, target=eng.model, block_size=block_size,
+            target_layer_ids=target_layer_ids, draft_shift=False,
+        )
+    if kind == "graphed":
+        from ptd.draft_head_drafter import GraphedDraftHead
+
+        return GraphedDraftHead(
+            head, target=eng.model, block_size=block_size,
+            target_layer_ids=target_layer_ids, draft_shift=False,
+        )
+    return DraftHeadTreeDrafter(
+        head, target=eng.model, block_size=block_size,
+        target_layer_ids=target_layer_ids, draft_shift=False,
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="Qwen/Qwen3-8B")
+    ap.add_argument("--draft-head", default=None)
+    ap.add_argument("--attn-implementation", default="sdpa",
+                    choices=["auto", "sdpa", "flash_attention_2"])
+    ap.add_argument("--torch-compile", action="store_true", default=False,
+                    help="Apply torch.compile(dynamic=True) to the target model")
+    ap.add_argument("--no-torch-compile", action="store_false", dest="torch_compile")
+    ap.add_argument("--fused-moe", action="store_true",
+                    help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
+    ap.add_argument("--warmup-samples-per-rank", type=int, default=1)
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--max-tokens", type=int, default=210)
     ap.add_argument("--budget", type=int, default=255)
@@ -76,65 +158,102 @@ def main():
                     choices=["gsm8k", "math500", "humaneval", "aime"])
     args = ap.parse_args()
 
+    rank, local_rank, world_size = _dist_info()
+    device = f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+
     backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
-    head_id = os.environ["PTD_DRAFT_HEAD"]
-    eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
-                     attn_backend=backend, block_size=16)
-    head = load_draft_head(head_id)
+    head_id = args.draft_head or os.environ["PTD_DRAFT_HEAD"]
+    eng = JetFlowEngine(
+        args.model,
+        device=device,
+        dtype=torch.bfloat16,
+        attn_implementation=args.attn_implementation,
+        attn_backend=backend,
+        block_size=16,
+        torch_compile=args.torch_compile,
+        fused_moe=args.fused_moe,
+    )
+    resolved_attn = eng.resolved_attn_implementation
+    head = load_draft_head(
+        head_id,
+        device=device,
+        dtype=torch.bfloat16,
+        attn_implementation=resolved_attn,
+    )
     tli, bs = head.target_layer_ids, head.block_size
-    if args.drafter == "compiled":
-        from ptd.draft_head_drafter import CompiledDraftHead
-        drafter = CompiledDraftHead(head, target=eng.model, block_size=bs,
-                                    target_layer_ids=tli, draft_shift=False)
-    elif args.drafter == "graphed":
-        from ptd.draft_head_drafter import GraphedDraftHead
-        drafter = GraphedDraftHead(head, target=eng.model, block_size=bs,
-                                   target_layer_ids=tli, draft_shift=False)
-    else:
-        drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
-                                       target_layer_ids=tli, draft_shift=False)
+    drafter = _build_drafter(args.drafter, head, eng, bs, tli)
 
     bank = _load_prompt_bank(args.prompt_set, args.samples)
+    shard_bank = bank[rank::world_size]
     prompts = [eng.tokenizer.apply_chat_template(
         [{"role": "user", "content": p}],
         tokenize=False, add_generation_prompt=True, enable_thinking=False)
-        for p in bank]
+        for p in shard_bank]
 
     sp = SamplingParams(0.0, args.max_tokens)
     tkw = dict(block_size=bs, tree_width=args.tree_width, budget=args.budget,
                algo=args.algo, target_layer_ids=tli, return_stats=True)
-    if args.session:
+    if args.session and prompts:
         tkw["session"] = True
         # capacity = the longest prompt in the set (session guard is loud, not growing)
         max_len = max(eng.tokenizer(p, return_tensors="pt").input_ids.shape[1] for p in prompts)
         tkw["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
 
-    # warmup (excluded): warm at the timed sp, twice, so compile + Triton autotune
-    # + the first cudagraph capture are absorbed before timing.
-    eng.generate(prompts[0], sp)
-    eng.generate(prompts[0], sp)
-    eng.generate_tree(prompts[0], drafter, sampling_params=sp, **tkw)
-    eng.generate_tree(prompts[0], drafter, sampling_params=sp, **tkw)
+    # Warmup (excluded): absorb HF compile, torch.compile, Triton autotune, and
+    # first CUDA graph captures before the measured windows.
+    if prompts:
+        for i in range(max(0, args.warmup_samples_per_rank)):
+            p = prompts[i % len(prompts)]
+            eng.generate(p, sp)
+            eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
     torch.cuda.synchronize()
 
-    ar_tok, ar_t, _ = _walltime(lambda p: eng.generate(p, sp), prompts)
-    ar_tps = ar_tok / ar_t
+    ar_tok, ar_t, _ = _walltime(lambda p: eng.generate(p, sp), prompts, world_size)
+    ar_tok_total, ar_t_max = _sum_and_max(ar_tok, ar_t, device, world_size)
+    ar_tps = ar_tok_total / ar_t_max if ar_t_max > 0 else 0.0
 
     tree_tok, tree_t, touts = _walltime(
-        lambda p: eng.generate_tree(p, drafter, sampling_params=sp, **tkw), prompts)
-    spec_tps = tree_tok / tree_t
+        lambda p: eng.generate_tree(p, drafter, sampling_params=sp, **tkw),
+        prompts,
+        world_size,
+    )
+    tree_tok_total, tree_t_max = _sum_and_max(tree_tok, tree_t, device, world_size)
+    spec_tps = tree_tok_total / tree_t_max if tree_t_max > 0 else 0.0
     rounds = sum(o["rounds"] for o in touts)
     acc_sum = sum(sum(o["accept_lengths"]) for o in touts)
-    accept_len = acc_sum / rounds if rounds else 0.0
+    acc_total, rounds_total = _sum_pair(acc_sum, rounds, device, world_size)
+    accept_len = acc_total / rounds_total if rounds_total else 0.0
 
-    print(f"\nbackend={backend}  head={head_id}  algo={args.algo}")
-    print(f"samples={args.samples} budget={args.budget} width={args.tree_width} "
-          f"max_tokens={args.max_tokens}")
-    print(f"AR    : {ar_tok:5d} tok  {ar_t:7.3f}s  ->  {ar_tps:8.1f} tok/s   (1x baseline)")
-    print(f"tree  : {tree_tok:5d} tok  {tree_t:7.3f}s  ->  {spec_tps:8.1f} tok/s   "
-          f"accept_len={accept_len:.2f}")
-    print(f"\nWALL-CLOCK spec speedup = {spec_tps / ar_tps:.2f}x   "
-          f"(spec {spec_tps:.0f} tok/s vs AR {ar_tps:.0f} tok/s)")
+    details = _rank_details(
+        [len(prompts), ar_tok, ar_t, tree_tok, tree_t, rounds, acc_sum],
+        device,
+        world_size,
+    )
+
+    if rank == 0:
+        print(f"\nbackend={backend}  head={head_id}  algo={args.algo}")
+        print(f"model={args.model}  attn_implementation={resolved_attn}  "
+              f"torch_compile={args.torch_compile}  fused_moe_blocks={eng.fused_moe_blocks}")
+        print(f"samples={args.samples} world_size={world_size} budget={args.budget} "
+              f"width={args.tree_width} max_tokens={args.max_tokens}")
+        print(f"AR    : {ar_tok_total:5d} tok  {ar_t_max:7.3f}s  ->  {ar_tps:8.1f} tok/s   (1x baseline)")
+        print(f"tree  : {tree_tok_total:5d} tok  {tree_t_max:7.3f}s  ->  {spec_tps:8.1f} tok/s   "
+              f"accept_len={accept_len:.2f}")
+        speedup = spec_tps / ar_tps if ar_tps > 0 else 0.0
+        print(f"\nWALL-CLOCK spec speedup = {speedup:.2f}x   "
+              f"(spec {spec_tps:.0f} tok/s vs AR {ar_tps:.0f} tok/s)")
+        if world_size > 1:
+            print("\nper-rank: rank samples ar_tok ar_s tree_tok tree_s rounds accept_sum")
+            for i, row in enumerate(details):
+                print(
+                    f"  {i:>2d} {int(row[0]):>7d} {int(row[1]):>6d} {row[2]:>7.3f} "
+                    f"{int(row[3]):>8d} {row[4]:>7.3f} {int(row[5]):>6d} {row[6]:>10.1f}"
+                )
+
+    if world_size > 1:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

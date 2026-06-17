@@ -204,7 +204,8 @@ class LLM:
                       budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
-                      profile_table: dict = None, kv_cache_verify: bool = False) -> dict:
+                      profile_table: dict = None, kv_cache_verify: bool = False,
+                      tree_attn: str = "sdpa") -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes in one forward under a 4D ancestor mask, and tree_accept takes the
@@ -244,10 +245,15 @@ class LLM:
             committed = prompt.to(self.device)
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
+        if tree_attn not in {"sdpa", "triton"}:
+            raise ValueError(f"unknown tree_attn {tree_attn!r}; expected 'sdpa' or 'triton'")
+        if tree_attn != "sdpa" and not kv_cache_verify:
+            raise ValueError("tree_attn='triton' requires kv_cache_verify=True")
         if kv_cache_verify:
             return self._generate_tree_kv_cached(
                 committed, tree_drafter, block_size, tree_width, budget, algo_obj,
                 target_layer_ids, sp, return_stats, prompt_info, profile_table,
+                tree_attn,
             )
         dtype = self.model.dtype
         neg = torch.finfo(dtype).min
@@ -330,7 +336,8 @@ class LLM:
     @torch.inference_mode()
     def _generate_tree_kv_cached(self, committed, tree_drafter, block_size, tree_width,
                                  budget, algo_obj, target_layer_ids, sp,
-                                 return_stats, prompt_info, profile_table) -> dict:
+                                 return_stats, prompt_info, profile_table,
+                                 tree_attn: str = "sdpa") -> dict:
         """Tree spec decode over a PERSISTENT target KV cache (the wall-clock path).
 
         Mirrors `generate_chain`'s persistent-cache verify, extended to trees: each
@@ -346,6 +353,11 @@ class LLM:
         from `generate_tree(kv_cache_verify=True)`; args are already parsed there."""
         # tree contract (engine -> tree, one-way): import only the public ptd.tree API
         from ptd.tree import build_ancestor_matrix, tree_accept
+        if tree_attn == "triton":
+            from ptd.engine.tree_attention_kernel import (
+                use_attention_implementation,
+                use_tree_attention,
+            )
 
         dtype = self.model.dtype
         neg = torch.finfo(dtype).min
@@ -387,15 +399,30 @@ class LLM:
             cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
             # 4D additive mask: queries = N nodes; keys = past_len cached prefix
             # (all visible) + N nodes (ancestor mask, incl self).
-            allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-            allowed[:, :past_len] = True
-            allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
-            mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
-                               torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
-            logits, cache, new_hidden = self.runner.forward(
-                seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
-                output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
-            )
+            ancestor = build_ancestor_matrix(tree).bool()
+            if tree_attn == "triton":
+                attn_ancestor = (
+                    tree.ancestor_packed if tree.ancestor_packed is not None
+                    else ancestor.to(dtype=torch.uint8)
+                )
+                with (
+                    use_attention_implementation(self.model, "sdpa"),
+                    use_tree_attention(attn_ancestor, prefix_len=past_len, attn_impl="triton"),
+                ):
+                    logits, cache, new_hidden = self.runner.forward(
+                        seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
+                        output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                    )
+            else:
+                allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
+                allowed[:, :past_len] = True
+                allowed[:, past_len:] = ancestor
+                mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
+                                   torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+                logits, cache, new_hidden = self.runner.forward(
+                    seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
+                    output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                )
             target_logits = logits                                    # (1, N, V) — every row is a tree node
             accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
             # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
