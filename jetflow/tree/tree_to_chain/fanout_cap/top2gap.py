@@ -15,8 +15,8 @@ parent, so the gap is what acceptance actually cares about — which is why this
 beats the entropy gates across budgets/datasets.
 
 Identity recovery: β → 0 gives σ(0) = 0.5 → b_d ≈ K/2, NOT baseline. To recover
-crossproduct exactly: β > 0 with g_0 very LARGE positive (e.g. β=1, g_0=1e9) →
-σ → 1 → b_d → K (byte-identical to crossproduct).
+accum_logp exactly: β > 0 with g_0 very LARGE positive (e.g. β=1, g_0=1e9) →
+σ → 1 → b_d → K (byte-identical to accum_logp).
 
 Caveat: insensitive to tail mass; tricked by flat rankings where rank-1 ≈ rank-2
 but rank-3..K also matter.

@@ -20,12 +20,12 @@ Public contract (the only surface an engine should import — never `jetflow.tre
         -> (accepted_path, acceptance_length, correction_token)
 
 Bundled algorithms, by family:
-- `baselines/`      — crossproduct (the full-fanout baseline).
+- `baselines/`      — accum_logp (the full-fanout baseline).
 - `tree_to_chain/`  — single-pass uncertainty-aware shaping (top2gap_fanout).
 - `semantic_aware/` — prompt-adaptive routing (task_router, reasoning_router,
                       class_histogram).
 - `profile_guided/` — offline-profile-driven shaping (depth_rank_histogram).
-All recover crossproduct at their identity knob. Importing this package
+All recover accum_logp at their identity knob. Importing this package
 registers all of them; `list_algorithms()` enumerates the registry.
 """
 from jetflow.tree._core.base import DraftTree, TreeAlgorithm

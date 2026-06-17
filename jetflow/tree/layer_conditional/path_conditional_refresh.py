@@ -8,7 +8,7 @@ once (~D forwards total, not N). Deployment-grade, not the research-only
 per-node refresh that re-runs the drafter for every node.
 
 Potential: not a standalone winner — raw path-conditioning doesn't beat
-crossproduct at our budgets. Its value is as the LOGITS SOURCE for a
+accum_logp at our budgets. Its value is as the LOGITS SOURCE for a
 composition: feed path-conditional draft logits into top2gap_fanout's per-depth
 gate, replacing the marginal/collapsed logits it reads today. The design-space
 analysis flagged this as the strongest single combination — it uses PTD's real

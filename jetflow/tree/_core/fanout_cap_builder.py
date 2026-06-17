@@ -1,7 +1,7 @@
 """Shared helper: heap loop with per-depth fanout cap.
 
 Used by every algorithm in tree_to_chain/fanout_cap/ (V1, V2, V3, V5, V6).
-Differs from the V0 crossproduct heap loop only in that `children_to_add`
+Differs from the V0 accum_logp heap loop only in that `children_to_add`
 is bounded by a per-depth cap `b_per_depth[d]` instead of the global k.
 """
 from __future__ import annotations
@@ -24,10 +24,10 @@ def build_with_per_depth_cap(
     device: torch.device,
 ) -> DraftTree:
     """Heap loop where children_to_add uses per-depth cap b_per_depth[d]
-    instead of the global k. Identical to crossproduct otherwise.
+    instead of the global k. Identical to accum_logp otherwise.
 
     Identity recovery: if b_per_depth[d] >= k for all d, output is
-    byte-identical to V0 crossproduct.
+    byte-identical to V0 accum_logp.
     """
     D = len(topk_tokens_cpu)
     k = len(topk_tokens_cpu[0]) if D > 0 else 0

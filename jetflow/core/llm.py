@@ -252,7 +252,7 @@ class LLM:
 
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
-                      budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
+                      budget: int = 15, algo: str = "accum_logp", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
                       profile_table: dict = None, tree_attn: str = "sdpa") -> dict:
@@ -268,9 +268,9 @@ class LLM:
         / decoded text) is forwarded to the algorithm's build() for the
         prompt-adaptive (semantic_aware) algorithms; None → they use their
         logit-fingerprint fallback. `profile_table` (optional dict: offline
-        per-(depth,rank) acceptance, from bench/collect_profile.py) is forwarded to
+        per-(depth,rank) acceptance, from bench/profiling/collect_profile.py) is forwarded to
         the profile-guided algorithms (depth_rank_histogram); None → they recover
-        crossproduct. All bundled algorithms recover crossproduct at their identity
+        accum_logp. All bundled algorithms recover accum_logp at their identity
         knobs, so the choice is lossless regardless.
 
         `target_layer_ids` (the head's tapped layers): when set with block_size>1,

@@ -10,7 +10,7 @@ the reverse — so every tree algorithm runs unchanged; the engine choice change
 `jetflow/core` (HF + `DynamicCache` + SDPA 4D mask) is for **clarity, single-clone
 reproducibility, and correctness**. It is single-stream and tops out where the HF
 substrate does. The collaborator's vLLM fork gives the **throughput upper bound**
-(measured: `jetflow_crossproduct` ≡ the fork's native tree, **7.55× decode**) —
+(measured: `jetflow_accum_logp` ≡ the fork's native tree, **7.55× decode**) —
 but it's an external, heavy dependency we don't own. `JetFlow` is the **owned**
 substrate that aims at that ceiling with no external serving dependency, and it now
 reaches it: verify-only `decode_cuda_speedup` **7.31× (cudagraph) / 6.27× (compiled)**
@@ -81,7 +81,7 @@ is target-greedy; fp32 token-identical, lossless gate 21/21) but **not bitwise-e
 to AR greedy in bf16** — one borderline-argmax flip; fp32 is exact. The
 `decode_cuda_speedup` is **verify-only**: the drafter is excluded from both legs via
 a CUDA-event split, matching the fork's `decode_cuda_s` accounting (which wraps only
-the target forward, not the drafter). Reproduce via `bench/identical_fork_compare.py`.
+the target forward, not the drafter). Reproduce via `bench/engine/identical_fork_compare.py`.
 
 > **Superseded:** an earlier eager-mode measurement (no `torch.compile` / CUDA graph)
 > framed the kernel as a batch-scaling crossover — kernel/SDPA = 0.59× @ B8 · 0.80× @

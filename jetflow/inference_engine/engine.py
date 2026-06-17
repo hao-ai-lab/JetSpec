@@ -36,7 +36,7 @@ from jetflow.inference_engine.scheduler import Scheduler, SequenceRequest
 # rows are isolated from real rows by qq_bias and tree_accept never reads them — see
 # `_pad_tree_to_bucket`), so the compiled stack only ever sees these few N values.
 # Buckets were chosen from the measured N distribution on a real gsm8k decode
-# (Qwen3-8B, budget=255, width=7, block_size=16, epoch6 head): the crossproduct heap
+# (Qwen3-8B, budget=255, width=7, block_size=16, epoch6 head): the accum_logp heap
 # fills to the budget cap EVERY round, so N is degenerate at 255 — but the smaller
 # buckets keep early/short-context or smaller-budget runs from recompiling too, and
 # 256 covers the budget=255 steady state (the dominant case). Padding adds at most
@@ -590,7 +590,7 @@ class JetFlowEngine:
 
     @torch.inference_mode()
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
-                      budget: int = 15, algo: str = "crossproduct", algo_kwargs: dict = None,
+                      budget: int = 15, algo: str = "accum_logp", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, prompt_info: dict = None,
                       profile_table: dict = None, tree_diag: bool = False,
@@ -613,7 +613,7 @@ class JetFlowEngine:
         recompute differ in SDPA reduction order). Returns {token_ids, text, tpf}.
 
         `algo` / `algo_kwargs` / `prompt_info` / `profile_table` / `target_layer_ids`
-        mirror `LLM.generate_tree`; all bundled algorithms recover crossproduct at
+        mirror `LLM.generate_tree`; all bundled algorithms recover accum_logp at
         their identity knobs, so the choice is lossless regardless."""
         # tree contract (engine -> tree, one-way): import only the public jetflow.tree API
         from jetflow.tree import get_algorithm, build_ancestor_matrix, tree_accept
@@ -1351,7 +1351,7 @@ class JetFlowEngine:
 
     @torch.inference_mode()
     def generate_tree_batch(self, prompts: list, tree_drafter, block_size: int = 4,
-                            tree_width: int = 2, budget: int = 15, algo: str = "crossproduct",
+                            tree_width: int = 2, budget: int = 15, algo: str = "accum_logp",
                             algo_kwargs: dict = None, sampling_params: SamplingParams = None) -> list:
         """Batched per-sequence TREE-spec decode over the shared multi-seq paged
         cache (JetFlow N2b). Returns a list of `{token_ids, text, tpf}` aligned to
@@ -1389,7 +1389,7 @@ class JetFlowEngine:
         bf16 carries the same SDPA reduction-order caveat as N0/N1/N2a.
 
         `algo` / `algo_kwargs` mirror `generate_tree`; all bundled algorithms recover
-        crossproduct at their identity knobs, so the choice is lossless regardless.
+        accum_logp at their identity knobs, so the choice is lossless regardless.
         Hidden-state-conditioned (DraftHead) drafting is N1-only for now: this batched
         route runs the no-hidden path (`target_hidden=None`), which is what the stub
         drafters that gate it exercise."""

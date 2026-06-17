@@ -22,7 +22,7 @@ Routing signal: `prompt_info["task"]` if supplied; else the same
 logit-fingerprint fallback as `task_router`.
 
 Identity recovery: `force_baseline=True` → b_per_depth = [tree_width] * D
-→ byte-identical to crossproduct.
+→ byte-identical to accum_logp.
 
 Caveat: a real per-class histogram doubles the calibration cost (one histogram
 per class) and rare classes leave noisy histograms.

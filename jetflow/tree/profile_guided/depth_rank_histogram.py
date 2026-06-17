@@ -12,7 +12,7 @@ the table), whereas this keeps every rank whose PROFILED acceptance clears a
 threshold, so it spends extra budget exactly where acceptance data says it pays —
 expanding with the budget instead of capping at a fixed template size.
 
-profile_table schema (produced by bench/collect_profile.py):
+profile_table schema (produced by bench/profiling/collect_profile.py):
 
     {"depth_rank_accept": [[a_00, a_01, ...],   # depth 0: P(accepted child = rank r)
                            [a_10, a_11, ...],   # depth 1
@@ -24,7 +24,7 @@ Cap rule: b_per_depth[d] = #{r : depth_rank_accept[d][r] >= tau}, clamped to
 heap + budget bound then truncate to the most-probable productive paths.
 
 Identity recovery: with no profile_table (None), or tau <= 0, b_per_depth = K at
-every depth -> build_with_per_depth_cap returns byte-identical crossproduct.
+every depth -> build_with_per_depth_cap returns byte-identical accum_logp.
 Lossless for any tree regardless (the verifier only commits its own greedy)."""
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ class DepthRankHistogram(TreeAlgorithm):
 
     def _caps_from_profile(self, profile_table, D: int, K: int) -> list[int]:
         """Per-depth cap = #ranks whose profiled acceptance >= tau, clamped [1, K].
-        No usable profile (or tau <= 0) -> K everywhere (recovers crossproduct)."""
+        No usable profile (or tau <= 0) -> K everywhere (recovers accum_logp)."""
         rows = None
         if profile_table is not None and self.tau > 0.0:
             rows = profile_table.get("depth_rank_accept")

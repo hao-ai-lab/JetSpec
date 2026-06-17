@@ -26,7 +26,7 @@ It is coarser than the per-depth caps (top2gap), so its niche is the
 prompt-granularity rung, not peak accept-length.
 
 Identity recovery: `force_baseline=True` → b_per_depth = [tree_width] * D
-regardless of class → byte-identical to crossproduct.
+regardless of class → byte-identical to accum_logp.
 
 Caveat: templates are hand-tuned and coarse; brittle to model swaps. A learned
 prompt classifier can replace the gap fingerprint without touching build logic.
@@ -113,7 +113,7 @@ class PromptTaskClassifier(TreeAlgorithm):
 
         prompt_info = kwargs.get("prompt_info", None)
 
-        # Per-depth top-k extraction (shared with crossproduct so the
+        # Per-depth top-k extraction (shared with accum_logp so the
         # identity-recovery path is byte-identical).
         log_probs = torch.log_softmax(draft_logits.squeeze(0), dim=-1)  # (D, V)
         k_eff = max(tree_width, 1)
@@ -123,7 +123,7 @@ class PromptTaskClassifier(TreeAlgorithm):
 
         if self.force_baseline:
             # Identity-recovery knob: ignore class entirely, emit the
-            # full crossproduct cap so b_per_depth = [k_eff] * D.
+            # full accum_logp cap so b_per_depth = [k_eff] * D.
             b_per_depth = [k_eff] * D_expected
             return build_with_per_depth_cap(
                 root_token=int(root_token),

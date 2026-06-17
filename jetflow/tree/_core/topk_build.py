@@ -10,7 +10,7 @@ the shared heap builder turns (top-k, caps, budget) into a DraftTree.
 The top-k log-probs are used AS GIVEN (already full-vocab-normalised by the
 proposer), so the cumulative-log-prob heap ordering is faithful — reconstructing
 a dense logits tensor and re-running log_softmax would renormalise over the
-top-k only and distort crossproduct's cross-depth ordering. Result is identical
+top-k only and distort accum_logp's cross-depth ordering. Result is identical
 to ``build()`` when the top-k came from ``log_softmax(dense_logits)`` (build()
 routes through the same ``caps_from_topk``)."""
 from __future__ import annotations
@@ -50,7 +50,7 @@ def build_from_topk(
     if caps_fn is None:
         raise NotImplementedError(
             f"tree algorithm {name!r} has no caps_from_topk; build_from_topk supports the "
-            f"per-depth-cap algorithms (crossproduct, top2gap_fanout, depth_rank_histogram)."
+            f"per-depth-cap algorithms (accum_logp, top2gap_fanout, depth_rank_histogram)."
         )
     b_per_depth = caps_fn(topk_logprobs_cpu, tree_width if tree_width is not None else K, **build_kwargs)
     return build_with_per_depth_cap(

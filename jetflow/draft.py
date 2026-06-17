@@ -88,7 +88,7 @@ class TargetEchoDrafter(Drafter):
 
 class TreeDrafter(ABC):
     """A tree drafter emits per-depth logits `(1, D, vocab)`; the tree algorithm
-    (crossproduct, ...) turns those into a DraftTree. The real DraftHead emits
+    (accum_logp, ...) turns those into a DraftTree. The real DraftHead emits
     these from one forward; the stubs below validate the tree verify path."""
 
     @abstractmethod
@@ -124,7 +124,7 @@ class RandomTreeDrafter(TreeDrafter):
 
 class TargetEchoTreeDrafter(TreeDrafter):
     """Testing stub — per-depth logits = the target's OWN greedy logits, so the
-    crossproduct top-1 path IS the greedy chain → the verify accepts the full
+    accum_logp top-1 path IS the greedy chain → the verify accepts the full
     depth. Proves losslessness + the multi-node-accept path (runs the target, so
     no real speedup)."""
 

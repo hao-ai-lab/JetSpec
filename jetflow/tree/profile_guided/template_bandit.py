@@ -7,7 +7,7 @@ templates and learn online which template a given budget/workload prefers, from
 the realized accept-length reward.
 
 Potential: zero-calibration self-tuning — at low budget the chain template wins,
-at high budget the wide (≈crossproduct) template is fine, and a working bandit
+at high budget the wide (≈accum_logp) template is fine, and a working bandit
 discovers the budget-appropriate endpoint with no offline pass. Primary value is
 robustness (auto-picks chain at small B) for deployments that can't profile;
 expect it to approach but not beat top2gap_fanout (the template family is coarse

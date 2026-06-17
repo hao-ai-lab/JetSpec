@@ -9,12 +9,12 @@ the full 39-variant space; only the ones with a genuine niche are listed.)
 
 | name | family | niche |
 |---|---|---|
-| `crossproduct` | baselines | full-fanout baseline |
+| `accum_logp` | baselines | full-fanout baseline |
 | `top2gap_fanout` | tree_to_chain | low-budget winner (top-2 gap → fanout cap) |
 | `task_router` | semantic_aware | per-prompt fanout template (prompt-adaptive) |
 | `reasoning_router` | semantic_aware | rule-based reasoning→chain (zero-ML) |
 | `class_histogram` | semantic_aware | per-class template; real histogram is a profiler upgrade |
-| `depth_rank_histogram` | profile_guided | per-(depth,rank) acceptance caps from an offline profile (`bench/collect_profile.py`); recovers crossproduct with no profile |
+| `depth_rank_histogram` | profile_guided | per-(depth,rank) acceptance caps from an offline profile (`bench/profiling/collect_profile.py`); recovers accum_logp with no profile |
 
 ## Planned (placeholder files; not registered)
 

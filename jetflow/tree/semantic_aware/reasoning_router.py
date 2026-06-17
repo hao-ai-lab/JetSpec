@@ -19,7 +19,7 @@ Zero ML, microseconds of overhead — a free, interpretable "this is CoT → go
 deep" rule for an engine that already has the prompt text.
 
 Identity recovery: `force_baseline=True` → b_per_depth = [tree_width] * D
-regardless of mode → byte-identical to crossproduct.
+regardless of mode → byte-identical to accum_logp.
 
 Caveat: brittle to model conventions; the regex can misfire on code with
 similar tokens.

@@ -47,13 +47,13 @@ or operate on plain tensors, so they pass on any CPU-only box:
 
 ```bash
 pytest -q \
-  tests/test_build_from_topk.py \
-  tests/test_depth_rank_histogram.py \
-  tests/test_jetflow_attn_metadata.py \
-  tests/test_jetflow_batch.py \
-  tests/test_jetflow_paged_multiseq.py \
-  tests/test_jetflow_tree.py \
-  tests/test_jetflow_tree_batch.py
+  tests/tree/test_build_from_topk.py \
+  tests/tree/test_depth_rank_histogram.py \
+  tests/inference_engine/test_jetflow_attn_metadata.py \
+  tests/inference_engine/test_jetflow_batch.py \
+  tests/inference_engine/test_jetflow_paged_multiseq.py \
+  tests/inference_engine/test_jetflow_tree.py \
+  tests/inference_engine/test_jetflow_tree_batch.py
 ```
 
 ### Full GPU gate

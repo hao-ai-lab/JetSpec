@@ -4,7 +4,7 @@ Reads K/V straight from the block pool via per-sequence block tables and folds
 the per-node ancestor mask in as an additive bias on the scores — no dense KV
 reconstruction, no padding waste. This is the throughput path; the SDPA fallback
 in ``engine.py`` stays the default and the correctness oracle (see
-``tests/test_jetflow_kernel.py``).
+``tests/inference_engine/test_jetflow_kernel.py``).
 
 Pool layout matches ``PagedKVCache``: ``(num_blocks, block_size, Hkv, head_dim)``
 for both K and V. K is **already post-RoPE** (the engine applies RoPE before

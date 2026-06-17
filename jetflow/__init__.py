@@ -23,8 +23,8 @@ _LAZY = {
     "TreeDrafter": "jetflow.draft",
     "RandomTreeDrafter": "jetflow.draft",
     "TargetEchoTreeDrafter": "jetflow.draft",
-    "DraftHeadDrafter": "jetflow.draft_head_drafter",
-    "DraftHeadTreeDrafter": "jetflow.draft_head_drafter",
+    "DraftHeadDrafter": "jetflow.draft_head_adapter",
+    "DraftHeadTreeDrafter": "jetflow.draft_head_adapter",
     "load_draft_head": "jetflow.models.draft_head",
 }
 
