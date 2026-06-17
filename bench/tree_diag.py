@@ -262,17 +262,8 @@ def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[st
 def build_drafter(args, eng: JetFlowEngine):
     head = load_draft_head(os.environ["PTD_DRAFT_HEAD"])
     tli, bs = head.target_layer_ids, head.block_size
-    if args.drafter == "compiled":
-        from ptd.draft_head_drafter import CompiledDraftHead
-        drafter = CompiledDraftHead(head, target=eng.model, block_size=bs,
-                                    target_layer_ids=tli, draft_shift=False)
-    elif args.drafter == "graphed":
-        from ptd.draft_head_drafter import GraphedDraftHead
-        drafter = GraphedDraftHead(head, target=eng.model, block_size=bs,
+    drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
                                    target_layer_ids=tli, draft_shift=False)
-    else:
-        drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
-                                       target_layer_ids=tli, draft_shift=False)
     return drafter, tli, bs
 
 
@@ -283,7 +274,6 @@ def parse_args():
     ap.add_argument("--budget", type=int, default=127)
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", type=str, default="crossproduct")
-    ap.add_argument("--drafter", choices=("eager", "compiled", "graphed"), default="eager")
     ap.add_argument("--session", action="store_true",
                     help="reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
@@ -368,7 +358,7 @@ def main():
         tree_width=args.tree_width,
         budget=args.budget,
         algo=args.algo,
-        drafter=args.drafter,
+        drafter="eager",
     ), end="")
 
 

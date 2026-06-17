@@ -11,7 +11,7 @@ from torch.profiler import profile, ProfilerActivity
 from ptd.engine.llm import SamplingParams
 from ptd.jetflow.engine import JetFlowEngine
 from ptd.models.draft_head import load_draft_head
-from ptd.draft_head_drafter import GraphedDraftHead
+from ptd.draft_head_drafter import DraftHeadTreeDrafter
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -28,8 +28,8 @@ def main():
                         attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
     tli, bs = head.target_layer_ids, head.block_size
-    drafter = GraphedDraftHead(head, target=eng.model, block_size=bs,
-                               target_layer_ids=tli, draft_shift=False)
+    drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
+                                   target_layer_ids=tli, draft_shift=False)
 
     from datasets import load_dataset
     ds = load_dataset("openai/gsm8k", "main", split="test")

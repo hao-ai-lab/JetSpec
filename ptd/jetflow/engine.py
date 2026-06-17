@@ -623,6 +623,9 @@ class JetFlowEngine:
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
+        reset_drafter_cache = getattr(tree_drafter, "reset_cache", None)
+        if reset_drafter_cache is not None:
+            reset_drafter_cache()
         prompt_len = committed.shape[1]
         configured_max_tree_depth = (
             block_size - 1 if max_tree_depth is None else int(max_tree_depth)
@@ -1403,6 +1406,9 @@ class JetFlowEngine:
                 ids = p.to(self.device).view(-1).tolist()
             prompt_ids.append([int(t) for t in ids])
         n_seq = len(prompt_ids)
+        reset_drafter_cache = getattr(tree_drafter, "reset_cache", None)
+        if reset_drafter_cache is not None:
+            reset_drafter_cache()
 
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))

@@ -322,7 +322,6 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--max-tokens", type=int, default=256)
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--budget", type=int, default=255)
-    ap.add_argument("--drafter", choices=("eager", "compiled", "graphed"), default="eager")
     ap.add_argument("--session", action="store_true")
     ap.add_argument("--attention-backend", default=None)
     ap.add_argument("--out", required=True, help="output JSON path")
@@ -394,7 +393,7 @@ def main() -> None:
             "max_tokens": args.max_tokens,
             "algo": "crossproduct",
             "attention_backend": backend,
-            "drafter": args.drafter,
+            "drafter": "eager",
             "session": bool(args.session),
         },
     )

@@ -153,8 +153,15 @@ def tree_accept(
         acceptance_length: number of accepted draft tokens (excludes root).
         correction_token:  target posterior at the last accepted node.
     """
-    posterior = _sample_greedy(target_logits, temperature)  # (1, N)
-    posterior_tokens = posterior.squeeze(0).tolist()
+    logits = target_logits.reshape(-1, target_logits.shape[-1])
+    if logits.shape[0] < tree.num_nodes:
+        raise ValueError(
+            f"target_logits has {logits.shape[0]} positions, expected at least {tree.num_nodes}"
+        )
+    if logits.shape[0] != tree.num_nodes:
+        logits = logits[-tree.num_nodes:]
+    posterior = _sample_greedy(logits, temperature)  # (N,)
+    posterior_tokens = [int(token) for token in posterior.reshape(-1).tolist()]
 
     if tree.child_maps is None:
         token_ids = tree.token_ids.tolist()

@@ -66,7 +66,7 @@ The `JetFlow` engine ships paged, lossless tree-spec decode via `torch.compile` 
 - The engine core is **~3.8k lines** (vs ~560k lines of Python in vLLM): the condensation is the point — fork-class throughput from a codebase you can read in an afternoon.
 - **Lossless:** fp32 token-identical to an SDPA oracle; bf16 is lossless-by-construction (each accepted token is target-greedy) but not bitwise-equal to AR greedy — borderline-argmax flips move with kernel reduction order. fp32 is exact.
 
-Production configuration: `JETFLOW_FUSE_GEMMS=1`, `attn_backend="triton_paged_tree_cudagraph_nogather"`, graphed drafter, `session=True`. Reproduce the table with `bench/tps_walltime.py` (add `--algo top2gap_fanout --budget 63` for the rows below; per-dataset fingerprints: `bench/tree_diag.py`); verify-only GPU-time comparison: `bench/identical_fork_compare.py`.
+Production configuration: `JETFLOW_FUSE_GEMMS=1`, `attn_backend="triton_paged_tree_cudagraph_nogather"`, reference-style draft head, `session=True`. Reproduce the table with `bench/tps_walltime.py` (add `--algo top2gap_fanout --budget 63` for the rows below; per-dataset fingerprints: `bench/tree_diag.py`); verify-only GPU-time comparison: `bench/identical_fork_compare.py`.
 
 ### Choosing a tree algorithm
 

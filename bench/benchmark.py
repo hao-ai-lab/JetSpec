@@ -9,16 +9,19 @@ regressions). For each tree algorithm it reports:
                Acceptance length"; reference def is acceptance_length+1, ours too)
   d0..d3       per-position acceptance rate (fraction of steps with accept_len >= k+2)
   tree         mean tree node count per step
-  ar_tps       autoregressive-greedy tokens/sec (the 1x wall-clock baseline)
-  spec_tps     speculative tokens/sec
+  ar_tps       autoregressive-greedy decode tokens/sec (prefill excluded)
+  spec_tps     speculative decode tokens/sec (prefill/first draft prefill excluded)
   speedup      wall-clock = ar_time_per_token / spec_time_per_token
-  lossless     mean exact-prefix (tokens matching AR greedy before the first
-               divergence) as a fraction of generated length; 1.00 = byte-identical
+  lossless     mean exact-prefix (tokens matching measured AR KV-cache greedy
+               before the first divergence) as a fraction of generated length;
+               1.00 = byte-identical
 
-WALL-CLOCK CAVEAT: ptd's tree verify is recompute-based (no KV reuse yet — see
-the tree-KV-cache task), so spec_tps / speedup UNDERSTATE what the engine will do
-with cached verify. accept_len / d_k / tree / lossless are cache-independent and
-ARE the apples-to-apples parity metrics vs the reference.
+The reference-style wall-clock path uses persistent KV tree verify
+(`--kv-cache-verify`). AR TPS is measured with the KV-cache greedy baseline,
+and `lossless` compares speculative tokens against that same serving-style
+baseline. Full-recompute comparison is available via `--debug-lossless`.
+Like the reference benchmark, TPS excludes prefill/setup from per-output-token
+decode timing.
 
     CUDA_VISIBLE_DEVICES=0 PTD_TEST_MODEL=Qwen/Qwen3-8B \
       PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
@@ -135,17 +138,36 @@ def _exact_prefix(a, b):
     return n
 
 
+def _divergence_summary(name_a: str, a: list[int], name_b: str, b: list[int]) -> str:
+    ep = _exact_prefix(a, b)
+    a_tok = a[ep] if ep < len(a) else "<end>"
+    b_tok = b[ep] if ep < len(b) else "<end>"
+    return (
+        f"{name_a} vs {name_b}: prefix={ep}/{max(1, min(len(a), len(b)))} "
+        f"next=({a_tok}, {b_tok}) lens=({len(a)}, {len(b)})"
+    )
+
+
+def _build_drafter(head, target, block_size: int, target_layer_ids):
+    return DraftHeadTreeDrafter(
+        head, target=target, block_size=block_size,
+        target_layer_ids=target_layer_ids, draft_shift=False,
+    )
+
+
 @torch.inference_mode()
 def _recompute_greedy(llm, prompt, n):
-    """Greedy via full recompute — the SAME block-forward numerics the spec verify
-    uses, so the only residual mismatch is the bf16 reduction-order flip. This is
-    the honest losslessness reference (vs KV-cache AR greedy, which differs from
-    the recompute path in bf16 regardless of spec correctness)."""
+    """Greedy by full-context recompute every token.
+
+    This is intentionally separate from the measured AR KV-cache baseline and is
+    used only by `--debug-lossless` to expose bf16/FA2 differences between
+    serving-style KV-cache decoding and full recompute.
+    """
     ids = llm.tokenizer(prompt, return_tensors="pt").input_ids.to(llm.device)
     out, cur = [], ids
     for _ in range(n):
         pos = torch.arange(cur.shape[1], device=llm.device).unsqueeze(0)
-        logits, _, _ = llm.runner.forward(cur, DynamicCache(), pos)
+        logits, _, _ = llm.runner.forward(cur, DynamicCache(), pos, last_position_logits_only=True)
         t = int(logits[0, -1].argmax())
         out.append(t)
         if t in llm.eos_token_ids:
@@ -189,6 +211,8 @@ def main():
                     help="JSON profile_table (bench/collect_profile.py) for depth_rank_histogram")
     ap.add_argument("--b2-tau", type=float, default=None,
                     help="override depth_rank_histogram tau (per-(depth,rank) accept cutoff)")
+    ap.add_argument("--debug-lossless", type=int, default=0,
+                    help="on rank 0, print first-divergence diagnostics for N local prompts")
     args = ap.parse_args()
     profile_table = None
     if args.profile:
@@ -227,8 +251,7 @@ def main():
     head = load_draft_head(head_path, device=device, attn_implementation=resolved_attn)
     tli = head.target_layer_ids
     bs = head.block_size
-    drafter = DraftHeadTreeDrafter(head, target=llm.model, block_size=bs,
-                                   target_layer_ids=tli, draft_shift=False)
+    drafter = _build_drafter(head, llm.model, bs, tli)
     all_prompts = build_prompts(llm.tokenizer, args.dataset, args.samples)
     prompts = all_prompts[rank::world_size]
     sp = SamplingParams(0.0, args.max_new)
@@ -250,30 +273,49 @@ def main():
         torch.cuda.synchronize()
 
     # AR-greedy (KV-cache) baseline = the 1x wall-clock denominator.
-    ar_outs, ar_latency_local = _timed_samples(lambda p: llm.generate(p, sp), prompts, world_size)
+    ar_outs, ar_wall_latency_local = _timed_samples(lambda p: llm.generate(p, sp), prompts, world_size)
     ar_tokens = [out["token_ids"] for out in ar_outs]
     ar_ntok_local = sum(len(t) for t in ar_tokens)
     ar_ntok = int(_all_reduce_sum(ar_ntok_local, device, world_size))
-    ar_latency = _all_reduce_sum(ar_latency_local, device, world_size)
+    ar_decode_latency_local = sum(float(out.get("decode_time", 0.0)) for out in ar_outs)
+    ar_latency = _all_reduce_sum(ar_decode_latency_local, device, world_size)
+    ar_wall_latency = _all_reduce_sum(ar_wall_latency_local, device, world_size)
     ar_tps = ar_ntok / ar_latency if ar_latency > 0 else 0.0
-    # Recompute-greedy = the losslessness reference (matching block-forward numerics).
-    rg_tokens = [_recompute_greedy(llm, p, args.max_new) for p in prompts]
-
+    recompute_tokens = (
+        [_recompute_greedy(llm, p, args.max_new) for p in prompts]
+        if args.debug_lossless > 0 else None
+    )
+    ar_recompute_lossless = None
+    if recompute_tokens is not None:
+        ar_recompute_fracs = [
+            _exact_prefix(recompute, ar) / max(1, len(ar))
+            for recompute, ar in zip(recompute_tokens, ar_tokens)
+        ]
+        ar_recompute_sum = _all_reduce_sum(sum(ar_recompute_fracs), device, world_size)
+        ar_recompute_count = _all_reduce_sum(len(ar_recompute_fracs), device, world_size)
+        ar_recompute_lossless = (
+            ar_recompute_sum / ar_recompute_count if ar_recompute_count else 0.0
+        )
     if rank == 0:
         print(f"\nmodel={args.model} head={head_path}")
         print(f"dataset={args.dataset} samples={len(all_prompts)} world_size={world_size} "
               f"block_size={bs} width={args.width} budget={args.budget} max_new={args.max_new}")
         print(f"attn_implementation={resolved_attn} torch_compile={args.torch_compile} "
-              f"fused_moe_blocks={fused_moe_blocks} tree_attn={args.tree_attn}")
+              f"fused_moe_blocks={fused_moe_blocks} tree_attn={args.tree_attn} "
+              f"draft_attn={resolved_attn}")
         ar_avg_ms = 1000.0 * ar_latency / len(all_prompts) if all_prompts else 0.0
+        ar_wall_avg_ms = 1000.0 * ar_wall_latency / len(all_prompts) if all_prompts else 0.0
         print(f"AR-greedy baseline: {ar_tps:.1f} tok/s/gpu  "
-              f"({ar_ntok} tok, avg_latency={ar_avg_ms:.1f} ms/sample)\n")
+              f"({ar_ntok} tok, avg_decode_latency={ar_avg_ms:.1f} ms/sample, "
+              f"avg_wall_latency={ar_wall_avg_ms:.1f} ms/sample)\n")
+        if ar_recompute_lossless is not None:
+            print(f"AR KV-cache vs full-recompute exact-prefix: {ar_recompute_lossless:.3f}\n")
         hdr = (f"{'algorithm':<22}{'accept_len':>11}{'d0':>7}{'d1':>7}{'d2':>7}{'d3':>7}"
                f"{'tree':>7}{'spec_tps/gpu':>13}{'speedup':>9}{'lossless':>10}")
         print(hdr); print("-" * len(hdr))
 
     for algo in algos:
-        outs, spec_latency_local = _timed_samples(
+        outs, spec_wall_latency_local = _timed_samples(
             lambda p: llm.generate_tree(
                 p, drafter, block_size=bs, tree_width=args.width, budget=args.budget,
                 algo=algo, algo_kwargs=ALGO_KWARGS[algo], target_layer_ids=tli,
@@ -285,10 +327,10 @@ def main():
 
         all_acc, all_tree, loss_fracs = [], [], []
         spec_ntok_local = 0
-        for out, rg in zip(outs, rg_tokens):
+        for out, ar in zip(outs, ar_tokens):
             all_acc += out["accept_lengths"]; all_tree += out["tree_sizes"]
             spec_ntok_local += len(out["token_ids"])
-            ep = _exact_prefix(rg, out["token_ids"])
+            ep = _exact_prefix(ar, out["token_ids"])
             loss_fracs.append(ep / max(1, len(out["token_ids"])))
 
         acc_sum = _all_reduce_sum(sum(all_acc), device, world_size)
@@ -302,7 +344,8 @@ def main():
             for k in range(4)
         ]
         spec_ntok = int(_all_reduce_sum(spec_ntok_local, device, world_size))
-        spec_latency = _all_reduce_sum(spec_latency_local, device, world_size)
+        spec_decode_latency_local = sum(float(out.get("decode_time", 0.0)) for out in outs)
+        spec_latency = _all_reduce_sum(spec_decode_latency_local, device, world_size)
 
         tau = acc_sum / acc_count if acc_count else 0.0
         per_pos = [count / acc_count if acc_count else 0.0 for count in pos_counts]
@@ -314,15 +357,38 @@ def main():
         if rank == 0:
             print(f"{algo:<22}{tau:>11.2f}" + "".join(f"{r:>7.2f}" for r in per_pos) +
                   f"{tree_avg:>7.0f}{spec_tps:>13.1f}{speedup:>9.2f}{lossless:>10.3f}")
+
+        if rank == 0 and args.debug_lossless > 0:
+            n_debug = min(args.debug_lossless, len(prompts), len(outs))
+            if n_debug:
+                print(f"\nlossless debug ({algo}, first {n_debug} rank-0 prompts):")
+            for i in range(n_debug):
+                prompt = prompts[i]
+                spec_kv = outs[i]["token_ids"]
+                ar = ar_tokens[i]
+                recompute = recompute_tokens[i]
+                spec_recompute = llm.generate_tree(
+                    prompt, drafter, block_size=bs, tree_width=args.width,
+                    budget=args.budget, algo=algo, algo_kwargs=ALGO_KWARGS[algo],
+                    target_layer_ids=tli, sampling_params=sp, return_stats=True,
+                    kv_cache_verify=False,
+                    tree_attn="sdpa",
+                    profile_table=profile_table)["token_ids"]
+                print(f"  prompt[{i}]:")
+                print("    " + _divergence_summary("ar_kv", ar, "recompute", recompute))
+                print("    " + _divergence_summary("spec_kv", spec_kv, "ar_kv", ar))
+                print("    " + _divergence_summary("spec_kv", spec_kv, "recompute", recompute))
+                print("    " + _divergence_summary("spec_recompute", spec_recompute, "recompute", recompute))
+                print("    " + _divergence_summary("spec_recompute", spec_recompute, "ar_kv", ar))
     if rank == 0:
         verify_note = ("persistent KV-cache verify (real wall-clock)" if args.kv_cache_verify
                        else "recompute verify -> spec_tps/speedup UNDERSTATE; pass --kv-cache-verify for real wall-clock")
         print("\naccept_len = tokens/forward (= reference Average Acceptance length). "
               "d_k = per-position accept rate. lossless = mean exact-prefix fraction vs "
-              "recompute-greedy (matching numerics; <1.0 = a late bf16 reduction-order flip, "
-              f"not a spec error). verify mode: {verify_note}. "
-              "tok/s/gpu is latency-derived: global tokens / summed sample latency, "
-              "not data-parallel aggregate throughput.")
+              f"the measured AR KV-cache greedy baseline. verify mode: {verify_note}. "
+              "tok/s/gpu is latency-derived from summed per-sample decode time "
+              "(prefill/setup excluded, matching reference), not data-parallel "
+              "aggregate throughput.")
 
     if world_size > 1:
         dist.destroy_process_group()

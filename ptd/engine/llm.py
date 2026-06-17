@@ -6,6 +6,7 @@ This is the 1x baseline; the draft head + tree verify build on the same seam.
 Single sequence, batch=1 (the offline-inference regime).
 """
 from dataclasses import dataclass
+import time
 
 import torch
 from transformers import DynamicCache
@@ -32,20 +33,42 @@ def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
     prefix again. Mirrors `DynamicCache.crop` (which slices `[..., :max_length, :]`
     along the seq dim) but for a non-contiguous keep set.
     """
+    def _prefix_len(idx: torch.Tensor) -> int:
+        if idx.numel() == 0:
+            return 0
+        ar = torch.arange(idx.numel(), device=idx.device, dtype=idx.dtype)
+        diff = (idx != ar).nonzero(as_tuple=False)
+        return int(diff[0, 0].item()) if diff.numel() else int(idx.numel())
+
+    def _select_or_compact(keys, values, idx):
+        idx = idx.to(keys.device)
+        new_len = int(idx.numel())
+        prefix_len = _prefix_len(idx)
+        if prefix_len > 0:
+            # Fast path for tree verify: keep_index = [0..prefix_len-1, accepted_tree_slots...].
+            # The prefix is already in place, so only move accepted tree KV down and
+            # then slice. This avoids O(prefix_len) copies per tree round.
+            suffix = idx[prefix_len:]
+            if suffix.numel():
+                kept_keys = keys.index_select(-2, suffix)
+                kept_values = values.index_select(-2, suffix)
+                keys[..., prefix_len:new_len, :].copy_(kept_keys)
+                values[..., prefix_len:new_len, :].copy_(kept_values)
+            return keys[..., :new_len, :], values[..., :new_len, :]
+        return keys.index_select(-2, idx), values.index_select(-2, idx)
+
     layers = getattr(cache, "layers", None)
     if layers is not None:                       # transformers >= 4.54 (DynamicLayer)
         for layer in layers:
             keys = getattr(layer, "keys", None)
             if keys is None:
                 continue                         # uninitialized / sliding layer — nothing cached
-            idx = keep_index.to(keys.device)
-            layer.keys = keys.index_select(-2, idx)
-            layer.values = layer.values.index_select(-2, idx)
+            layer.keys, layer.values = _select_or_compact(keys, layer.values, keep_index)
     else:                                        # legacy key_cache / value_cache lists
         for i in range(len(cache.key_cache)):
-            idx = keep_index.to(cache.key_cache[i].device)
-            cache.key_cache[i] = cache.key_cache[i].index_select(-2, idx)
-            cache.value_cache[i] = cache.value_cache[i].index_select(-2, idx)
+            cache.key_cache[i], cache.value_cache[i] = _select_or_compact(
+                cache.key_cache[i], cache.value_cache[i], keep_index
+            )
 
 
 class LLM:
@@ -78,6 +101,30 @@ class LLM:
                 ids.add(int(src))
         return ids
 
+    def _sample_last(self, logits: torch.Tensor, temperature: float) -> torch.Tensor:
+        """Sample exactly one next token from the final logits row.
+
+        Some HF backends may ignore/reshape the final-logits-only hint in
+        prefill-like calls, so keep this scalar boundary explicit and robust.
+        """
+        if logits.dim() == 2:
+            logits = logits.unsqueeze(1)
+        else:
+            logits = logits[:, -1:, :]
+        tok = sample(logits, temperature).reshape(-1)[-1]
+        return tok.view(1, 1)
+
+    def _reset_drafter_cache(self, drafter) -> None:
+        reset = getattr(drafter, "reset_cache", None)
+        if reset is not None:
+            reset()
+
+    def _timer(self) -> float:
+        device = torch.device(self.device)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        return time.perf_counter()
+
     @torch.inference_mode()
     def generate(self, prompt, sampling_params: SamplingParams = None) -> dict:
         """Greedy/temperature decode. `prompt` is a str (tokenized raw) or an
@@ -92,23 +139,25 @@ class LLM:
 
         # --- prefill: process the whole prompt once, sample the first token ---
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
-        logits, cache, _ = self.runner.forward(input_ids, cache, pos)
-        next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
+        logits, cache, _ = self.runner.forward(input_ids, cache, pos, last_position_logits_only=True)
+        next_tok = self._sample_last(logits, sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
+        decode_start = self._timer()
 
         # --- decode: single-token steps reusing the KV cache (no reprocess) ---
         for _ in range(sp.max_new_tokens - 1):
             if out_ids[-1] in self.eos_token_ids:
                 break
             pos = torch.tensor([[cur]], device=self.device)
-            logits, cache, _ = self.runner.forward(next_tok, cache, pos)
-            next_tok = sample(logits[:, -1:, :], sp.temperature)
+            logits, cache, _ = self.runner.forward(next_tok, cache, pos, last_position_logits_only=True)
+            next_tok = self._sample_last(logits, sp.temperature)
             out_ids.append(int(next_tok.item()))
             cur += 1
 
+        decode_time = self._timer() - decode_start
         text = self.tokenizer.decode(out_ids, skip_special_tokens=True)
-        return {"token_ids": out_ids, "text": text}
+        return {"token_ids": out_ids, "text": text, "decode_time": decode_time}
 
     @torch.inference_mode()
     def generate_chain(self, prompt, drafter, block_size: int = 4,
@@ -137,6 +186,7 @@ class LLM:
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
+        self._reset_drafter_cache(drafter)
         k = max(1, block_size - 1)
         need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
@@ -148,10 +198,11 @@ class LLM:
         logits, cache, full_hidden = self.runner.forward(
             committed, cache, pos,
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+            last_position_logits_only=True,
         )
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; next anchor (first_tok) fed via noise
-        first_tok = sample(logits[:, -1:, :], sp.temperature)
+        first_tok = self._sample_last(logits, sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet in cache
         if int(first_tok.item()) in self.eos_token_ids:
@@ -243,6 +294,7 @@ class LLM:
             committed = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             committed = prompt.to(self.device)
+        self._reset_drafter_cache(tree_drafter)
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         if tree_attn not in {"sdpa", "triton"}:
@@ -267,18 +319,22 @@ class LLM:
         logits, _, full_hidden = self.runner.forward(
             committed, DynamicCache(), pos,
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+            last_position_logits_only=True,
         )
         if full_hidden is not None:
             target_hidden = full_hidden          # full prompt context (next anchor = first_tok, fed via noise)
-        first_tok = sample(logits[:, -1:, :], sp.temperature)
+        first_tok = self._sample_last(logits, sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
-            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0, "decode_time": 0.0}
 
+        decode_start = None
         while len(new_ids) < sp.max_new_tokens:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
+            if decode_start is None:
+                decode_start = self._timer()
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
@@ -326,7 +382,8 @@ class LLM:
                 break
         new_ids = new_ids[: sp.max_new_tokens]
         text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
-        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
+        decode_time = (self._timer() - decode_start) if decode_start is not None else 0.0
+        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0), "decode_time": decode_time}
         if return_stats:
             out["accept_lengths"] = accept_lengths   # per-round (acc+1)
             out["tree_sizes"] = tree_sizes           # per-round node count
@@ -373,21 +430,25 @@ class LLM:
         logits, cache, full_hidden = self.runner.forward(
             committed, cache, pos,
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+            last_position_logits_only=True,
         )
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
-        first_tok = sample(logits[:, -1:, :], sp.temperature)
+        first_tok = self._sample_last(logits, sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
-            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
+            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0, "decode_time": 0.0}
 
         # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
         # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
         # the anchor (= tree root), which enters the cache via the verify forward.
+        decode_start = None
         while len(new_ids) < sp.max_new_tokens:
             draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
+            if decode_start is None:
+                decode_start = self._timer()
             tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
                                   prompt_info=prompt_info, profile_table=profile_table)
             N = tree.num_nodes
@@ -453,7 +514,8 @@ class LLM:
                 break
         new_ids = new_ids[: sp.max_new_tokens]
         text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
-        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0)}
+        decode_time = (self._timer() - decode_start) if decode_start is not None else 0.0
+        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0), "decode_time": decode_time}
         if return_stats:
             out["accept_lengths"] = accept_lengths   # per-round (acc+1)
             out["tree_sizes"] = tree_sizes           # per-round node count

@@ -9,7 +9,7 @@ README Results table:
     JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
       PYTHONPATH=. PTD_DRAFT_HEAD=Snyhlxde/ptd-qwen3-8b-distill-epoch6-3e-4-no-gamma \
       python bench/tps_walltime.py --samples 64 --max-tokens 2048 --budget 127 \
-        --drafter graphed --session --prompt-set gsm8k
+        --session --prompt-set gsm8k
 
 The same script also runs under torchrun; each rank owns a disjoint prompt shard
 and rank 0 reports aggregate throughput using total tokens / slowest-rank wall
@@ -112,21 +112,7 @@ def _rank_details(values: list[float], device: str, world_size: int):
     return [item.cpu().tolist() for item in gathered]
 
 
-def _build_drafter(kind: str, head, eng: JetFlowEngine, block_size: int, target_layer_ids):
-    if kind == "compiled":
-        from ptd.draft_head_drafter import CompiledDraftHead
-
-        return CompiledDraftHead(
-            head, target=eng.model, block_size=block_size,
-            target_layer_ids=target_layer_ids, draft_shift=False,
-        )
-    if kind == "graphed":
-        from ptd.draft_head_drafter import GraphedDraftHead
-
-        return GraphedDraftHead(
-            head, target=eng.model, block_size=block_size,
-            target_layer_ids=target_layer_ids, draft_shift=False,
-        )
+def _build_drafter(head, eng: JetFlowEngine, block_size: int, target_layer_ids):
     return DraftHeadTreeDrafter(
         head, target=eng.model, block_size=block_size,
         target_layer_ids=target_layer_ids, draft_shift=False,
@@ -150,8 +136,6 @@ def main():
     ap.add_argument("--budget", type=int, default=255)
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", default="crossproduct")
-    ap.add_argument("--drafter", default="eager", choices=["eager", "compiled", "graphed"],
-                    help="L4: route propose_logits through the W2 wrappers (accept_len-gated)")
     ap.add_argument("--session", action="store_true",
                     help="W11: reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
@@ -183,7 +167,7 @@ def main():
         attn_implementation=resolved_attn,
     )
     tli, bs = head.target_layer_ids, head.block_size
-    drafter = _build_drafter(args.drafter, head, eng, bs, tli)
+    drafter = _build_drafter(head, eng, bs, tli)
 
     bank = _load_prompt_bank(args.prompt_set, args.samples)
     shard_bank = bank[rank::world_size]
@@ -235,7 +219,8 @@ def main():
     if rank == 0:
         print(f"\nbackend={backend}  head={head_id}  algo={args.algo}")
         print(f"model={args.model}  attn_implementation={resolved_attn}  "
-              f"torch_compile={args.torch_compile}  fused_moe_blocks={eng.fused_moe_blocks}")
+              f"draft_attn={resolved_attn}  torch_compile={args.torch_compile}  "
+              f"fused_moe_blocks={eng.fused_moe_blocks}")
         print(f"samples={args.samples} world_size={world_size} budget={args.budget} "
               f"width={args.tree_width} max_tokens={args.max_tokens}")
         print(f"AR    : {ar_tok_total:5d} tok  {ar_t_max:7.3f}s  ->  {ar_tps:8.1f} tok/s   (1x baseline)")

@@ -72,8 +72,6 @@ def main():
     ap.add_argument("--budget", type=int, default=255)
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", default="crossproduct")
-    ap.add_argument("--drafter", default="eager", choices=["eager", "compiled", "graphed"],
-                    help="L4: route propose_logits through the W2 wrappers (matches tps_walltime)")
     ap.add_argument("--cprofile", action="store_true",
                     help="also run ONE decode under cProfile and print top host-side "
                          "functions by tottime (exposes the un-patched OTHER python work)")
@@ -88,17 +86,8 @@ def main():
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
     tli, bs = head.target_layer_ids, head.block_size
-    if args.drafter == "compiled":
-        from ptd.draft_head_drafter import CompiledDraftHead
-        drafter = CompiledDraftHead(head, target=eng.model, block_size=bs,
-                                    target_layer_ids=tli, draft_shift=False)
-    elif args.drafter == "graphed":
-        from ptd.draft_head_drafter import GraphedDraftHead
-        drafter = GraphedDraftHead(head, target=eng.model, block_size=bs,
+    drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
                                    target_layer_ids=tli, draft_shift=False)
-    else:
-        drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
-                                       target_layer_ids=tli, draft_shift=False)
 
     from datasets import load_dataset
     ds = load_dataset("openai/gsm8k", "main", split="test")

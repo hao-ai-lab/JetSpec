@@ -58,6 +58,7 @@ class ModelRunner:
         target_layer_ids=None,
         attention_mask=None,
         cache_position=None,
+        last_position_logits_only: bool = False,
     ):
         """One target forward step. Returns (logits, past_key_values, target_hidden).
 
@@ -76,6 +77,11 @@ class ModelRunner:
 
         `attention_mask` lets the tree-verify path route its 4D additive ancestor
         mask through this same forward (keeping the single-seam invariant).
+
+        `last_position_logits_only` asks HF to materialize only the final logits
+        position when callers only need next-token scores. This is equivalent to
+        `logits_to_keep=1` in model-specific HF forwards, but keeps this runner's
+        API named after the behavior the rest of the engine relies on.
         """
         with _masked_verify_attention(self.model, attention_mask):
             out = self.model(
@@ -86,6 +92,7 @@ class ModelRunner:
                 cache_position=cache_position,
                 use_cache=True,
                 output_hidden_states=output_hidden_states,
+                logits_to_keep=1 if last_position_logits_only else 0,
             )
         target_hidden = None
         if output_hidden_states and target_layer_ids is not None:
