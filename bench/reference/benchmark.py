@@ -144,7 +144,7 @@ def main():
     ap.add_argument("--tree-attn", default="triton", choices=["sdpa", "triton"],
                     help="tree verify attention backend")
     ap.add_argument("--profile", default=None,
-                    help="JSON profile_table (bench/profiling/collect_profile.py) for depth_rank_histogram")
+                    help="JSON profile_table (bench/profiling/collect_depth_rank_stats.py) for depth_rank_histogram")
     ap.add_argument("--b2-tau", type=float, default=None,
                     help="override depth_rank_histogram tau (per-(depth,rank) accept cutoff)")
     args = ap.parse_args()

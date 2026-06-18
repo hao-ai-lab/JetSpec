@@ -81,7 +81,7 @@ is target-greedy; fp32 token-identical, lossless gate 21/21) but **not bitwise-e
 to AR greedy in bf16** — one borderline-argmax flip; fp32 is exact. The
 `decode_cuda_speedup` is **verify-only**: the drafter is excluded from both legs via
 a CUDA-event split, matching the fork's `decode_cuda_s` accounting (which wraps only
-the target forward, not the drafter). Reproduce via `bench/engine/identical_fork_compare.py`.
+the target forward, not the drafter). Reproduce via `bench/profiling/compare_engine_with_vllm_integration.py`.
 
 > **Superseded:** an earlier eager-mode measurement (no `torch.compile` / CUDA graph)
 > framed the kernel as a batch-scaling crossover — kernel/SDPA = 0.59× @ B8 · 0.80× @

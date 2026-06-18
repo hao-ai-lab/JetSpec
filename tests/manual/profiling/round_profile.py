@@ -12,7 +12,7 @@ want to see). The total is the real (un-instrumented-inner) generate_tree wall.
     JETFLOW_BACKEND=triton_paged_tree_cudagraph \
       CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
       JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
-      python bench/profiling/round_profile.py --samples 3 --budget 255
+      python tests/manual/profiling/round_profile.py --samples 3 --budget 255
 """
 import argparse
 import os

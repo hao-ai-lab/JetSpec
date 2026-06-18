@@ -2,7 +2,7 @@
 
 Reports REAL wall-clock tokens/sec (time.perf_counter), NOT GPU-self-time —
 i.e. what a user actually sees, including host/Python overhead. Complements
-bench/engine/identical_fork_compare.py (which reports decode_cuda_speedup =
+bench/profiling/compare_engine_with_vllm_integration.py (which reports decode_cuda_speedup =
 GPU-self-time, drafter-excluded). The production configuration behind the
 README Results table:
 

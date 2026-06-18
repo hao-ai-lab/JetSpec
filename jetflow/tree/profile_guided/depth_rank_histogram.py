@@ -12,7 +12,7 @@ the table), whereas this keeps every rank whose PROFILED acceptance clears a
 threshold, so it spends extra budget exactly where acceptance data says it pays —
 expanding with the budget instead of capping at a fixed template size.
 
-profile_table schema (produced by bench/profiling/collect_profile.py):
+profile_table schema (produced by bench/profiling/collect_depth_rank_stats.py):
 
     {"depth_rank_accept": [[a_00, a_01, ...],   # depth 0: P(accepted child = rank r)
                            [a_10, a_11, ...],   # depth 1

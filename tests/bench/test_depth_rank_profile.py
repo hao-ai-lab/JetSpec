@@ -6,8 +6,8 @@ import torch
 from jetflow.tree import get_algorithm
 from jetflow.tree._core.base import DraftTree
 
-from bench.profiling import build_depth_rank_profile as profile_mod
-from bench.profiling.build_depth_rank_profile import (
+from bench.profiling import depth_rank_profile as profile_mod
+from bench.profiling.depth_rank_profile import (
     DepthRankProfileCounts,
     accepted_path_from_committed_tokens,
     accumulate_generation_profile,

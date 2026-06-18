@@ -281,7 +281,7 @@ def parse_args():
     ap.add_argument("--dump-first-rounds", type=int, default=0,
                     help="dump drafter top-k tokens/logprobs for the first K rounds of the first prompt")
     ap.add_argument("--profile-json", default=None,
-                    help="profile_table JSON for profile-guided algos (bench/profiling/build_depth_rank_profile.py output)")
+                    help="profile_table JSON for profile-guided algos (bench/profiling/depth_rank_profile.py output)")
     ap.add_argument("--tau", type=float, default=None,
                     help="acceptance threshold kwarg for depth_rank_histogram")
     ap.add_argument("--extend-budget", type=int, default=None,

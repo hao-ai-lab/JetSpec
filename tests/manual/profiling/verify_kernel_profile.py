@@ -9,7 +9,7 @@ weight-streaming floor (~2.3ms @ 8TB/s for 16GB bf16 weights).
 
     JETFLOW_BACKEND=triton_paged_tree_compiled_nogather HF_DATASETS_CACHE=... \
       CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. JETFLOW_DRAFT_HEAD=... \
-      python bench/profiling/verify_kernel_profile.py --max-tokens 256 --budget 127
+      python tests/manual/profiling/verify_kernel_profile.py --max-tokens 256 --budget 127
 """
 import argparse
 import os

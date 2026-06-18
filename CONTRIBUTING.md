@@ -52,6 +52,8 @@ Top-level scripts are grouped by purpose:
 - **`bench/debug/`** — diagnostics and probes.
 - **`examples/basic/`**, **`examples/tree/`**, **`examples/engine/`** — runnable
   examples grouped by scope.
+- **`tests/manual/profiling/`** — scratch/manual profiling utilities that are not
+  part of normal benchmark entry points.
 
 ## Running tests
 

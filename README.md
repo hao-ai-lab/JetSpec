@@ -5,8 +5,9 @@
 <div align="center"><h1>JetFlow: Parallel Tree Drafting</h1></div>
 
 <p align="center">
-  <a href="https://huggingface.co/JetFlow">Hugging Face</a> ·
-  <a href="https://hao-ai-lab.github.io/jetflow">Project Webpage</a>
+  <a href="https://arxiv.org/pdf/2606.18394">Paper</a> ·
+  <a href="https://hao-ai-lab.github.io/jetflow">Project Webpage</a> ·
+  <a href="https://huggingface.co/JetFlow">Hugging Face</a>
 </p>
 
 JetFlow is an implementation of **parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
@@ -26,7 +27,6 @@ JetFlow is an implementation of **parallel tree drafting** for fast LLM speculat
 - [Results](#results)
   - [Engine Results](#engine-results)
   - [Tree Algorithms](#tree-algorithms)
-  - [Test Yourself](#test-yourself)
 - [Citation](#citation)
 
 ## Introduction
@@ -73,7 +73,7 @@ JetFlow draft heads are published under the [`JetFlow`](https://huggingface.co/J
 | GPT-OSS-20B | [`JetFlow/jetflow-gpt-oss-20b`](https://huggingface.co/JetFlow/jetflow-gpt-oss-20b) |
 | Step3p7-Flash | [`JetFlow/jetflow-step3p7-flash`](https://huggingface.co/JetFlow/jetflow-step3p7-flash) |
 
-Most benchmark and diagnostic scripts read the draft head from `JETFLOW_DRAFT_HEAD`:
+Most benchmark and diagnostic scripts can read the draft head from `JETFLOW_DRAFT_HEAD`:
 
 ```bash
 export JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b

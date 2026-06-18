@@ -268,7 +268,7 @@ class LLM:
         / decoded text) is forwarded to the algorithm's build() for the
         prompt-adaptive (semantic_aware) algorithms; None → they use their
         logit-fingerprint fallback. `profile_table` (optional dict: offline
-        per-(depth,rank) acceptance, from bench/profiling/collect_profile.py) is forwarded to
+        per-(depth,rank) acceptance, from bench/profiling/collect_depth_rank_stats.py) is forwarded to
         the profile-guided algorithms (depth_rank_histogram); None → they recover
         accum_logp. All bundled algorithms recover accum_logp at their identity
         knobs, so the choice is lossless regardless.

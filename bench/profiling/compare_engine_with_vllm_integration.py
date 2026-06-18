@@ -31,7 +31,7 @@ a condition to match.
 
     JETFLOW_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
     JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
-    python bench/engine/identical_fork_compare.py --samples 4 --max-tokens 210
+    python bench/profiling/compare_engine_with_vllm_integration.py --samples 4 --max-tokens 210
 """
 import argparse
 import os
