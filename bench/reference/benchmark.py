@@ -132,6 +132,10 @@ def main():
     ap.add_argument("--torch-compile", action="store_true", default=False,
                     help="Apply torch.compile(dynamic=True) to the target model")
     ap.add_argument("--no-torch-compile", action="store_false", dest="torch_compile")
+    ap.add_argument("--compile-cache-limit", type=int, default=512,
+                    help="Dynamo graph variants to allow for full HF model compile")
+    ap.add_argument("--ignore-eos", action="store_true",
+                    help="Ignore EOS during generation; useful for short performance probes")
     ap.add_argument("--fused-moe", action="store_true",
                     help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
     ap.add_argument("--warmup-samples-per-rank", type=int, default=0)
@@ -169,12 +173,22 @@ def main():
 
     llm = LLM(args.model, device=device, attn_implementation=args.attn_implementation)
     resolved_attn = getattr(llm.model, "_jetflow_attn_implementation", args.attn_implementation)
+    if args.ignore_eos:
+        llm.eos_token_ids = set()
     fused_moe_blocks = 0
     if args.fused_moe:
         from jetflow.models.moe_fused import patch_qwen3_moe_with_grouped_mm
 
         fused_moe_blocks = patch_qwen3_moe_with_grouped_mm(llm.model)
     if args.torch_compile:
+        torch._dynamo.config.allow_unspec_int_on_nn_module = True
+        limit = max(args.compile_cache_limit, int(getattr(llm.model.config, "num_hidden_layers", 0)) * 4)
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, limit)
+        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, limit)
+        torch._dynamo.config.accumulated_recompile_limit = max(
+            torch._dynamo.config.accumulated_recompile_limit,
+            limit * 4,
+        )
         llm.model = torch.compile(llm.model, dynamic=True)
         llm.model._jetflow_attn_implementation = resolved_attn
         llm.runner.model = llm.model

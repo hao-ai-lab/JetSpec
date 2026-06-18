@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import time
 
 import torch
-from transformers import DynamicCache
+from transformers import DynamicCache, StaticCache
 
 from jetflow.models.qwen3 import load_target
 from jetflow.core.model_runner import ModelRunner
@@ -20,6 +20,51 @@ from jetflow.core.sampler import sample
 class SamplingParams:
     temperature: float = 0.0
     max_new_tokens: int = 256
+
+
+class _CompileFriendlyDynamicCache(DynamicCache):
+    """DynamicCache variant that does not infer logical length from KV tensor shape.
+
+    HF's DynamicCache is convenient for the reference implementation, but under
+    `torch.compile` its `get_seq_length()` path inspects the growing `keys`
+    tensor (`numel()`, shape[-2]), which creates unstable Dynamo guards. The
+    decode loops here already know the logical cache length from `cache_position`
+    and accepted-token accounting, so store that length explicitly.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._jetflow_seq_length = 0
+
+    def set_seq_length(self, seq_length: int) -> None:
+        self._jetflow_seq_length = int(seq_length)
+
+    def get_seq_length(self, layer_idx: int = 0) -> int:
+        return self._jetflow_seq_length
+
+    def get_mask_sizes(self, cache_position: torch.Tensor | int, layer_idx: int) -> tuple[int, int]:
+        if isinstance(cache_position, torch.Tensor):
+            query_length = int(cache_position.numel())
+        else:
+            query_length = 1
+        return self._jetflow_seq_length + query_length, 0
+
+
+class _CompileFriendlyStaticCache(StaticCache):
+    """StaticCache with explicit logical length for compiled HF decode."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._jetflow_seq_length = 0
+
+    def set_seq_length(self, seq_length: int) -> None:
+        self._jetflow_seq_length = int(seq_length)
+
+    def get_seq_length(self, layer_idx: int = 0) -> int:
+        return self._jetflow_seq_length
+
+    def get_mask_sizes(self, cache_position: torch.Tensor | int, layer_idx: int) -> tuple[int, int]:
+        return self.layers[layer_idx].get_max_cache_shape(), 0
 
 
 def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
@@ -57,13 +102,20 @@ def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
             return keys[..., :new_len, :], values[..., :new_len, :]
         return keys.index_select(-2, idx), values.index_select(-2, idx)
 
+    is_static = isinstance(cache, _CompileFriendlyStaticCache)
     layers = getattr(cache, "layers", None)
     if layers is not None:                       # transformers >= 4.54 (DynamicLayer)
         for layer in layers:
             keys = getattr(layer, "keys", None)
             if keys is None:
                 continue                         # uninitialized / sliding layer — nothing cached
-            layer.keys, layer.values = _select_or_compact(keys, layer.values, keep_index)
+            if is_static:
+                new_keys, new_values = _select_or_compact(keys, layer.values, keep_index)
+                new_len = new_keys.shape[-2]
+                keys[..., :new_len, :].copy_(new_keys)
+                layer.values[..., :new_len, :].copy_(new_values)
+            else:
+                layer.keys, layer.values = _select_or_compact(keys, layer.values, keep_index)
     else:                                        # legacy key_cache / value_cache lists
         for i in range(len(cache.key_cache)):
             cache.key_cache[i], cache.value_cache[i] = _select_or_compact(
@@ -84,6 +136,7 @@ class LLM:
         )
         self.runner = ModelRunner(self.model)
         self.device = device
+        self.dtype = dtype
         self.eos_token_ids = self._resolve_eos()
 
     def _resolve_eos(self) -> set:
@@ -119,6 +172,46 @@ class LLM:
         if reset is not None:
             reset()
 
+    def _model_config(self):
+        if hasattr(self.model, "config"):
+            return self.model.config
+        orig = getattr(self.model, "_orig_mod", None)
+        return getattr(orig, "config", None)
+
+    def _is_compiled_model(self) -> bool:
+        return hasattr(self.model, "_orig_mod")
+
+    def _new_cache(self, max_cache_len: int | None = None) -> DynamicCache:
+        """Create a fully layered HF cache so compiled forwards see stable state."""
+        config = self._model_config()
+        if self._is_compiled_model() and config is not None and max_cache_len is not None:
+            cache = _CompileFriendlyStaticCache(config=config, max_cache_len=int(max_cache_len))
+        else:
+            cache = _CompileFriendlyDynamicCache(config=config) if config is not None else _CompileFriendlyDynamicCache()
+        early_init = getattr(cache, "early_initialization", None)
+        if early_init is not None and config is not None:
+            param = next(self.model.parameters(), None)
+            dtype = getattr(self, "dtype", None) or (param.dtype if param is not None else torch.bfloat16)
+            device = torch.device(getattr(self, "device", param.device if param is not None else "cpu"))
+            head_dim = getattr(config, "head_dim", None)
+            if head_dim is None:
+                head_dim = config.hidden_size // config.num_attention_heads
+            num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
+            early_init(
+                batch_size=1,
+                num_heads=num_kv_heads,
+                head_dim=head_dim,
+                dtype=dtype,
+                device=device,
+            )
+            empty_kv = torch.empty((1, num_kv_heads, 0, head_dim), dtype=dtype, device=device)
+            for layer in getattr(cache, "layers", []):
+                keys = getattr(layer, "keys", None)
+                if keys is not None and keys.dim() == 1 and keys.numel() == 0:
+                    layer.keys = empty_kv
+                    layer.values = empty_kv
+        return cache
+
     def _timer(self) -> float:
         device = torch.device(self.device)
         if device.type == "cuda":
@@ -135,11 +228,15 @@ class LLM:
         else:
             input_ids = prompt.to(self.device)
         prompt_len = input_ids.shape[1]
-        cache = DynamicCache()
+        cache = self._new_cache(max_cache_len=prompt_len + sp.max_new_tokens + 1)
 
         # --- prefill: process the whole prompt once, sample the first token ---
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
-        logits, cache, _ = self.runner.forward(input_ids, cache, pos, last_position_logits_only=True)
+        logits, cache, _ = self.runner.forward(
+            input_ids, cache, pos, cache_position=pos.squeeze(0),
+            last_position_logits_only=True,
+        )
+        cache.set_seq_length(prompt_len)
         next_tok = self._sample_last(logits, sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
@@ -150,7 +247,11 @@ class LLM:
             if out_ids[-1] in self.eos_token_ids:
                 break
             pos = torch.tensor([[cur]], device=self.device)
-            logits, cache, _ = self.runner.forward(next_tok, cache, pos, last_position_logits_only=True)
+            logits, cache, _ = self.runner.forward(
+                next_tok, cache, pos, cache_position=pos.squeeze(0),
+                last_position_logits_only=True,
+            )
+            cache.set_seq_length(cur + 1)
             next_tok = self._sample_last(logits, sp.temperature)
             out_ids.append(int(next_tok.item()))
             cur += 1
@@ -193,13 +294,14 @@ class LLM:
         target_hidden = None
 
         # --- prefill: populate the persistent cache with the prompt's KV ---
-        cache = DynamicCache()
+        cache = self._new_cache(max_cache_len=committed.shape[1] + sp.max_new_tokens + k + 1)
         pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
         logits, cache, full_hidden = self.runner.forward(
-            committed, cache, pos,
+            committed, cache, pos, cache_position=pos.squeeze(0),
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
             last_position_logits_only=True,
         )
+        cache.set_seq_length(committed.shape[1])
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; next anchor (first_tok) fed via noise
         first_tok = self._sample_last(logits, sp.temperature)
@@ -233,7 +335,9 @@ class LLM:
                 else:
                     break
             correction = tgt[acc]
-            cache.crop(past_len + 1 + acc)        # keep prefix + anchor + accepted drafts; drop rejected KV
+            if not isinstance(cache, _CompileFriendlyStaticCache):
+                cache.crop(past_len + 1 + acc)    # keep prefix + anchor + accepted drafts; drop rejected KV
+            cache.set_seq_length(past_len + 1 + acc)
             if new_hidden is not None:
                 # append [anchor | accepted drafts] hidden (the correction has none
                 # yet — it is the next anchor, fed via noise). Restores the invariant.
@@ -333,14 +437,29 @@ class LLM:
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         target_hidden = None
 
+        def _tree_out(decode_time: float) -> dict:
+            text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+            out = {
+                "token_ids": new_ids,
+                "text": text,
+                "tpf": (len(new_ids) / rounds if rounds else 0.0),
+                "decode_time": decode_time,
+            }
+            if return_stats:
+                out["accept_lengths"] = accept_lengths
+                out["tree_sizes"] = tree_sizes
+                out["rounds"] = rounds
+            return out
+
         # --- prefill: populate the persistent cache with the prompt's KV ---
-        cache = DynamicCache()
+        cache = self._new_cache(max_cache_len=committed.shape[1] + sp.max_new_tokens + budget + 1)
         pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
         logits, cache, full_hidden = self.runner.forward(
-            committed, cache, pos,
+            committed, cache, pos, cache_position=pos.squeeze(0),
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
             last_position_logits_only=True,
         )
+        cache.set_seq_length(committed.shape[1])
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
         first_tok = self._sample_last(logits, sp.temperature)
@@ -348,7 +467,7 @@ class LLM:
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
             new_ids = new_ids[: sp.max_new_tokens]
-            return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0, "decode_time": 0.0}
+            return _tree_out(0.0)
 
         # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
         # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
@@ -379,8 +498,13 @@ class LLM:
                     use_attention_implementation(self.model, "sdpa"),
                     use_tree_attention(attn_ancestor, prefix_len=past_len, attn_impl="triton"),
                 ):
+                    # The Triton tree-attn handler ignores HF's attention_mask and
+                    # reads the ancestor mask from `use_tree_attention`. Passing a
+                    # 4D placeholder makes HF skip DynamicCache mask-size inference,
+                    # which otherwise inspects growing KV tensors under torch.compile.
+                    mask = torch.empty((1, 1, N, past_len + N), dtype=torch.bool, device=self.device)
                     logits, cache, new_hidden = self.runner.forward(
-                        seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
+                        seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
                         output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
                     )
             else:
@@ -403,6 +527,7 @@ class LLM:
                 past_len + torch.tensor(accepted_path, device=self.device),
             ])
             _select_kv_cache(cache, keep)         # cache length -> past_len + (acc + 1)
+            cache.set_seq_length(past_len + len(accepted_path))
             if new_hidden is not None:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
@@ -422,11 +547,5 @@ class LLM:
             if new_ids and new_ids[-1] in self.eos_token_ids:
                 break
         new_ids = new_ids[: sp.max_new_tokens]
-        text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
         decode_time = (self._timer() - decode_start) if decode_start is not None else 0.0
-        out = {"token_ids": new_ids, "text": text, "tpf": (len(new_ids) / rounds if rounds else 0.0), "decode_time": decode_time}
-        if return_stats:
-            out["accept_lengths"] = accept_lengths   # per-round (acc+1)
-            out["tree_sizes"] = tree_sizes           # per-round node count
-            out["rounds"] = rounds
-        return out
+        return _tree_out(decode_time)

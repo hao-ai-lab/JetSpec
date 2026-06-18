@@ -142,7 +142,8 @@ def _tree_attn_fwd(
             other=0.0,
         )
 
-        qk = tl.dot(q, tl.trans(k)).to(tl.float32) * sm_scale
+        scale = tl.full((), sm_scale, dtype=tl.float32)
+        qk = tl.dot(q, tl.trans(k)).to(tl.float32) * scale
 
         is_prefix = offs_n[None, :] < prefix_len
         in_tree = offs_n[None, :] >= prefix_len
@@ -231,6 +232,10 @@ def _triton_attention_forward(module, query, key, value, attention_mask, **kwarg
                 tuple(query.shape), tuple(key.shape), tuple(ancestor.shape),
                 _tree_attn_state["prefix_len"],
             )
+
+    live_kv_len = int(_tree_attn_state["prefix_len"]) + int(ancestor.shape[0])
+    key = key[:, :, :live_kv_len, :]
+    value = value[:, :, :live_kv_len, :]
 
     out = _tree_sdpa(
         query, key, value, ancestor,

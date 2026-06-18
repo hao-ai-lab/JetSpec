@@ -23,7 +23,7 @@ JetFlow is an implementation of **parallel tree drafting** for fast LLM speculat
 - [Usage](#usage)
   - [HF References](#hf-references)
   - [JetFlow Inference Engine](#jetflow-inference-engine)
-  - [Benchmarking Scripts](#benchmarking_scripts)
+  - [Benchmarking Scripts](#benchmarking-scripts)
 - [Results](#results)
   - [Engine Results](#engine-results)
   - [Tree Algorithms](#tree-algorithms)
@@ -228,7 +228,7 @@ The [`vLLM integration`](https://github.com/snyhlxde1/vllm-jetflow) supports MAT
 
 ### Engine Results
 
-The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with [`Our vLLM v1 integration`](https://github.com/snyhlxde1/vllm-jetflow).
+The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with [`vLLM v1 integration`](https://github.com/snyhlxde1/vllm-jetflow).
 
 | dataset | JetFlow engine TPS | accept_len |
 |---|---:|---:|

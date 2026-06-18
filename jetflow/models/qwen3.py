@@ -54,6 +54,13 @@ def load_target(
     ).to(device).eval()
     model._jetflow_attn_implementation = resolved_attn
     if torch_compile:
+        torch._dynamo.config.allow_unspec_int_on_nn_module = True
+        torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 512)
+        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 512)
+        torch._dynamo.config.accumulated_recompile_limit = max(
+            torch._dynamo.config.accumulated_recompile_limit,
+            2048,
+        )
         model = torch.compile(model, dynamic=True)
         # Keep the resolved backend discoverable through torch.compile wrappers.
         model._jetflow_attn_implementation = resolved_attn
