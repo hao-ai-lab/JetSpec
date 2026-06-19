@@ -160,15 +160,21 @@ JETFLOW_DRAFT_HEAD=JetFlow/jetflow-qwen3-8b \
 python bench/reference/benchmark.py \
   --model Qwen/Qwen3-8B \
   --attn-implementation flash_attention_2 \
-  --tree-attn triton \
+  --tree-attn-implementation triton \
   --dataset gsm8k \
   --samples 64 \
   --algos accum_logp \
   --width 7 \
   --budget 255 \
   --max-new 256 \
-  --warmup-samples-per-rank 1
+  --warmup-rounds 3
 ```
+
+> `--torch-compile` is intentionally omitted here. Full Hugging Face model
+> compilation is under-optimized for this reference path and can incur heavy
+> compilation overhead plus a messy compiled/eager mix; use the JetFlow engine
+> benchmark below for compiled/cudagraph performance.
+
 
 Optimized JetFlow engine with wall-clock latency and throughput benchmarking:
 

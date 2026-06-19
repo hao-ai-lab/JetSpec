@@ -23,7 +23,7 @@ class _DeterministicTreeDrafter:
 
 
 def test_tree_diag_metrics_formula_and_report_format():
-    from bench.debug.tree_diag import format_metrics_report, summarize_tree_diag
+    from bench.profiling.collect_tree_diagnostics import format_metrics_report, summarize_tree_diag
 
     accept_lengths = [1, 2, 4, 4]
     metrics = summarize_tree_diag(
@@ -66,7 +66,7 @@ def test_tree_diag_metrics_formula_and_report_format():
 
 
 def test_tree_diag_summary_accepts_deeper_than_block_size_when_max_depth_set():
-    from bench.debug.tree_diag import summarize_tree_diag
+    from bench.profiling.collect_tree_diagnostics import summarize_tree_diag
 
     metrics = summarize_tree_diag(
         accept_lengths=[1, 5, 6],
@@ -132,7 +132,7 @@ def test_generate_tree_diag_flag_preserves_tokens_and_counts_tree_depths():
 
 
 def test_dump_first_rounds_records_drafter_topk_without_changing_metrics():
-    from bench.debug.tree_diag import run_tree_diag_measurement
+    from bench.profiling.collect_tree_diagnostics import run_tree_diag_measurement
 
     model = _tiny_model(0)
     tree_kwargs = dict(

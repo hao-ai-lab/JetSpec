@@ -20,6 +20,7 @@ test = ["pytest>=7.0"]
 kernel = ["triton"]
 bench = [
     "datasets",
+    "tqdm",
     "psutil",
     "ninja",
     "packaging",

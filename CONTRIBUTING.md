@@ -48,8 +48,7 @@ Top-level scripts are grouped by purpose:
 
 - **`bench/reference/`** — HF/reference benchmarks and raw HF FA2 sanity checks.
 - **`bench/engine/`** — optimized JetFlow engine throughput scripts.
-- **`bench/profiling/`** — profiling and profile-table builders.
-- **`bench/debug/`** — diagnostics and probes.
+- **`bench/profiling/`** — profiling, diagnostics, probes, and profile-table builders.
 - **`examples/basic/`**, **`examples/tree/`**, **`examples/engine/`** — runnable
   examples grouped by scope.
 - **`tests/manual/profiling/`** — scratch/manual profiling utilities that are not

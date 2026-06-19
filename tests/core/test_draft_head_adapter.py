@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from transformers import Qwen3Config
 
-from bench.debug import reseed_probe
+from bench.profiling import compare_conditioned_draft_logits as reseed_probe
 from jetflow.draft_head_adapter import DraftHeadTreeDrafter
 from jetflow.models.draft_head import DFlashDraftModel
 

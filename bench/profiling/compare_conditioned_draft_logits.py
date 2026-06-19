@@ -7,7 +7,7 @@ path prefix. Positions after the accepted path stay masked; the correction is
 the answer and is never fed to the draft head.
 
     JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather ... \
-      python bench/debug/reseed_probe.py --rounds 50 --samples 4 --budget 127
+      python bench/profiling/compare_conditioned_draft_logits.py --rounds 50 --samples 4 --budget 127
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from bench.profiling.depth_rank_profile import (
     accepted_path_from_committed_tokens,
     rebuild_recorded_tree,
 )
-from bench.debug.tree_diag import build_prompts
+from bench.profiling.collect_tree_diagnostics import build_prompts
 from jetflow.draft_head_adapter import DraftHeadTreeDrafter
 from jetflow.core.llm import SamplingParams
 from jetflow.models.draft_head import load_draft_head

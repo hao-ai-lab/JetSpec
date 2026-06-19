@@ -330,7 +330,7 @@ def parse_args() -> argparse.Namespace:
 
 @torch.inference_mode()
 def main() -> None:
-    from bench.debug.tree_diag import build_drafter, build_prompts
+    from bench.profiling.collect_tree_diagnostics import build_drafter, build_prompts
     from jetflow.core.llm import SamplingParams
     from jetflow.inference_engine.engine import JetFlowEngine
 

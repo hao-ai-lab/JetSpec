@@ -5,7 +5,7 @@ import torch
 
 from jetflow.tree._core.base import DraftTree
 
-from bench.debug import reseed_probe
+from bench.profiling import compare_conditioned_draft_logits as reseed_probe
 
 
 def _logits(rows):

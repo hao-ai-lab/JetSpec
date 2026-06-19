@@ -358,8 +358,9 @@ class LLM:
     def generate_tree(self, prompt, tree_drafter, block_size: int = 4, tree_width: int = 2,
                       budget: int = 15, algo: str = "accum_logp", algo_kwargs: dict = None,
                       target_layer_ids=None, sampling_params: SamplingParams = None,
-                      return_stats: bool = False, prompt_info: dict = None,
-                      profile_table: dict = None, tree_attn: str = "sdpa") -> dict:
+                      return_stats: bool = False, profile_phases: bool = False,
+                      prompt_info: dict = None, profile_table: dict = None,
+                      tree_attn: str = "sdpa") -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes against a persistent KV cache, and tree_accept takes the longest
@@ -401,14 +402,14 @@ class LLM:
         return self._generate_tree_kv_cached(
             committed, tree_drafter, block_size, tree_width, budget, algo_obj,
             target_layer_ids, sp, return_stats, prompt_info, profile_table,
-            tree_attn,
+            tree_attn, profile_phases,
         )
 
     @torch.inference_mode()
     def _generate_tree_kv_cached(self, committed, tree_drafter, block_size, tree_width,
                                  budget, algo_obj, target_layer_ids, sp,
                                  return_stats, prompt_info, profile_table,
-                                 tree_attn: str = "sdpa") -> dict:
+                                 tree_attn: str = "sdpa", profile_phases: bool = False) -> dict:
         """Tree spec decode over a PERSISTENT target KV cache (the wall-clock path).
 
         Mirrors `generate_chain`'s persistent-cache verify, extended to trees: each
@@ -422,6 +423,7 @@ class LLM:
         Lossless by construction (commits the verify forward's own greedy along the
         accepted path). Dispatched from `generate_tree`; args are already parsed there."""
         # tree contract (engine -> tree, one-way): import only the public jetflow.tree API
+        from jetflow.models.draft_head import extract_context_feature
         from jetflow.tree import build_ancestor_matrix, tree_accept
         if tree_attn == "triton":
             from jetflow.core.tree_attention_kernel import (
@@ -429,13 +431,22 @@ class LLM:
                 use_tree_attention,
             )
 
-        dtype = self.model.dtype
+        dtype = next(self.model.parameters()).dtype
         neg = torch.finfo(dtype).min
         D = max(1, block_size - 1)
         need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
+        phase_times = {"draft": 0.0, "tree_build": 0.0, "verify": 0.0, "accept": 0.0, "kv_select": 0.0}
         target_hidden = None
+
+        def _phase(name, fn):
+            if not profile_phases:
+                return fn()
+            start = self._timer()
+            out = fn()
+            phase_times[name] += self._timer() - start
+            return out
 
         def _tree_out(decode_time: float) -> dict:
             text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
@@ -449,20 +460,27 @@ class LLM:
                 out["accept_lengths"] = accept_lengths
                 out["tree_sizes"] = tree_sizes
                 out["rounds"] = rounds
+                if profile_phases:
+                    out["phase_times"] = dict(phase_times)
             return out
 
         # --- prefill: populate the persistent cache with the prompt's KV ---
-        cache = self._new_cache(max_cache_len=committed.shape[1] + sp.max_new_tokens + budget + 1)
-        pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
-        logits, cache, full_hidden = self.runner.forward(
-            committed, cache, pos, cache_position=pos.squeeze(0),
-            output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
-            last_position_logits_only=True,
+        prompt_len = committed.shape[1]
+        cache = DynamicCache()
+        max_len = prompt_len + sp.max_new_tokens + max(1, budget)
+        position_ids = torch.arange(max_len + 1, device=self.device).unsqueeze(0)
+        prefill_out = self.model(
+            input_ids=committed,
+            position_ids=position_ids[:, :prompt_len],
+            past_key_values=cache,
+            cache_position=position_ids[0, :prompt_len],
+            use_cache=True,
+            output_hidden_states=need_hidden,
+            logits_to_keep=1,
         )
-        cache.set_seq_length(committed.shape[1])
-        if full_hidden is not None:
-            target_hidden = full_hidden          # prompt context; anchor (first_tok) fed via noise
-        first_tok = self._sample_last(logits, sp.temperature)
+        if need_hidden:
+            target_hidden = extract_context_feature(prefill_out.hidden_states, target_layer_ids)
+        first_tok = self._sample_last(prefill_out.logits, sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
@@ -474,17 +492,27 @@ class LLM:
         # the anchor (= tree root), which enters the cache via the verify forward.
         decode_start = None
         while len(new_ids) < sp.max_new_tokens:
-            draft_logits = tree_drafter.propose_logits(committed, D, target_hidden=target_hidden).to(self.device)  # (1, D, V)
+            draft_logits = _phase(
+                "draft",
+                lambda: tree_drafter.propose_logits(
+                    committed, D, target_hidden=target_hidden
+                ).to(self.device),
+            )  # (1, D, V)
             if decode_start is None:
                 decode_start = self._timer()
-            tree = algo_obj.build(int(committed[0, -1]), draft_logits, block_size, tree_width, budget, self.device,
-                                  prompt_info=prompt_info, profile_table=profile_table)
+            tree = _phase(
+                "tree_build",
+                lambda: algo_obj.build(
+                    int(committed[0, -1]), draft_logits, block_size, tree_width,
+                    budget, self.device, prompt_info=prompt_info,
+                    profile_table=profile_table,
+                ),
+            )
             N = tree.num_nodes
-            past_len = cache.get_seq_length()                          # == committed.shape[1] - 1
+            past_len = committed.shape[1] - 1                          # == logical cache length
             # feed only the tree nodes (node 0 = anchor/root); the prefix KV is cached.
             seq_step = tree.token_ids.view(1, -1)                      # (1, N)
-            depths = tree.depth.tolist()
-            posN = torch.tensor([[past_len + d for d in depths]], device=self.device)   # RoPE: depth-based
+            posN = (past_len + tree.depth).unsqueeze(0).long()         # RoPE: depth-based
             cache_pos = torch.arange(past_len, past_len + N, device=self.device)        # contiguous append slots
             # 4D additive mask: queries = N nodes; keys = past_len cached prefix
             # (all visible) + N nodes (ancestor mask, incl self).
@@ -503,9 +531,17 @@ class LLM:
                     # 4D placeholder makes HF skip DynamicCache mask-size inference,
                     # which otherwise inspects growing KV tensors under torch.compile.
                     mask = torch.empty((1, 1, N, past_len + N), dtype=torch.bool, device=self.device)
-                    logits, cache, new_hidden = self.runner.forward(
-                        seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
-                        output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                    out = _phase(
+                        "verify",
+                        lambda: self.model(
+                            input_ids=seq_step,
+                            position_ids=posN,
+                            attention_mask=mask,
+                            past_key_values=cache,
+                            cache_position=cache_pos,
+                            use_cache=True,
+                            output_hidden_states=need_hidden,
+                        ),
                     )
             else:
                 allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
@@ -513,12 +549,23 @@ class LLM:
                 allowed[:, past_len:] = ancestor
                 mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
                                    torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
-                logits, cache, new_hidden = self.runner.forward(
-                    seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
-                    output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
+                out = _phase(
+                    "verify",
+                    lambda: self.model(
+                        input_ids=seq_step,
+                        position_ids=posN,
+                        attention_mask=mask,
+                        past_key_values=cache,
+                        cache_position=cache_pos,
+                        use_cache=True,
+                        output_hidden_states=need_hidden,
+                    ),
                 )
-            target_logits = logits                                    # (1, N, V) — every row is a tree node
-            accepted_path, acc, correction = tree_accept(tree, target_logits, sp.temperature)
+            target_logits = out.logits                                # (1, N, V) — every row is a tree node
+            accepted_path, acc, correction = _phase(
+                "accept",
+                lambda: tree_accept(tree, target_logits, sp.temperature),
+            )
             # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
             # rejected branches' KV. accepted_path = [0(root), …acc nodes], tree-ordered;
             # their cache slots are past_len + path -> contiguous positions after gather.
@@ -526,12 +573,12 @@ class LLM:
                 torch.arange(past_len, device=self.device),
                 past_len + torch.tensor(accepted_path, device=self.device),
             ])
-            _select_kv_cache(cache, keep)         # cache length -> past_len + (acc + 1)
-            cache.set_seq_length(past_len + len(accepted_path))
-            if new_hidden is not None:
+            _phase("kv_select", lambda: _select_kv_cache(cache, keep))
+            if need_hidden:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
                 sel = torch.tensor(accepted_path, device=self.device)
+                new_hidden = extract_context_feature(out.hidden_states, target_layer_ids)
                 target_hidden = torch.cat([target_hidden, new_hidden[:, sel, :]], dim=1)
             accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
                 else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)

@@ -45,6 +45,9 @@ def load_target(
     """Load an HF causal-LM target + its tokenizer, in eval mode.
 
     Mirrors causal_parallel_drafting/benchmark.py:717-721.
+    `torch_compile=True` is experimental for full HF models and can trigger
+    substantial compile overhead plus mixed compiled/eager execution; optimized
+    JetFlow engine benchmarks use dedicated compiled verify stacks instead.
     """
     resolved_attn = resolve_attn_implementation(attn_implementation)
     model = AutoModelForCausalLM.from_pretrained(
