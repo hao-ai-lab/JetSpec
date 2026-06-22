@@ -10,8 +10,8 @@ import time
 from types import SimpleNamespace
 
 import torch
-from transformers import DynamicCache
 
+from jetflow.core.llm import make_cache
 from jetflow.models.draft_head import extract_context_feature
 
 
@@ -44,7 +44,7 @@ def dflash_generate(
     max_length = prompt_len + int(max_new_tokens)
     output_ids = torch.empty((1, max_length + block_size), dtype=torch.long, device=device)
     position_ids = torch.arange(output_ids.shape[1], device=device).unsqueeze(0)
-    cache = DynamicCache()
+    cache = make_cache(target)
     stop_token_set = set(int(t) for t in stop_token_ids) if stop_token_ids else set()
     reset = getattr(drafter, "reset_cache", None)
     if reset is not None:

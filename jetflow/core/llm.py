@@ -16,59 +16,75 @@ from jetflow.core.model_runner import ModelRunner
 from jetflow.core.sampler import sample
 
 
+def _resolve_model_config(model):
+    return getattr(model, "config", None) or getattr(getattr(model, "_orig_mod", None), "config", None)
+
+
+def _resolve_model_param(model):
+    try:
+        return next(model.parameters())
+    except StopIteration:
+        return None
+
+
+def make_static_cache(model, max_cache_len: int) -> StaticCache:
+    """Return a fully pre-allocated StaticCache.
+
+    StaticCache pre-allocates all KV tensors to `max_cache_len` at construction
+    time. Each layer's `keys` and `values` have fixed shape and strides for the
+    entire decode run — Dynamo compiles one graph and reuses it for every step
+    with no recompiles from growing strides.
+
+    Requires knowing `max_cache_len = prompt_len + max_new_tokens` upfront.
+    """
+    config = _resolve_model_config(model)
+    cache = StaticCache(config=config, max_cache_len=int(max_cache_len))
+    early_init = getattr(cache, "early_initialization", None)
+    if early_init is not None and config is not None:
+        param = _resolve_model_param(model)
+        dtype = param.dtype if param is not None else torch.bfloat16
+        device = param.device if param is not None else torch.device("cpu")
+        head_dim = getattr(config, "head_dim", None)
+        if head_dim is None:
+            head_dim = config.hidden_size // config.num_attention_heads
+        num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
+        early_init(batch_size=1, num_heads=num_kv_heads, head_dim=head_dim, dtype=dtype, device=device)
+    return cache
+
+
+def make_cache(model) -> DynamicCache:
+    """Return a DynamicCache pre-populated with all layer slots.
+
+    Under torch.compile(model, dynamic=True) the newer transformers DynamicCache
+    lazily grows `cache.layers` one entry per layer during the first forward.
+    Each growth changes `len(layers)`, creating a new Dynamo guard and triggering
+    a recompile. Pre-filling all slots before the compiled model sees the cache
+    keeps the length stable, eliminating those N recompiles entirely.
+
+    Safe to call for non-compiled models too — it just returns a regular DynamicCache.
+    """
+    cache = DynamicCache()
+    config = getattr(model, "config", None) or getattr(getattr(model, "_orig_mod", None), "config", None)
+    n = getattr(config, "num_hidden_layers", 0) if config is not None else 0
+    if n > 0 and hasattr(cache, "layers"):
+        try:
+            from transformers.cache_utils import DynamicLayer
+            while len(cache.layers) < n:
+                cache.layers.append(DynamicLayer())
+        except ImportError:
+            pass
+    return cache
+
+
 @dataclass
 class SamplingParams:
     temperature: float = 0.0
     max_new_tokens: int = 256
 
 
-class _CompileFriendlyDynamicCache(DynamicCache):
-    """DynamicCache variant that does not infer logical length from KV tensor shape.
-
-    HF's DynamicCache is convenient for the reference implementation, but under
-    `torch.compile` its `get_seq_length()` path inspects the growing `keys`
-    tensor (`numel()`, shape[-2]), which creates unstable Dynamo guards. The
-    decode loops here already know the logical cache length from `cache_position`
-    and accepted-token accounting, so store that length explicitly.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._jetflow_seq_length = 0
-
-    def set_seq_length(self, seq_length: int) -> None:
-        self._jetflow_seq_length = int(seq_length)
-
-    def get_seq_length(self, layer_idx: int = 0) -> int:
-        return self._jetflow_seq_length
-
-    def get_mask_sizes(self, cache_position: torch.Tensor | int, layer_idx: int) -> tuple[int, int]:
-        if isinstance(cache_position, torch.Tensor):
-            query_length = int(cache_position.numel())
-        else:
-            query_length = 1
-        return self._jetflow_seq_length + query_length, 0
-
-
-class _CompileFriendlyStaticCache(StaticCache):
-    """StaticCache with explicit logical length for compiled HF decode."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._jetflow_seq_length = 0
-
-    def set_seq_length(self, seq_length: int) -> None:
-        self._jetflow_seq_length = int(seq_length)
-
-    def get_seq_length(self, layer_idx: int = 0) -> int:
-        return self._jetflow_seq_length
-
-    def get_mask_sizes(self, cache_position: torch.Tensor | int, layer_idx: int) -> tuple[int, int]:
-        return self.layers[layer_idx].get_max_cache_shape(), 0
-
 
 def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
-    """Gather a `DynamicCache` along the sequence dim, keeping only `keep_index`
+    """Gather a DynamicCache along the sequence dim, keeping only `keep_index`
     (a 1-D LongTensor of cache positions, in increasing order), in place.
 
     The tree KV-cache verify path uses this to drop the rejected branches' KV
@@ -90,9 +106,6 @@ def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
         new_len = int(idx.numel())
         prefix_len = _prefix_len(idx)
         if prefix_len > 0:
-            # Fast path for tree verify: keep_index = [0..prefix_len-1, accepted_tree_slots...].
-            # The prefix is already in place, so only move accepted tree KV down and
-            # then slice. This avoids O(prefix_len) copies per tree round.
             suffix = idx[prefix_len:]
             if suffix.numel():
                 kept_keys = keys.index_select(-2, suffix)
@@ -102,20 +115,13 @@ def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
             return keys[..., :new_len, :], values[..., :new_len, :]
         return keys.index_select(-2, idx), values.index_select(-2, idx)
 
-    is_static = isinstance(cache, _CompileFriendlyStaticCache)
     layers = getattr(cache, "layers", None)
     if layers is not None:                       # transformers >= 4.54 (DynamicLayer)
         for layer in layers:
             keys = getattr(layer, "keys", None)
             if keys is None:
                 continue                         # uninitialized / sliding layer — nothing cached
-            if is_static:
-                new_keys, new_values = _select_or_compact(keys, layer.values, keep_index)
-                new_len = new_keys.shape[-2]
-                keys[..., :new_len, :].copy_(new_keys)
-                layer.values[..., :new_len, :].copy_(new_values)
-            else:
-                layer.keys, layer.values = _select_or_compact(keys, layer.values, keep_index)
+            layer.keys, layer.values = _select_or_compact(keys, layer.values, keep_index)
     else:                                        # legacy key_cache / value_cache lists
         for i in range(len(cache.key_cache)):
             cache.key_cache[i], cache.value_cache[i] = _select_or_compact(
@@ -164,6 +170,8 @@ class LLM:
             logits = logits.unsqueeze(1)
         else:
             logits = logits[:, -1:, :]
+        if temperature == 0.0:
+            return logits.argmax(dim=-1)
         tok = sample(logits, temperature).reshape(-1)[-1]
         return tok.view(1, 1)
 
@@ -178,39 +186,16 @@ class LLM:
         orig = getattr(self.model, "_orig_mod", None)
         return getattr(orig, "config", None)
 
-    def _is_compiled_model(self) -> bool:
-        return hasattr(self.model, "_orig_mod")
+    @property
+    def _model_fwd(self):
+        """Callable for model forward. For compiled models __call__ is the compiled
+        dispatch; for plain models .forward() skips the Module.__call__ hook overhead
+        (~5-10 µs/step saved in the AR decode loop)."""
+        m = self.model
+        return m if hasattr(m, "_orig_mod") else m.forward
 
-    def _new_cache(self, max_cache_len: int | None = None) -> DynamicCache:
-        """Create a fully layered HF cache so compiled forwards see stable state."""
-        config = self._model_config()
-        if self._is_compiled_model() and config is not None and max_cache_len is not None:
-            cache = _CompileFriendlyStaticCache(config=config, max_cache_len=int(max_cache_len))
-        else:
-            cache = _CompileFriendlyDynamicCache(config=config) if config is not None else _CompileFriendlyDynamicCache()
-        early_init = getattr(cache, "early_initialization", None)
-        if early_init is not None and config is not None:
-            param = next(self.model.parameters(), None)
-            dtype = getattr(self, "dtype", None) or (param.dtype if param is not None else torch.bfloat16)
-            device = torch.device(getattr(self, "device", param.device if param is not None else "cpu"))
-            head_dim = getattr(config, "head_dim", None)
-            if head_dim is None:
-                head_dim = config.hidden_size // config.num_attention_heads
-            num_kv_heads = getattr(config, "num_key_value_heads", config.num_attention_heads)
-            early_init(
-                batch_size=1,
-                num_heads=num_kv_heads,
-                head_dim=head_dim,
-                dtype=dtype,
-                device=device,
-            )
-            empty_kv = torch.empty((1, num_kv_heads, 0, head_dim), dtype=dtype, device=device)
-            for layer in getattr(cache, "layers", []):
-                keys = getattr(layer, "keys", None)
-                if keys is not None and keys.dim() == 1 and keys.numel() == 0:
-                    layer.keys = empty_kv
-                    layer.values = empty_kv
-        return cache
+    def _new_cache(self) -> DynamicCache:
+        return make_cache(self.model)
 
     def _timer(self) -> float:
         device = torch.device(self.device)
@@ -228,7 +213,7 @@ class LLM:
         else:
             input_ids = prompt.to(self.device)
         prompt_len = input_ids.shape[1]
-        cache = self._new_cache(max_cache_len=prompt_len + sp.max_new_tokens + 1)
+        cache = self._new_cache()
 
         # --- prefill: process the whole prompt once, sample the first token ---
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
@@ -236,7 +221,6 @@ class LLM:
             input_ids, cache, pos, cache_position=pos.squeeze(0),
             last_position_logits_only=True,
         )
-        cache.set_seq_length(prompt_len)
         next_tok = self._sample_last(logits, sp.temperature)  # (1, 1)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
@@ -251,7 +235,6 @@ class LLM:
                 next_tok, cache, pos, cache_position=pos.squeeze(0),
                 last_position_logits_only=True,
             )
-            cache.set_seq_length(cur + 1)
             next_tok = self._sample_last(logits, sp.temperature)
             out_ids.append(int(next_tok.item()))
             cur += 1
@@ -294,14 +277,13 @@ class LLM:
         target_hidden = None
 
         # --- prefill: populate the persistent cache with the prompt's KV ---
-        cache = self._new_cache(max_cache_len=committed.shape[1] + sp.max_new_tokens + k + 1)
+        cache = self._new_cache()
         pos = torch.arange(committed.shape[1], device=self.device).unsqueeze(0)
         logits, cache, full_hidden = self.runner.forward(
             committed, cache, pos, cache_position=pos.squeeze(0),
             output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
             last_position_logits_only=True,
         )
-        cache.set_seq_length(committed.shape[1])
         if full_hidden is not None:
             target_hidden = full_hidden          # prompt context; next anchor (first_tok) fed via noise
         first_tok = self._sample_last(logits, sp.temperature)
@@ -311,14 +293,13 @@ class LLM:
             new_ids = new_ids[: sp.max_new_tokens]
             return {"token_ids": new_ids, "text": self.tokenizer.decode(new_ids, skip_special_tokens=True), "tpf": 0.0}
 
-        # Invariant each round: cache.get_seq_length() == committed.shape[1] - 1 ==
-        # target_hidden.shape[1] (when need_hidden). The cache trails `committed` by
-        # the anchor, which enters the cache as the first token of the next forward.
+        # Invariant: cache.get_seq_length() == committed.shape[1] - 1 ==
+        # target_hidden.shape[1] (when need_hidden).
         while len(new_ids) < sp.max_new_tokens:
             drafts = drafter.propose(committed, k, target_hidden=target_hidden).to(self.device).view(-1)[:k]   # (k,)
             anchor = committed[:, -1:]                                  # (1,1) — not yet cached
             step_ids = torch.cat([anchor, drafts.view(1, -1)], dim=1)   # (1, 1+k): only the new tokens
-            past_len = cache.get_seq_length()                           # == committed.shape[1] - 1
+            past_len = cache.get_seq_length()
             span = torch.arange(past_len, past_len + step_ids.shape[1], device=self.device)
             logits, cache, new_hidden = self.runner.forward(
                 step_ids, cache, span.unsqueeze(0), cache_position=span,
@@ -335,9 +316,7 @@ class LLM:
                 else:
                     break
             correction = tgt[acc]
-            if not isinstance(cache, _CompileFriendlyStaticCache):
-                cache.crop(past_len + 1 + acc)    # keep prefix + anchor + accepted drafts; drop rejected KV
-            cache.set_seq_length(past_len + 1 + acc)
+            cache.crop(past_len + 1 + acc)    # keep prefix + anchor + accepted drafts; drop rejected KV
             if new_hidden is not None:
                 # append [anchor | accepted drafts] hidden (the correction has none
                 # yet — it is the next anchor, fed via noise). Restores the invariant.
@@ -435,6 +414,27 @@ class LLM:
         neg = torch.finfo(dtype).min
         D = max(1, block_size - 1)
         need_hidden = target_layer_ids is not None and block_size > 1
+
+        # Precompute sliding-window config for the SDPA verify mask.
+        # torch.compile wraps the model; check both the wrapper and _orig_mod.
+        _cfg = (
+            getattr(self.model, "config", None)
+            or getattr(getattr(self.model, "_orig_mod", None), "config", None)
+        )
+        _sw = getattr(_cfg, "sliding_window", None)
+        _layer_types = getattr(_cfg, "layer_types", None)
+        _has_full_attn = (
+            _layer_types is not None
+            and any(lt in ("full_attention", "full") for lt in _layer_types)
+        )
+        # Use depth-based window only for a pure sliding-window model (all
+        # layers share the same window; no full-attention layers).  Mixed
+        # models (e.g. Step-3.7-Flash) fall back to full-context and rely on
+        # the model's own per-layer sliding-window enforcement.
+        _use_sw_mask: bool = (
+            isinstance(_sw, int) and _sw > 0 and not _has_full_attn
+        )
+
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
         phase_times = {"draft": 0.0, "tree_build": 0.0, "verify": 0.0, "accept": 0.0, "kv_select": 0.0}
@@ -466,10 +466,10 @@ class LLM:
 
         # --- prefill: populate the persistent cache with the prompt's KV ---
         prompt_len = committed.shape[1]
-        cache = DynamicCache()
         max_len = prompt_len + sp.max_new_tokens + max(1, budget)
+        cache = self._new_cache()
         position_ids = torch.arange(max_len + 1, device=self.device).unsqueeze(0)
-        prefill_out = self.model(
+        prefill_out = self._model_fwd(
             input_ids=committed,
             position_ids=position_ids[:, :prompt_len],
             past_key_values=cache,
@@ -533,7 +533,7 @@ class LLM:
                     mask = torch.empty((1, 1, N, past_len + N), dtype=torch.bool, device=self.device)
                     out = _phase(
                         "verify",
-                        lambda: self.model(
+                        lambda: self._model_fwd(
                             input_ids=seq_step,
                             position_ids=posN,
                             attention_mask=mask,
@@ -545,13 +545,25 @@ class LLM:
                     )
             else:
                 allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-                allowed[:, :past_len] = True
+                if _use_sw_mask and past_len > 0:
+                    # Pure sliding-window model: restrict each tree node's
+                    # context view to the depth-based AR window.  Node at
+                    # depth d has AR position past_len+d, so its window is
+                    # [past_len+d-W+1, past_len-1].
+                    depths = tree.depth.to(dtype=torch.long, device=self.device)
+                    win_starts = (past_len + depths - _sw + 1).clamp(min=0)
+                    j = torch.arange(past_len, device=self.device).unsqueeze(0)
+                    allowed[:, :past_len] = j >= win_starts.unsqueeze(1)
+                else:
+                    # Full-attention or mixed-layer model: all past context
+                    # visible; the model applies any layer-specific window.
+                    allowed[:, :past_len] = True
                 allowed[:, past_len:] = ancestor
                 mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
                                    torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
                 out = _phase(
                     "verify",
-                    lambda: self.model(
+                    lambda: self._model_fwd(
                         input_ids=seq_step,
                         position_ids=posN,
                         attention_mask=mask,

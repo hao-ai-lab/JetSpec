@@ -150,7 +150,7 @@ print("tokens per forward:", out["tpf"])
 
 ### Benchmarking Scripts
 
-The benchmark examples below use `Qwen/Qwen3-8B` with drafter `JetFlow/jetflow-qwen3-8b`. 
+The benchmark examples below use `Qwen/Qwen3-8B` with drafter `JetFlow/jetflow-qwen3-8b`.
 
 HF reference benchmark:
 
@@ -167,13 +167,16 @@ python bench/reference/benchmark.py \
   --width 7 \
   --budget 255 \
   --max-new 256 \
-  --warmup-rounds 3
+  --warmup-rounds 3 \
+  --include-dflash-baseline
 ```
 
-> `--torch-compile` is intentionally omitted here. Full Hugging Face model
-> compilation is under-optimized for this reference path and can incur heavy
-> compilation overhead plus a messy compiled/eager mix; use the JetFlow engine
-> benchmark below for compiled/cudagraph performance.
+With `--include-dflash-baseline`, the HF reference benchmark reports the shared
+AR-greedy baseline, the linear DFlash block baseline using the draft head's
+`block_size`, and the selected JetFlow tree-decode algorithms. The DFlash block
+baseline is linear block drafting and verification only; it does not use
+`--width`, `--budget`, tree attention, or tree construction.
+
 
 
 Optimized JetFlow engine with wall-clock latency and throughput benchmarking:
