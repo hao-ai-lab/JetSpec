@@ -31,7 +31,7 @@ registers all of them; `list_algorithms()` enumerates the registry.
 from jetflow.tree._core.base import DraftTree, TreeAlgorithm
 from jetflow.tree._core.registry import get_algorithm, register_tree_algo, list_algorithms
 from jetflow.tree._core.ancestor import build_ancestor_matrix
-from jetflow.tree._core.accept import tree_accept
+from jetflow.tree._core.accept import gpu_tree_accept, tree_accept
 from jetflow.tree._core.extend import should_extend, splice_extension
 from jetflow.tree._core.topk_build import build_from_topk
 from jetflow.tree import baselines        # noqa: F401  (import to register algorithms)
@@ -42,6 +42,6 @@ from jetflow.tree import profile_guided   # noqa: F401  (import to register algo
 __all__ = [
     "DraftTree", "TreeAlgorithm",
     "get_algorithm", "register_tree_algo", "list_algorithms",
-    "build_ancestor_matrix", "tree_accept", "build_from_topk",
+    "build_ancestor_matrix", "gpu_tree_accept", "tree_accept", "build_from_topk",
     "should_extend", "splice_extension",
 ]

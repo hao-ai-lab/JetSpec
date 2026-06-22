@@ -361,7 +361,7 @@ def main():
                     budget=args.budget, algo=algo, algo_kwargs=ALGO_KWARGS[algo],
                     target_layer_ids=tli, sampling_params=sp, return_stats=True,
                     tree_attn=args.tree_attn_implementation,
-                    profile_table=profile_table)
+                    profile_table=profile_table, return_text=False)
         torch.cuda.synchronize()
 
     # AR-greedy (raw HF KV-cache loop) = the 1x target-forward denominator.
@@ -440,6 +440,7 @@ def main():
                 profile_phases=args.profile_phases,
                 tree_attn=args.tree_attn_implementation,
                 profile_table=profile_table,
+                return_text=False,
                 ),
             prompts,
             world_size,

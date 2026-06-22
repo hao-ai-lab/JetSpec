@@ -23,6 +23,16 @@ def _target_owner(model):
     return getattr(model, "_orig_mod", model)
 
 
+def _can_capture_target_hidden(model, target_layer_ids) -> bool:
+    if target_layer_ids is None:
+        return False
+    owner = _target_owner(model)
+    layers = getattr(getattr(owner, "model", None), "layers", None)
+    if layers is None:
+        return False
+    return all(0 <= int(layer_id) < len(layers) for layer_id in target_layer_ids)
+
+
 @contextmanager
 def _masked_verify_attention(model, attention_mask):
     """Use SDPA for explicit tree masks when the normal backend is FA2.
@@ -116,7 +126,7 @@ class ModelRunner:
         API named after the behavior the rest of the engine relies on.
         """
         need_hidden = output_hidden_states and target_layer_ids is not None
-        use_hook_hidden = need_hidden and hasattr(self.model, "_orig_mod")
+        use_hook_hidden = need_hidden and _can_capture_target_hidden(self.model, target_layer_ids)
         with (
             _capture_target_hidden(self.model, target_layer_ids if use_hook_hidden else None) as hidden_by_layer,
             _masked_verify_attention(self.model, attention_mask),

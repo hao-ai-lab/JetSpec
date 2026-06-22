@@ -83,37 +83,20 @@ class SamplingParams:
 
 
 
-def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
-    """Gather a DynamicCache along the sequence dim, keeping only `keep_index`
-    (a 1-D LongTensor of cache positions, in increasing order), in place.
+def _select_kv_cache(cache, prefix_len: int, accepted_tree_indices: torch.Tensor) -> None:
+    """Keep cached prefix in place and compact accepted tree nodes after it."""
+    accepted_tree_indices = accepted_tree_indices.to(dtype=torch.long)
+    accepted_len = int(accepted_tree_indices.numel())
+    new_len = int(prefix_len) + accepted_len
 
-    The tree KV-cache verify path uses this to drop the rejected branches' KV
-    after accepting one root-to-leaf path: the accepted nodes are a
-    non-contiguous subset of the tree-ordered slots, but their positions are
-    `[past, past+1, …, past+acc]`, so the gathered cache is an ordinary causal
-    prefix again. Mirrors `DynamicCache.crop` (which slices `[..., :max_length, :]`
-    along the seq dim) but for a non-contiguous keep set.
-    """
-    def _prefix_len(idx: torch.Tensor) -> int:
-        if idx.numel() == 0:
-            return 0
-        ar = torch.arange(idx.numel(), device=idx.device, dtype=idx.dtype)
-        diff = (idx != ar).nonzero(as_tuple=False)
-        return int(diff[0, 0].item()) if diff.numel() else int(idx.numel())
-
-    def _select_or_compact(keys, values, idx):
-        idx = idx.to(keys.device)
-        new_len = int(idx.numel())
-        prefix_len = _prefix_len(idx)
-        if prefix_len > 0:
-            suffix = idx[prefix_len:]
-            if suffix.numel():
-                kept_keys = keys.index_select(-2, suffix)
-                kept_values = values.index_select(-2, suffix)
-                keys[..., prefix_len:new_len, :].copy_(kept_keys)
-                values[..., prefix_len:new_len, :].copy_(kept_values)
-            return keys[..., :new_len, :], values[..., :new_len, :]
-        return keys.index_select(-2, idx), values.index_select(-2, idx)
+    def _select_or_compact(keys, values):
+        if accepted_len > 0:
+            src = int(prefix_len) + accepted_tree_indices.to(keys.device)
+            kept_keys = keys.index_select(-2, src)
+            kept_values = values.index_select(-2, src)
+            keys[..., prefix_len:new_len, :].copy_(kept_keys)
+            values[..., prefix_len:new_len, :].copy_(kept_values)
+        return keys[..., :new_len, :], values[..., :new_len, :]
 
     layers = getattr(cache, "layers", None)
     if layers is not None:                       # transformers >= 4.54 (DynamicLayer)
@@ -121,11 +104,11 @@ def _select_kv_cache(cache, keep_index: torch.Tensor) -> None:
             keys = getattr(layer, "keys", None)
             if keys is None:
                 continue                         # uninitialized / sliding layer — nothing cached
-            layer.keys, layer.values = _select_or_compact(keys, layer.values, keep_index)
+            layer.keys, layer.values = _select_or_compact(keys, layer.values)
     else:                                        # legacy key_cache / value_cache lists
         for i in range(len(cache.key_cache)):
             cache.key_cache[i], cache.value_cache[i] = _select_or_compact(
-                cache.key_cache[i], cache.value_cache[i], keep_index
+                cache.key_cache[i], cache.value_cache[i]
             )
 
 
@@ -339,7 +322,7 @@ class LLM:
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, profile_phases: bool = False,
                       prompt_info: dict = None, profile_table: dict = None,
-                      tree_attn: str = "sdpa") -> dict:
+                      tree_attn: str = "sdpa", return_text: bool = True) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes against a persistent KV cache, and tree_accept takes the longest
@@ -381,14 +364,15 @@ class LLM:
         return self._generate_tree_kv_cached(
             committed, tree_drafter, block_size, tree_width, budget, algo_obj,
             target_layer_ids, sp, return_stats, prompt_info, profile_table,
-            tree_attn, profile_phases,
+            tree_attn, profile_phases, return_text,
         )
 
     @torch.inference_mode()
     def _generate_tree_kv_cached(self, committed, tree_drafter, block_size, tree_width,
                                  budget, algo_obj, target_layer_ids, sp,
                                  return_stats, prompt_info, profile_table,
-                                 tree_attn: str = "sdpa", profile_phases: bool = False) -> dict:
+                                 tree_attn: str = "sdpa", profile_phases: bool = False,
+                                 return_text: bool = True) -> dict:
         """Tree spec decode over a PERSISTENT target KV cache (the wall-clock path).
 
         Mirrors `generate_chain`'s persistent-cache verify, extended to trees: each
@@ -402,8 +386,7 @@ class LLM:
         Lossless by construction (commits the verify forward's own greedy along the
         accepted path). Dispatched from `generate_tree`; args are already parsed there."""
         # tree contract (engine -> tree, one-way): import only the public jetflow.tree API
-        from jetflow.models.draft_head import extract_context_feature
-        from jetflow.tree import build_ancestor_matrix, tree_accept
+        from jetflow.tree import build_ancestor_matrix, gpu_tree_accept, tree_accept
         if tree_attn == "triton":
             from jetflow.core.tree_attention_kernel import (
                 use_attention_implementation,
@@ -449,13 +432,13 @@ class LLM:
             return out
 
         def _tree_out(decode_time: float) -> dict:
-            text = self.tokenizer.decode(new_ids, skip_special_tokens=True)
             out = {
                 "token_ids": new_ids,
-                "text": text,
                 "tpf": (len(new_ids) / rounds if rounds else 0.0),
                 "decode_time": decode_time,
             }
+            if return_text:
+                out["text"] = self.tokenizer.decode(new_ids, skip_special_tokens=True)
             if return_stats:
                 out["accept_lengths"] = accept_lengths
                 out["tree_sizes"] = tree_sizes
@@ -469,18 +452,27 @@ class LLM:
         max_len = prompt_len + sp.max_new_tokens + max(1, budget)
         cache = self._new_cache()
         position_ids = torch.arange(max_len + 1, device=self.device).unsqueeze(0)
-        prefill_out = self._model_fwd(
-            input_ids=committed,
+        prefill_logits, cache, prefill_hidden = self.runner.forward(
+            committed,
+            cache,
             position_ids=position_ids[:, :prompt_len],
-            past_key_values=cache,
             cache_position=position_ids[0, :prompt_len],
-            use_cache=True,
             output_hidden_states=need_hidden,
-            logits_to_keep=1,
+            target_layer_ids=target_layer_ids,
+            last_position_logits_only=True,
         )
+        target_hidden_store = None
+        target_hidden_len = 0
         if need_hidden:
-            target_hidden = extract_context_feature(prefill_out.hidden_states, target_layer_ids)
-        first_tok = self._sample_last(prefill_out.logits, sp.temperature)
+            target_hidden_store = torch.empty(
+                (1, max_len + 1, prefill_hidden.shape[-1]),
+                dtype=prefill_hidden.dtype,
+                device=prefill_hidden.device,
+            )
+            target_hidden_store[:, :prompt_len, :].copy_(prefill_hidden)
+            target_hidden_len = prompt_len
+            target_hidden = target_hidden_store[:, :target_hidden_len, :]
+        first_tok = self._sample_last(prefill_logits, sp.temperature)
         new_ids.append(int(first_tok.item()))
         committed = torch.cat([committed, first_tok.view(1, 1)], dim=1)   # anchor; NOT yet cached
         if int(first_tok.item()) in self.eos_token_ids:
@@ -531,16 +523,16 @@ class LLM:
                     # 4D placeholder makes HF skip DynamicCache mask-size inference,
                     # which otherwise inspects growing KV tensors under torch.compile.
                     mask = torch.empty((1, 1, N, past_len + N), dtype=torch.bool, device=self.device)
-                    out = _phase(
+                    target_logits, cache, verify_hidden = _phase(
                         "verify",
-                        lambda: self._model_fwd(
-                            input_ids=seq_step,
+                        lambda: self.runner.forward(
+                            seq_step,
+                            cache,
                             position_ids=posN,
                             attention_mask=mask,
-                            past_key_values=cache,
                             cache_position=cache_pos,
-                            use_cache=True,
                             output_hidden_states=need_hidden,
+                            target_layer_ids=target_layer_ids,
                         ),
                     )
             else:
@@ -561,40 +553,51 @@ class LLM:
                 allowed[:, past_len:] = ancestor
                 mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
                                    torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
-                out = _phase(
+                target_logits, cache, verify_hidden = _phase(
                     "verify",
-                    lambda: self._model_fwd(
-                        input_ids=seq_step,
+                    lambda: self.runner.forward(
+                        seq_step,
+                        cache,
                         position_ids=posN,
                         attention_mask=mask,
-                        past_key_values=cache,
                         cache_position=cache_pos,
-                        use_cache=True,
                         output_hidden_states=need_hidden,
+                        target_layer_ids=target_layer_ids,
                     ),
                 )
-            target_logits = out.logits                                # (1, N, V) — every row is a tree node
-            accepted_path, acc, correction = _phase(
-                "accept",
-                lambda: tree_accept(tree, target_logits, sp.temperature),
-            )
-            # GATHER: keep prefix + accepted path (root + accepted nodes); drop the
-            # rejected branches' KV. accepted_path = [0(root), …acc nodes], tree-ordered;
-            # their cache slots are past_len + path -> contiguous positions after gather.
-            keep = torch.cat([
-                torch.arange(past_len, device=self.device),
-                past_len + torch.tensor(accepted_path, device=self.device),
-            ])
-            _phase("kv_select", lambda: _select_kv_cache(cache, keep))
+            if sp.temperature == 0.0:
+                target_greedy = target_logits[0].argmax(dim=-1)
+                accepted_indices, acc, correction = _phase(
+                    "accept",
+                    lambda: gpu_tree_accept(
+                        tree.token_ids,
+                        target_greedy,
+                        tree.parent_indices,
+                        tree.depth,
+                        max_depth=D,
+                    ),
+                )
+            else:
+                accepted_path, acc, correction_int = _phase(
+                    "accept",
+                    lambda: tree_accept(tree, target_logits, sp.temperature),
+                )
+                accepted_indices = torch.tensor(accepted_path, dtype=torch.long, device=self.device)
+                correction = torch.tensor(correction_int, dtype=tree.token_ids.dtype, device=self.device)
+
+            # GATHER: keep prefix in place and compact the accepted tree tail.
+            _phase("kv_select", lambda: _select_kv_cache(cache, past_len, accepted_indices))
             if need_hidden:
                 # append [root | accepted nodes] hidden (the correction has none yet —
                 # it is the next anchor, fed via noise). Restores the invariant.
-                sel = torch.tensor(accepted_path, device=self.device)
-                new_hidden = extract_context_feature(out.hidden_states, target_layer_ids)
-                target_hidden = torch.cat([target_hidden, new_hidden[:, sel, :]], dim=1)
-            accepted = tree.token_ids[torch.tensor(accepted_path[1:], device=self.device)] if acc > 0 \
+                selected_hidden = verify_hidden.index_select(1, accepted_indices)
+                next_len = target_hidden_len + selected_hidden.shape[1]
+                target_hidden_store[:, target_hidden_len:next_len, :].copy_(selected_hidden)
+                target_hidden_len = next_len
+                target_hidden = target_hidden_store[:, :target_hidden_len, :]
+            accepted = tree.token_ids.index_select(0, accepted_indices[1:]) if acc > 0 \
                 else torch.empty(0, dtype=tree.token_ids.dtype, device=self.device)
-            block = torch.cat([accepted, torch.tensor([correction], device=self.device)])
+            block = torch.cat([accepted, correction.reshape(1).to(dtype=tree.token_ids.dtype, device=self.device)])
             committed = torch.cat([committed, block.view(1, -1)], dim=1)
             rounds += 1
             accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
