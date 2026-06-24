@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/jetspec_icon.png" alt="JetSpec" width="180" align="center">
+  <img src="assets/jetspec_logo.png" alt="JetSpec" width="180" align="center">
 </p>
 
 <div align="center"><h1>JetSpec: Parallel Tree Drafting</h1></div>
@@ -269,6 +269,8 @@ Common algorithms exposed by `bench/reference/benchmark.py`:
   title = {JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting},
   author = {Hu, Lanxiang and Feng, Zhaoxiang and Wu, Yulun and Yuan, Haoran and Zhao, Yujie and Qian, Yu-Yang and Wang, Bojun and Zhao, Peng and Jiang, Daxin and Zhu, Yibo and Rosing, Tajana and Zhang, Hao},
   year = {2026},
+  url = {https://arxiv.org/abs/2606.18394},
+  eprint = {2606.18394},
   note = {Preprint}
 }
 ```
