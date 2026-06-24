@@ -5,8 +5,8 @@ from torch import nn
 from transformers import Qwen3Config
 
 from bench.profiling import compare_conditioned_draft_logits as reseed_probe
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
-from jetflow.models.draft_head import DFlashDraftModel
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.models.draft_head import DFlashDraftModel
 
 
 class _TinyTarget(nn.Module):

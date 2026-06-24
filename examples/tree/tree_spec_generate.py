@@ -1,7 +1,7 @@
-"""Trained-head tree-speculative decode on the owned `JetFlow` engine.
+"""Trained-head tree-speculative decode on the owned `JetSpec` engine.
 
 Shows the contribution end to end via the public API: a trained DFlash draft
-head proposes multi-token, tree-structured drafts, and the `JetFlowEngine`'s
+head proposes multi-token, tree-structured drafts, and the `JetSpecEngine`'s
 compiled tree-attention path verifies the whole tree in one batched forward,
 accepting the longest target-greedy-agreeing root-to-leaf path. Lossless by
 construction (see README "Results"), faster than autoregressive decode.
@@ -11,21 +11,21 @@ Usage:
     python examples/tree/tree_spec_generate.py [model] [draft_head]
 
 Needs a CUDA GPU and a trained draft head. Defaults to Qwen3-8B with the
-published head `Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma`.
+published head `JetSpec/jetspec-qwen3-8b`.
 """
 import sys
 
-from jetflow import load_draft_head, DraftHeadTreeDrafter
-from jetflow.inference_engine import JetFlowEngine, SamplingParams
+from jetspec import load_draft_head, DraftHeadTreeDrafter
+from jetspec.inference_engine import JetSpecEngine, SamplingParams
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-8B"
-DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma"
+DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "JetSpec/jetspec-qwen3-8b"
 
 
 def main():
     # The compiled tree-spec path (the contribution). The plain "triton_paged_tree"
     # backend runs the same tree-verify without torch.compile.
-    engine = JetFlowEngine(MODEL, attn_backend="triton_paged_tree_compiled")
+    engine = JetSpecEngine(MODEL, attn_backend="triton_paged_tree_compiled")
     head = load_draft_head(DRAFT_HEAD)
     drafter = DraftHeadTreeDrafter(
         head, target=engine.model, block_size=head.block_size,

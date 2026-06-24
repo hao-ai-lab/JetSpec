@@ -2,21 +2,21 @@
 greedy for any tree drafter — and the echo tree drafter (whose top-1 path is the
 greedy chain) accepts the full depth. Needs CUDA + Qwen3-8B; run on b200.
 
-    JETFLOW_TEST_MODEL=Qwen/Qwen3-8B pytest tests/tree/test_tree_lossless.py -x
+    JETSPEC_TEST_MODEL=Qwen/Qwen3-8B pytest tests/tree/test_tree_lossless.py -x
 """
 import os
 
 import pytest
 import torch
 
-from jetflow.core.llm import LLM, SamplingParams
-from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetspec.core.llm import LLM, SamplingParams
+from jetspec.draft import RandomTreeDrafter, TargetEchoTreeDrafter
 
-MODEL = os.environ.get("JETFLOW_TEST_MODEL")
+MODEL = os.environ.get("JETSPEC_TEST_MODEL")
 
 pytestmark = pytest.mark.skipif(
     not (torch.cuda.is_available() and MODEL),
-    reason="needs CUDA + a real checkpoint; set JETFLOW_TEST_MODEL to run",
+    reason="needs CUDA + a real checkpoint; set JETSPEC_TEST_MODEL to run",
 )
 
 PROMPTS = [

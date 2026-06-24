@@ -1,6 +1,6 @@
 """Minimal raw-HF Qwen3-8B + FlashAttention2 KV-cache decode smoke test.
 
-This intentionally bypasses JetFlow generation wrappers. It mirrors the AR path in
+This intentionally bypasses JetSpec generation wrappers. It mirrors the AR path in
 `bench/reference/benchmark.py`: chat-template prompt formatting, prompt prefill
 once, preallocated token/position tensors, direct target calls, and decode-only
 timing for one-token-at-a-time greedy KV-cache decode.

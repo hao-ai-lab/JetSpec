@@ -1,6 +1,6 @@
-"""Collect B2 depth-rank acceptance profiles on JetFlow.
+"""Collect B2 depth-rank acceptance profiles on JetSpec.
 
-The output schema matches ``jetflow.tree.profile_guided.depth_rank_histogram``:
+The output schema matches ``jetspec.tree.profile_guided.depth_rank_histogram``:
 
     {"depth_rank_accept": [[...]], "meta": {...}}
 
@@ -30,8 +30,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from jetflow.tree import get_algorithm
-from jetflow.tree._core.base import DraftTree
+from jetspec.tree import get_algorithm
+from jetspec.tree._core.base import DraftTree
 
 
 @dataclass
@@ -218,7 +218,7 @@ def accumulate_generation_profile(
     tree_width: int,
     budget: int,
 ) -> None:
-    """Post-process one JetFlow ``generate_tree`` output into profile counts."""
+    """Post-process one JetSpec ``generate_tree`` output into profile counts."""
 
     cursor = 1  # generate_tree emits the first sampled token before tree rounds.
     if len(records) != len(accept_lengths):
@@ -331,15 +331,15 @@ def parse_args() -> argparse.Namespace:
 @torch.inference_mode()
 def main() -> None:
     from bench.profiling.collect_tree_diagnostics import build_drafter, build_prompts
-    from jetflow.core.llm import SamplingParams
-    from jetflow.inference_engine.engine import JetFlowEngine
+    from jetspec.core.llm import SamplingParams
+    from jetspec.inference_engine.engine import JetSpecEngine
 
     args = parse_args()
     backend = args.attention_backend or os.environ.get(
-        "JETFLOW_BACKEND",
+        "JETSPEC_BACKEND",
         "triton_paged_tree_cudagraph",
     )
-    eng = JetFlowEngine(
+    eng = JetSpecEngine(
         args.model,
         device="cuda",
         dtype=torch.bfloat16,
@@ -382,9 +382,9 @@ def main() -> None:
     table = build_profile_table(
         counts,
         meta={
-            "engine": "JetFlow",
+            "engine": "JetSpec",
             "model": args.model,
-            "head": args.draft_head or os.environ.get("JETFLOW_DRAFT_HEAD"),
+            "head": args.draft_head or os.environ.get("JETSPEC_DRAFT_HEAD"),
             "prompt_set": args.prompt_set,
             "samples": len(prompts),
             "block_size": block_size,

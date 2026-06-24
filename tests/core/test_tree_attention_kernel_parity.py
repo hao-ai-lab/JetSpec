@@ -2,9 +2,9 @@ import pytest
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from jetflow.core.llm import LLM, SamplingParams
-from jetflow.core.model_runner import ModelRunner
+from jetspec.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetspec.core.llm import LLM, SamplingParams
+from jetspec.core.model_runner import ModelRunner
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="triton tree-attention parity needs CUDA"

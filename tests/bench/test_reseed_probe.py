@@ -3,7 +3,7 @@ from collections import Counter
 import pytest
 import torch
 
-from jetflow.tree._core.base import DraftTree
+from jetspec.tree._core.base import DraftTree
 
 from bench.profiling import compare_conditioned_draft_logits as reseed_probe
 

@@ -10,7 +10,7 @@ the token the target actually picks (its argmax). Aggregates
 HF (no vLLM): one recompute verify forward per spec step, target_hidden threaded
 like the engine so the DraftHead sees its real context.
 
-    CUDA_VISIBLE_DEVICES=0 JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    CUDA_VISIBLE_DEVICES=0 JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       PYTHONPATH=. python bench/profiling/collect_depth_rank_stats.py --dataset gsm8k --samples 20 \
         --width 7 --budget 255 --out profiles/gsm8k_epoch6.json
@@ -22,10 +22,10 @@ import os
 import torch
 from transformers import DynamicCache
 
-from jetflow.core.llm import LLM, SamplingParams
-from jetflow.models.draft_head import load_draft_head
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
-from jetflow.tree import get_algorithm, build_ancestor_matrix, tree_accept
+from jetspec.core.llm import LLM, SamplingParams
+from jetspec.models.draft_head import load_draft_head
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
 from bench.reference.benchmark import build_prompts
 
 
@@ -111,9 +111,9 @@ def main():
     ap.add_argument("--max-new", type=int, default=256)
     ap.add_argument("--out", required=True, help="output JSON path for the profile table")
     args = ap.parse_args()
-    head_path = args.draft_head or os.environ.get("JETFLOW_DRAFT_HEAD")
+    head_path = args.draft_head or os.environ.get("JETSPEC_DRAFT_HEAD")
     if not head_path:
-        raise SystemExit("set --draft-head or JETFLOW_DRAFT_HEAD")
+        raise SystemExit("set --draft-head or JETSPEC_DRAFT_HEAD")
 
     llm = LLM(args.model)
     head = load_draft_head(head_path)

@@ -1,8 +1,8 @@
 import pytest
 import torch
 
-from jetflow.draft import RandomTreeDrafter
-from tests.inference_engine.test_jetflow_tree import PROMPT, SP, _tiny_model, _tiny_jetflow
+from jetspec.draft import RandomTreeDrafter
+from tests.inference_engine.test_jetspec_tree import PROMPT, SP, _tiny_model, _tiny_jetspec
 
 
 class _DeterministicTreeDrafter:
@@ -100,7 +100,7 @@ def test_generate_tree_diag_flag_preserves_tokens_and_counts_tree_depths():
     drafter = RandomTreeDrafter(vocab_size=model.config.vocab_size)
 
     torch.manual_seed(1)
-    plain = _tiny_jetflow(model).generate_tree(
+    plain = _tiny_jetspec(model).generate_tree(
         PROMPT,
         drafter,
         block_size=4,
@@ -111,7 +111,7 @@ def test_generate_tree_diag_flag_preserves_tokens_and_counts_tree_depths():
     )
 
     torch.manual_seed(1)
-    diag = _tiny_jetflow(model).generate_tree(
+    diag = _tiny_jetspec(model).generate_tree(
         PROMPT,
         drafter,
         block_size=4,
@@ -146,7 +146,7 @@ def test_dump_first_rounds_records_drafter_topk_without_changing_metrics():
 
     plain_drafter = _DeterministicTreeDrafter(model.config.vocab_size)
     plain_metrics, plain_dump = run_tree_diag_measurement(
-        _tiny_jetflow(model),
+        _tiny_jetspec(model),
         [PROMPT],
         plain_drafter,
         tree_kwargs,
@@ -157,7 +157,7 @@ def test_dump_first_rounds_records_drafter_topk_without_changing_metrics():
 
     dump_drafter = _DeterministicTreeDrafter(model.config.vocab_size)
     dump_metrics, dump_text = run_tree_diag_measurement(
-        _tiny_jetflow(model),
+        _tiny_jetspec(model),
         [PROMPT],
         dump_drafter,
         tree_kwargs,

@@ -7,8 +7,8 @@ call counts, the GEMM share, and the per-round totals. The fusion gap =
 non-GEMM, non-attention kernel time; GEMM efficiency = GEMM time vs the
 weight-streaming floor (~2.3ms @ 8TB/s for 16GB bf16 weights).
 
-    JETFLOW_BACKEND=triton_paged_tree_compiled_nogather HF_DATASETS_CACHE=... \
-      CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. JETFLOW_DRAFT_HEAD=... \
+    JETSPEC_BACKEND=triton_paged_tree_compiled_nogather HF_DATASETS_CACHE=... \
+      CUDA_VISIBLE_DEVICES=4 PYTHONPATH=. JETSPEC_DRAFT_HEAD=... \
       python tests/manual/profiling/verify_kernel_profile.py --max-tokens 256 --budget 127
 """
 import argparse
@@ -17,10 +17,10 @@ import os
 import torch
 from torch.profiler import ProfilerActivity, profile
 
-from jetflow.core.llm import SamplingParams
-from jetflow.inference_engine.engine import JetFlowEngine
-from jetflow.models.draft_head import load_draft_head
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.core.llm import SamplingParams
+from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.models.draft_head import load_draft_head
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -52,9 +52,9 @@ def main():
     ap.add_argument("--tree-width", type=int, default=7)
     args = ap.parse_args()
 
-    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_compiled_nogather")
-    head_id = os.environ["JETFLOW_DRAFT_HEAD"]
-    eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
+    backend = os.environ.get("JETSPEC_BACKEND", "triton_paged_tree_compiled_nogather")
+    head_id = os.environ["JETSPEC_DRAFT_HEAD"]
+    eng = JetSpecEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
     tli, bs = head.target_layer_ids, head.block_size

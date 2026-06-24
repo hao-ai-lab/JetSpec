@@ -13,9 +13,9 @@ import pytest
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from jetflow.core.llm import LLM, SamplingParams
-from jetflow.core.model_runner import ModelRunner
-from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetspec.core.llm import LLM, SamplingParams
+from jetspec.core.model_runner import ModelRunner
+from jetspec.draft import RandomTreeDrafter, TargetEchoTreeDrafter
 
 
 class _StubTokenizer:
@@ -95,13 +95,13 @@ def test_kv_cache_tree_stats_shape():
 
 
 # --- b200 gate: real model in bf16 (skips locally; runs on b200) ---------------
-_REAL_MODEL = os.environ.get("JETFLOW_TEST_MODEL")
+_REAL_MODEL = os.environ.get("JETSPEC_TEST_MODEL")
 
 
 @pytest.mark.skipif(
     not (torch.cuda.is_available() and _REAL_MODEL),
     reason="bf16 lossless gate needs CUDA + a real checkpoint; run on b200 with "
-           "JETFLOW_TEST_MODEL=Qwen/Qwen3-8B",
+           "JETSPEC_TEST_MODEL=Qwen/Qwen3-8B",
 )
 def test_kv_cache_tree_real_model_bf16_lossless_and_accepts():
     """On b200/bf16 the cached tree path stays lossless vs greedy and accepts the

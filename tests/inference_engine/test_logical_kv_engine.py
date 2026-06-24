@@ -25,22 +25,22 @@ pytestmark = pytest.mark.skipif(
 # process exceed dynamo's default recompile_limit; test-only, no production effect.
 torch._dynamo.config.recompile_limit = 64
 
-from jetflow.core.llm import SamplingParams
-from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from tests.inference_engine.test_jetflow_kernel_e2e import _tiny_model, _tiny_jetflow, PROMPT, SP
+from jetspec.core.llm import SamplingParams
+from jetspec.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from tests.inference_engine.test_jetspec_kernel_e2e import _tiny_model, _tiny_jetspec, PROMPT, SP
 
 
 def _add_backend(backend: str):
     """Builder for any compiled-family backend over the tiny model (mirrors
     `test_compiled_verify_lossless._add_compiled_backend`, parameterized by the
     backend string so the logical-KV no-gather variants ride the same fixture)."""
-    from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
-    from jetflow.inference_engine.engine import _CUDAGRAPH_BACKENDS, _env_flag
+    from jetspec.inference_engine.compiled_verify_stack import CompiledVerifyStack
+    from jetspec.inference_engine.engine import _CUDAGRAPH_BACKENDS, _env_flag
 
     def build(model):
-        eng = _tiny_jetflow(model, "triton_paged_tree")
+        eng = _tiny_jetspec(model, "triton_paged_tree")
         eng.attn_backend = backend
-        eng.fuse_gemms = _env_flag("JETFLOW_FUSE_GEMMS")
+        eng.fuse_gemms = _env_flag("JETSPEC_FUSE_GEMMS")
         eng.compiled_verify = CompiledVerifyStack(
             model, block_size=eng.block_size, fuse_gemms=eng.fuse_gemms,
         )
@@ -89,7 +89,7 @@ def test_nogather_matches_sdpa_directly():
     model = _tiny_model(0)
     drafter = TargetEchoTreeDrafter(model)
     torch.manual_seed(1)
-    sdpa = _tiny_jetflow(model, "sdpa").generate_tree(
+    sdpa = _tiny_jetspec(model, "sdpa").generate_tree(
         PROMPT, drafter, block_size=4, tree_width=2, budget=15,
         sampling_params=SP)["token_ids"]
     tok_l, _ = _run(_add_backend("triton_paged_tree_compiled_nogather")(model), drafter)

@@ -10,7 +10,7 @@ import heapq
 
 import torch
 
-from jetflow.tree import get_algorithm, build_from_topk
+from jetspec.tree import get_algorithm, build_from_topk
 
 DEV = torch.device("cpu")
 BLOCK, WIDTH, BUDGET = 16, 7, 63          # D = 15 depths, top-7, mid budget

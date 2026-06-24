@@ -1,7 +1,7 @@
 import torch
 
-from jetflow.tree import build_ancestor_matrix, should_extend, splice_extension, tree_accept
-from jetflow.tree._core.base import DraftTree
+from jetspec.tree import build_ancestor_matrix, should_extend, splice_extension, tree_accept
+from jetspec.tree._core.base import DraftTree
 
 
 DEV = torch.device("cpu")

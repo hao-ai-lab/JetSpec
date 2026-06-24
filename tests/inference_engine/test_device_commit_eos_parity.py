@@ -1,10 +1,10 @@
 import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
-from jetflow.draft import RandomTreeDrafter, TargetEchoTreeDrafter
-from jetflow.core.llm import LLM, SamplingParams
-from jetflow.core.model_runner import ModelRunner
-from jetflow.inference_engine.engine import JetFlowEngine
+from jetspec.draft import RandomTreeDrafter, TargetEchoTreeDrafter
+from jetspec.core.llm import LLM, SamplingParams
+from jetspec.core.model_runner import ModelRunner
+from jetspec.inference_engine.engine import JetSpecEngine
 
 
 class _StubTokenizer:
@@ -38,8 +38,8 @@ def _tiny_llm(model) -> LLM:
     return llm
 
 
-def _tiny_jetflow(model, block_size: int = 16) -> JetFlowEngine:
-    eng = object.__new__(JetFlowEngine)
+def _tiny_jetspec(model, block_size: int = 16) -> JetSpecEngine:
+    eng = object.__new__(JetSpecEngine)
     eng.model = model
     eng.tokenizer = _StubTokenizer()
     eng.runner = ModelRunner(model)
@@ -90,7 +90,7 @@ def test_device_commit_matches_current_reference_across_random_seeds():
         model = _tiny_model(0)
         ref = _run_ref(_tiny_llm(model), RandomTreeDrafter(model.config.vocab_size), seed=seed)
         got = _run_device(
-            _tiny_jetflow(model),
+            _tiny_jetspec(model),
             RandomTreeDrafter(model.config.vocab_size),
             seed=seed,
         )
@@ -100,7 +100,7 @@ def test_device_commit_matches_current_reference_across_random_seeds():
 def test_device_commit_matches_current_reference_with_echo_drafter():
     model = _tiny_model(0)
     ref = _run_ref(_tiny_llm(model), TargetEchoTreeDrafter(model), seed=1)
-    got = _run_device(_tiny_jetflow(model), TargetEchoTreeDrafter(model), seed=1)
+    got = _run_device(_tiny_jetspec(model), TargetEchoTreeDrafter(model), seed=1)
     _assert_same_tokens_and_accept_lengths(ref, got)
 
 
@@ -147,13 +147,13 @@ def _first_unique_midblock_token(tokens, tree_block_size: int):
 
 def test_device_eos_stops_at_same_midround_token_as_current_reference():
     model = _tiny_model(0)
-    full = _run_long_echo(_tiny_jetflow(model), model)
+    full = _run_long_echo(_tiny_jetspec(model), model)
     ref_full = _run_long_echo_ref(_tiny_llm(model), model)
     assert full["token_ids"] == ref_full["token_ids"]
 
     eos_token = _first_unique_midblock_token(full["token_ids"], tree_block_size=4)
     ref = _tiny_llm(model)
-    got = _tiny_jetflow(model)
+    got = _tiny_jetspec(model)
     ref.eos_token_ids = {eos_token}
     got.eos_token_ids = {eos_token}
 

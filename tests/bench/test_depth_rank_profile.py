@@ -3,8 +3,8 @@ import json
 import pytest
 import torch
 
-from jetflow.tree import get_algorithm
-from jetflow.tree._core.base import DraftTree
+from jetspec.tree import get_algorithm
+from jetspec.tree._core.base import DraftTree
 
 from bench.profiling import depth_rank_profile as profile_mod
 from bench.profiling.depth_rank_profile import (

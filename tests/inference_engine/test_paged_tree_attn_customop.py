@@ -1,11 +1,11 @@
-"""CPU gate for the paged tree-attention ``custom_op`` (JetFlow N3, foundation).
+"""CPU gate for the paged tree-attention ``custom_op`` (JetSpec N3, foundation).
 
 The CPU-runnable checks need NO triton/CUDA: the op is registered, the fake
 (meta) kernel returns the right shape/dtype, and ``torch.compile(fullgraph=True)``
 traces *past* the op as an opaque fusion boundary. Full ``opcheck`` is CUDA-only
 (every opcheck utility executes the real op, which forwards to triton) and runs
 as part of the b200 kernel gate alongside the kernel==SDPA oracle in
-``test_jetflow_kernel.py``.
+``test_jetspec_kernel.py``.
 
 The op exists so a future compiled read-only decoder forward fuses the GEMMs
 around attention without graph-breaking on the ``@triton.jit`` launch.
@@ -13,7 +13,7 @@ around attention without graph-breaking on the ``@triton.jit`` launch.
 import pytest
 import torch
 
-from jetflow.inference_engine.paged_tree_attn_op import paged_tree_attn
+from jetspec.inference_engine.paged_tree_attn_op import paged_tree_attn
 
 
 # Small, kernel-shaped inputs: total_q=20 ragged over 3 seqs, Hq=8/Hkv=2 (GQA),
@@ -43,11 +43,11 @@ def _logical_inputs():
 
 
 def test_op_registered():
-    """The op is registered under ``jetflow::paged_tree_attn`` with the typed schema
+    """The op is registered under ``jetspec::paged_tree_attn`` with the typed schema
     (``Tensor?`` expresses the decode/logical-slot None cases directly)."""
-    assert hasattr(torch.ops.jetflow, "paged_tree_attn")
+    assert hasattr(torch.ops.jetspec, "paged_tree_attn")
     schema = str(paged_tree_attn._opoverload._schema)
-    assert "jetflow::paged_tree_attn" in schema
+    assert "jetspec::paged_tree_attn" in schema
     assert "Tensor? qq_bias" in schema  # Optional bias, no bool flag / op split
     assert "Tensor? logical_kv_slots=None" in schema
     assert "Tensor? logical_kv_starts=None" in schema
@@ -61,7 +61,7 @@ def test_fake_kernel_shape_dtype(with_bias):
     q, k_pool, v_pool, block_table, cu, seq_lens_k, qq_bias = _inputs(with_bias)
     qm = q.to("meta")
     bias_m = qq_bias.to("meta") if qq_bias is not None else None
-    out = torch.ops.jetflow.paged_tree_attn(
+    out = torch.ops.jetspec.paged_tree_attn(
         qm, k_pool.to("meta"), v_pool.to("meta"), block_table.to("meta"),
         cu.to("meta"), seq_lens_k.to("meta"), bias_m, SCALE, NQPKV, BLOCK_SIZE,
     )
@@ -80,7 +80,7 @@ def test_fake_kernel_accepts_explicit_logical_kv_args(with_bias):
     logical_kv_lens = torch.tensor([4, 5, 6], dtype=torch.int32)
     bias_m = qq_bias.to("meta") if qq_bias is not None else None
 
-    out = torch.ops.jetflow.paged_tree_attn(
+    out = torch.ops.jetspec.paged_tree_attn(
         q.to("meta"), k_pool.to("meta"), v_pool.to("meta"), block_table.to("meta"),
         cu.to("meta"), seq_lens_k.to("meta"), bias_m, SCALE, NQPKV, BLOCK_SIZE,
         logical_kv_slots.to("meta"), logical_kv_starts.to("meta"),
@@ -118,7 +118,7 @@ def test_fullgraph_traces_past_op(with_bias):
     an opaque fusion boundary). Run on meta tensors so no triton fires; a graph
     break under fullgraph would raise, so reaching the shape assert is the proof."""
     def fn(q, k_pool, v_pool, block_table, cu, seq_lens_k, qq_bias):
-        out = torch.ops.jetflow.paged_tree_attn(
+        out = torch.ops.jetspec.paged_tree_attn(
             q, k_pool, v_pool, block_table, cu, seq_lens_k,
             qq_bias, SCALE, NQPKV, BLOCK_SIZE,
         )
@@ -151,7 +151,7 @@ def test_fullgraph_traces_with_logical_kv_args(with_bias):
         logical_kv_starts,
         logical_kv_lens,
     ):
-        out = torch.ops.jetflow.paged_tree_attn(
+        out = torch.ops.jetspec.paged_tree_attn(
             q, k_pool, v_pool, block_table, cu, seq_lens_k,
             qq_bias, SCALE, NQPKV, BLOCK_SIZE,
             logical_kv_slots, logical_kv_starts, logical_kv_lens,
@@ -179,7 +179,7 @@ def test_compiled_verify_stack_traces_legacy_and_logical_kv_kwargs_on_meta():
     with per-layer logical-slot rows threaded down to the custom op."""
     from transformers import Qwen3Config, Qwen3ForCausalLM
 
-    from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
+    from jetspec.inference_engine.compiled_verify_stack import CompiledVerifyStack
 
     torch._dynamo.reset()
     cfg = Qwen3Config(

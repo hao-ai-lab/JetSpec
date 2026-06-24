@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from jetflow.inference_engine.paged_kv_cache import PagedKVCache
+from jetspec.inference_engine.paged_kv_cache import PagedKVCache
 
 
 def _seed_cache(num_layers=3, prompt_len=5, block_size=4):

@@ -2,16 +2,16 @@
 and must reuse the KV cache (never reprocess the prefix). Needs CUDA + Qwen3-8B,
 so it is skipped on CPU/CI; run it on the b200.
 
-    JETFLOW_TEST_MODEL=Qwen/Qwen3-8B pytest tests/core/test_offline_generate.py -x
+    JETSPEC_TEST_MODEL=Qwen/Qwen3-8B pytest tests/core/test_offline_generate.py -x
 """
 import os
 
 import pytest
 import torch
 
-from jetflow.core.llm import LLM, SamplingParams
+from jetspec.core.llm import LLM, SamplingParams
 
-MODEL = os.environ.get("JETFLOW_TEST_MODEL", "Qwen/Qwen3-8B")
+MODEL = os.environ.get("JETSPEC_TEST_MODEL", "Qwen/Qwen3-8B")
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available(), reason="needs CUDA + a real Qwen3-8B checkpoint"

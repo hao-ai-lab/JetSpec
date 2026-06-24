@@ -1,11 +1,11 @@
-"""Identical-conditions JetFlow-vs-fork comparison for the verify-only decode speedup.
+"""Identical-conditions JetSpec-vs-fork comparison for the verify-only decode speedup.
 
-Measures JetFlow's `decode_cuda_speedup` (AR verify-only GPU time per token ÷ tree
+Measures JetSpec's `decode_cuda_speedup` (AR verify-only GPU time per token ÷ tree
 verify-only GPU time per token) under conditions MATCHED to a reference vLLM fork
 DFlash profile that reported comparable speedup (`see-reference-fork-benchmarks` /
 `gains_report.txt`). The fork's verify-only `decode_cuda_s` wraps only the target
 `execute_model` (the drafter `propose` runs in a separate, untimed RPC), so this
-harness EXCLUDES JetFlow's drafter from both legs via a CUDA-event split, matching the
+harness EXCLUDES JetSpec's drafter from both legs via a CUDA-event split, matching the
 fork's accounting.
 
 Matched conditions (fork -> here):
@@ -20,17 +20,17 @@ Matched conditions (fork -> here):
   tree_draft            accum_logp  +              algo="accum_logp"  (both = cumulative-logprob
   tree_construction     breadth_first +              breadth-biased heap, per-depth top-k width,
   max_draft_passes      0                            budget-capped: byte-for-byte the same heap loop)
-  head_type             causal                     epoch6 causal distill head (JETFLOW_DRAFT_HEAD)
+  head_type             causal                     epoch6 causal distill head (JETSPEC_DRAFT_HEAD)
   max_num_seqs / bs     1 / 1                      single-stream
   samples               4                          --samples (default 4)
   output tokens/sample  ~208                       --max-tokens (default 210)
 
-The intrinsic difference being measured is the verify ENGINE: JetFlow's triton paged
+The intrinsic difference being measured is the verify ENGINE: JetSpec's triton paged
 tree-attn vs the fork's FLASH_ATTN flash-varlen. That is the comparison SUBJECT, not
 a condition to match.
 
-    JETFLOW_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
-    JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    JETSPEC_BACKEND=triton_paged_tree_compiled CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
+    JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
     python bench/profiling/compare_engine_with_vllm_integration.py --samples 4 --max-tokens 210
 """
 import argparse
@@ -40,10 +40,10 @@ import statistics
 import torch
 from torch.cuda import Event
 
-from jetflow.core.llm import SamplingParams
-from jetflow.inference_engine.engine import JetFlowEngine
-from jetflow.models.draft_head import load_draft_head
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.core.llm import SamplingParams
+from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.models.draft_head import load_draft_head
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 # Fork-exact gsm8k prompt format (dflash_profiling.py `load_dataset_prompt_bank`).
 GSM8K_FMT = ("{question}\n"
@@ -90,9 +90,9 @@ def main():
     ap.add_argument("--algo", type=str, default="accum_logp")
     args = ap.parse_args()
 
-    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_compiled")
-    head_id = os.environ["JETFLOW_DRAFT_HEAD"]
-    eng = JetFlowEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
+    backend = os.environ.get("JETSPEC_BACKEND", "triton_paged_tree_compiled")
+    head_id = os.environ["JETSPEC_DRAFT_HEAD"]
+    eng = JetSpecEngine("Qwen/Qwen3-8B", device="cuda", dtype=torch.bfloat16,
                      attn_backend=backend, block_size=16)
     head = load_draft_head(head_id)
     tli, bs = head.target_layer_ids, head.block_size
@@ -140,7 +140,7 @@ def main():
         # verify no longer routes through it, so wrapping replay is what captures the
         # tree leg. Wrapping both is safe: AR -> stack, tree -> replay, disjoint.
         eng.runner.forward = prefill.wrap(eng.runner.forward)
-        from jetflow.inference_engine.compiled_verify_stack import CompiledVerifyStack
+        from jetspec.inference_engine.compiled_verify_stack import CompiledVerifyStack
         CompiledVerifyStack.__call__ = verify.wrap(CompiledVerifyStack.__call__)
         if backend == "triton_paged_tree_cudagraph":
             # The tree verify leg is `GraphedVerify.replay` (copy-in + `g.replay()`). The
@@ -151,7 +151,7 @@ def main():
             # `graphs` dict growing) — recording it to a separate `capture` timer instead.
             # The reported verify/round is then pure per-round cost (copy-in + launch),
             # matching how the compiled leg times only its per-round forward.
-            from jetflow.inference_engine.graph_capture import GraphedVerify
+            from jetspec.inference_engine.graph_capture import GraphedVerify
             _orig_replay = GraphedVerify.replay
 
             def _timed_replay(self, *a, **k):
@@ -239,7 +239,7 @@ def main():
         print(f"       graph_capture_gpu={capture.ms/1e3:7.3f}s over {capture.n} captures "
               f"(one-time per-prompt setup, EXCLUDED from verify/round)")
     print(f"       accept_len={accept_len:.3f}   tree-N: min/mean/max={min(N_all)}/{avgN:.1f}/{max(N_all)}")
-    print(f"\nRESULT JetFlow verify-only decode_cuda_speedup = {speedup:.2f}x   "
+    print(f"\nRESULT JetSpec verify-only decode_cuda_speedup = {speedup:.2f}x   "
           f"[fork={FORK['decode_cuda_speedup']:.2f}x]")
     print(f"       accept_len {accept_len:.3f} vs fork {FORK['accept_len']}   "
           f"avgN {avgN:.0f} vs fork {FORK['avg_tree_nodes']}")

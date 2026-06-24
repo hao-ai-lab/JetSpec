@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import torch
 
-from jetflow.core.llm import make_cache
-from jetflow.models.draft_head import extract_context_feature
+from jetspec.core.llm import make_cache
+from jetspec.models.draft_head import extract_context_feature
 
 
 def _cuda_time(device: torch.device | str) -> float:

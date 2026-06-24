@@ -1,6 +1,6 @@
-"""Tree-decode diagnostic fingerprint for JetFlow on GSM8K.
+"""Tree-decode diagnostic fingerprint for JetSpec on GSM8K.
 
-Prints a fork-style ``metrics_report.txt`` key=value block so JetFlow and the vLLM
+Prints a fork-style ``metrics_report.txt`` key=value block so JetSpec and the vLLM
 DFlash fork can be diffed directly on acceptance shape and tree shape.
 """
 import argparse
@@ -13,10 +13,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from jetflow.core.llm import SamplingParams
-from jetflow.inference_engine.engine import JetFlowEngine
-from jetflow.models.draft_head import load_draft_head
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.core.llm import SamplingParams
+from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.models.draft_head import load_draft_head
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 
 GSM8K_PROMPT = (
@@ -94,7 +94,7 @@ def format_metrics_report(
 ) -> str:
     lines = [
         "mode=dflash",
-        "engine=JetFlow",
+        "engine=JetSpec",
         f"prompt_set={metrics.get('prompt_set', 'gsm8k')}",
         "prompt_format=chat_template",
         f"attention_backend={attention_backend}",
@@ -259,8 +259,8 @@ def build_prompts(tokenizer, samples: int, prompt_set: str = "gsm8k") -> list[st
     return prompts
 
 
-def build_drafter(args, eng: JetFlowEngine):
-    head = load_draft_head(os.environ["JETFLOW_DRAFT_HEAD"])
+def build_drafter(args, eng: JetSpecEngine):
+    head = load_draft_head(os.environ["JETSPEC_DRAFT_HEAD"])
     tli, bs = head.target_layer_ids, head.block_size
     drafter = DraftHeadTreeDrafter(head, target=eng.model, block_size=bs,
                                    target_layer_ids=tli, draft_shift=False)
@@ -294,8 +294,8 @@ def parse_args():
 @torch.inference_mode()
 def main():
     args = parse_args()
-    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
-    eng = JetFlowEngine(
+    backend = os.environ.get("JETSPEC_BACKEND", "triton_paged_tree_cudagraph")
+    eng = JetSpecEngine(
         "Qwen/Qwen3-8B",
         device="cuda",
         dtype=torch.bfloat16,

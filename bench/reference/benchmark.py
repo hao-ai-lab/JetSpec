@@ -1,4 +1,4 @@
-"""Aligned, multi-metric benchmark for the jetflow tree engine.
+"""Aligned, multi-metric benchmark for the jetspec tree engine.
 
 Reports the SAME metrics as the reference `causal_parallel_drafting/benchmark.py`,
 computed identically, on the SAME dataset with the SAME chat-template formatting,
@@ -18,8 +18,8 @@ with the KV-cache greedy baseline.
 Like the reference benchmark, TPS excludes prefill/setup from per-output-token
 decode timing.
 
-    CUDA_VISIBLE_DEVICES=0 JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
-      JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    CUDA_VISIBLE_DEVICES=0 JETSPEC_TEST_MODEL=Qwen/Qwen3-8B \
+      JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
       HF_HOME=/path/to/hf_cache HF_DATASETS_CACHE=/path/to/hf_cache/datasets \
       PYTHONPATH=. python bench/reference/benchmark.py --dataset gsm8k --samples 5 \
         --algos accum_logp,top2gap_fanout,task_router,reasoning_router,class_histogram --width 7 --budget 255
@@ -34,10 +34,10 @@ import torch.distributed as dist
 from tqdm import tqdm
 
 from bench.reference.dflash_baseline import dflash_generate
-from jetflow.core.llm import LLM, SamplingParams, make_cache
-from jetflow.core.sampler import sample
-from jetflow.models.draft_head import load_draft_head
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.core.llm import LLM, SamplingParams, make_cache
+from jetspec.core.sampler import sample
+from jetspec.models.draft_head import load_draft_head
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 # Same prompt formatting as the reference (model/utils.load_and_process_dataset)
 # then chat-templated with enable_thinking=False (benchmark.py:834).
@@ -270,9 +270,9 @@ def main():
             profile_table = json.load(f)
     if args.b2_tau is not None:
         ALGO_KWARGS["depth_rank_histogram"] = {"tau": args.b2_tau}
-    head_path = args.draft_head or os.environ.get("JETFLOW_DRAFT_HEAD")
+    head_path = args.draft_head or os.environ.get("JETSPEC_DRAFT_HEAD")
     if not head_path:
-        raise SystemExit("set --draft-head or JETFLOW_DRAFT_HEAD")
+        raise SystemExit("set --draft-head or JETSPEC_DRAFT_HEAD")
     algos = args.algos.split(",")
     for a in algos:
         if a not in ALGO_KWARGS:
@@ -295,12 +295,12 @@ def main():
         torch.cuda.set_device(local_rank)
 
     llm = LLM(args.model, device=device, attn_implementation=args.attn_implementation)
-    resolved_attn = getattr(llm.model, "_jetflow_attn_implementation", args.attn_implementation)
+    resolved_attn = getattr(llm.model, "_jetspec_attn_implementation", args.attn_implementation)
     if args.ignore_eos:
         llm.eos_token_ids = set()
     fused_moe_blocks = 0
     if args.fused_moe:
-        from jetflow.models.moe_fused import patch_qwen3_moe_with_grouped_mm
+        from jetspec.models.moe_fused import patch_qwen3_moe_with_grouped_mm
 
         fused_moe_blocks = patch_qwen3_moe_with_grouped_mm(llm.model)
     if args.torch_compile:

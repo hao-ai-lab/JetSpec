@@ -1,4 +1,4 @@
-# Contributing to JetFlow
+# Contributing to JetSpec
 
 Thanks for your interest in contributing. This guide covers local setup, how to
 run the tests, and the PR process.
@@ -8,14 +8,14 @@ run the tests, and the PR process.
 Single clone, single install — no submodules.
 
 ```bash
-git clone https://github.com/snyhlxde1/parallel-tree-decoding
+git clone https://github.com/hao-ai-lab/JetSpec
 cd parallel-tree-decoding
 pip install -e '.[test]'      # base deps + pytest (CPU test subset)
 ```
 
 Optional extras (install only what you need):
 
-- `pip install -e '.[kernel]'` — `triton`, for the JetFlow tree-attention
+- `pip install -e '.[kernel]'` — `triton`, for the JetSpec tree-attention
   kernel (GPU only; imported lazily, so the rest of the package works without it).
 - `pip install -e '.[bench]'` — `datasets`, `psutil`, `ninja`, and `packaging`,
   for benchmark scripts and profiling helpers under `bench/`.
@@ -31,23 +31,23 @@ The code is organized as a HuggingFace reference core, an optimized inference
 engine, and an engine-agnostic tree layer, with a strict one-way dependency
 (engine -> tree; the tree never imports an engine):
 
-- **`jetflow/core/`** — the lightweight HF reference core: `LLM`, `ModelRunner`,
+- **`jetspec/core/`** — the lightweight HF reference core: `LLM`, `ModelRunner`,
   sampling, and the tree-attention hook used by reference benchmarks.
-- **`jetflow/inference_engine/`** — the optimized serving engine: paged KV cache,
+- **`jetspec/inference_engine/`** — the optimized serving engine: paged KV cache,
   scheduler, Triton tree attention, and CUDA graph paths.
-- **`jetflow/tree/`** — the engine-agnostic tree-construction *method*. Turns
+- **`jetspec/tree/`** — the engine-agnostic tree-construction *method*. Turns
   per-depth draft logits into a verification tree and selects the accepted path.
   Pure torch/numpy; imports nothing from an engine. **Import it only through the
-  public API `jetflow.tree` — never `jetflow.tree._core`** (the `_core` package is
+  public API `jetspec.tree` — never `jetspec.tree._core`** (the `_core` package is
   internal and may change without notice).
-- **`jetflow/models/`** — target/draft-head model loading and model utilities.
-- **`jetflow/draft.py`** and **`jetflow/draft_head_adapter.py`** — simple test
+- **`jetspec/models/`** — target/draft-head model loading and model utilities.
+- **`jetspec/draft.py`** and **`jetspec/draft_head_adapter.py`** — simple test
   drafters and trained draft-head adapters.
 
 Top-level scripts are grouped by purpose:
 
 - **`bench/reference/`** — HF/reference benchmarks and raw HF FA2 sanity checks.
-- **`bench/engine/`** — optimized JetFlow engine throughput scripts.
+- **`bench/engine/`** — optimized JetSpec engine throughput scripts.
 - **`bench/profiling/`** — profiling, diagnostics, probes, and profile-table builders.
 - **`examples/basic/`**, **`examples/tree/`**, **`examples/engine/`** — runnable
   examples grouped by scope.
@@ -65,11 +65,11 @@ or operate on plain tensors, so they pass on any CPU-only box:
 pytest -q \
   tests/tree/test_build_from_topk.py \
   tests/tree/test_depth_rank_histogram.py \
-  tests/inference_engine/test_jetflow_attn_metadata.py \
-  tests/inference_engine/test_jetflow_batch.py \
-  tests/inference_engine/test_jetflow_paged_multiseq.py \
-  tests/inference_engine/test_jetflow_tree.py \
-  tests/inference_engine/test_jetflow_tree_batch.py
+  tests/inference_engine/test_jetspec_attn_metadata.py \
+  tests/inference_engine/test_jetspec_batch.py \
+  tests/inference_engine/test_jetspec_paged_multiseq.py \
+  tests/inference_engine/test_jetspec_tree.py \
+  tests/inference_engine/test_jetspec_tree_batch.py
 ```
 
 ### Full Suite
@@ -85,8 +85,8 @@ plus explicit model/checkpoint environment variables:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-JETFLOW_TEST_MODEL=Qwen/Qwen3-8B \
-JETFLOW_DRAFT_HEAD=/path/to/draft-head-or-hf-repo \
+JETSPEC_TEST_MODEL=Qwen/Qwen3-8B \
+JETSPEC_DRAFT_HEAD=/path/to/draft-head-or-hf-repo \
 PYTHONPATH=. pytest tests/
 ```
 
@@ -99,7 +99,7 @@ gates account for that caveat.
 - `tests/core/` — HF core generation, draft-head adapter, and KV tree verify.
 - `tests/tree/` — tree algorithms, registry, top-k construction, and acceptance.
 - `tests/inference_engine/` — paged KV, batching, kernels, CUDA graph helpers,
-  and JetFlow engine parity against the HF core.
+  and JetSpec engine parity against the HF core.
 - `tests/bench/` — benchmark/profile helper unit tests.
 - `tests/integration/` — real-model or end-to-end parity checks.
 
@@ -121,6 +121,6 @@ gates account for that caveat.
   the existing files. The codebase favors descriptive module/test docstrings that
   explain *why* a unit exists and what property it gates; mirror that.
 - Keep the `engine → tree` dependency one-way; the tree layer must not import from
-  `jetflow.core`, `jetflow.inference_engine`, or `jetflow.draft`.
+  `jetspec.core`, `jetspec.inference_engine`, or `jetspec.draft`.
 - Commit messages are single-line and prefixed by a tag (`[FIX]`, `[FEAT]`,
   `[DOCS]`, `[CHORE]`, etc.) describing the change.

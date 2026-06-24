@@ -6,7 +6,7 @@ distribution against one conditioned head forward that feeds only the accepted
 path prefix. Positions after the accepted path stay masked; the correction is
 the answer and is never fed to the draft head.
 
-    JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather ... \
+    JETSPEC_FUSE_GEMMS=1 JETSPEC_BACKEND=triton_paged_tree_cudagraph_nogather ... \
       python bench/profiling/compare_conditioned_draft_logits.py --rounds 50 --samples 4 --budget 127
 """
 from __future__ import annotations
@@ -30,10 +30,10 @@ from bench.profiling.depth_rank_profile import (
     rebuild_recorded_tree,
 )
 from bench.profiling.collect_tree_diagnostics import build_prompts
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
-from jetflow.core.llm import SamplingParams
-from jetflow.models.draft_head import load_draft_head
-from jetflow.inference_engine.engine import JetFlowEngine
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.core.llm import SamplingParams
+from jetspec.models.draft_head import load_draft_head
+from jetspec.inference_engine.engine import JetSpecEngine
 
 
 BUCKETS = ("shallow", "mid", "deep")
@@ -417,17 +417,17 @@ def main() -> None:
         raise SystemExit("--samples must be positive")
 
     backend = args.attention_backend or os.environ.get(
-        "JETFLOW_BACKEND",
+        "JETSPEC_BACKEND",
         "triton_paged_tree_cudagraph",
     )
-    eng = JetFlowEngine(
+    eng = JetSpecEngine(
         args.model,
         device="cuda",
         dtype=torch.bfloat16,
         attn_backend=backend,
         block_size=16,
     )
-    head = load_draft_head(args.draft_head or os.environ["JETFLOW_DRAFT_HEAD"])
+    head = load_draft_head(args.draft_head or os.environ["JETSPEC_DRAFT_HEAD"])
     target_layer_ids, block_size = head.target_layer_ids, head.block_size
     drafter = DraftHeadTreeDrafter(
         head,

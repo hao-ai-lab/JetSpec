@@ -1,4 +1,4 @@
-"""Wall-clock TPS for the optimized JetFlow engine — AR baseline vs tree-spec.
+"""Wall-clock TPS for the optimized JetSpec engine — AR baseline vs tree-spec.
 
 Reports REAL wall-clock tokens/sec (time.perf_counter), NOT GPU-self-time —
 i.e. what a user actually sees, including host/Python overhead. Complements
@@ -6,8 +6,8 @@ bench/profiling/compare_engine_with_vllm_integration.py (which reports decode_cu
 GPU-self-time, drafter-excluded). The production configuration behind the
 README Results table:
 
-    JETFLOW_FUSE_GEMMS=1 JETFLOW_BACKEND=triton_paged_tree_cudagraph_nogather \
-      PYTHONPATH=. JETFLOW_DRAFT_HEAD=Snyhlxde/jetflow-qwen3-8b-distill-epoch6-3e-4-no-gamma \
+    JETSPEC_FUSE_GEMMS=1 JETSPEC_BACKEND=triton_paged_tree_cudagraph_nogather \
+      PYTHONPATH=. JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
       python bench/engine/tps_walltime.py --samples 64 --max-tokens 2048 --budget 127 \
         --session --prompt-set gsm8k
 
@@ -22,10 +22,10 @@ import time
 import torch
 import torch.distributed as dist
 
-from jetflow.core.llm import SamplingParams
-from jetflow.inference_engine.engine import JetFlowEngine
-from jetflow.models.draft_head import load_draft_head
-from jetflow.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.core.llm import SamplingParams
+from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.models.draft_head import load_draft_head
+from jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -112,7 +112,7 @@ def _rank_details(values: list[float], device: str, world_size: int):
     return [item.cpu().tolist() for item in gathered]
 
 
-def _build_drafter(head, eng: JetFlowEngine, block_size: int, target_layer_ids):
+def _build_drafter(head, eng: JetSpecEngine, block_size: int, target_layer_ids):
     return DraftHeadTreeDrafter(
         head, target=eng.model, block_size=block_size,
         target_layer_ids=target_layer_ids, draft_shift=False,
@@ -147,9 +147,9 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
 
-    backend = os.environ.get("JETFLOW_BACKEND", "triton_paged_tree_cudagraph")
-    head_id = args.draft_head or os.environ["JETFLOW_DRAFT_HEAD"]
-    eng = JetFlowEngine(
+    backend = os.environ.get("JETSPEC_BACKEND", "triton_paged_tree_cudagraph")
+    head_id = args.draft_head or os.environ["JETSPEC_DRAFT_HEAD"]
+    eng = JetSpecEngine(
         args.model,
         device=device,
         dtype=torch.bfloat16,
