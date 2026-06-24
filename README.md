@@ -5,9 +5,8 @@
 <div align="center"><h1>JetSpec: Parallel Tree Drafting</h1></div>
 
 <p align="center">
-  <a href="https://arxiv.org/pdf/2606.18394">Paper</a> ·
   <a href="https://hao-ai-lab.github.io/JetSpec">Project Webpage</a> ·
-  <a href="https://github.com/hao-ai-lab/JetSpec">GitHub</a> ·
+  <a href="https://arxiv.org/pdf/2606.18394">Paper</a> ·
   <a href="https://huggingface.co/JetSpec">Hugging Face</a>
 </p>
 
