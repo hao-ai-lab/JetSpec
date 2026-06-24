@@ -139,8 +139,9 @@ out = engine.generate_tree(
     "The three primary colors are",
     drafter,
     block_size=head.block_size,
+    tree_depth=20,
     tree_width=7,
-    budget=63,
+    budget=128,
     target_layer_ids=head.target_layer_ids,
     sampling_params=SamplingParams(temperature=0.0, max_new_tokens=64),
 )
@@ -166,7 +167,7 @@ python bench/reference/benchmark.py \
   --algos accum_logp \
   --depth 20 \
   --width 7 \
-  --budget 255 \
+  --budget 256 \
   --max-new 1024 \
   --warmup-rounds 3 \
   --include-dflash-baseline
@@ -191,7 +192,8 @@ python bench/engine/tps_walltime.py \
   --prompt-set gsm8k \
   --samples 64 \
   --max-tokens 2048 \
-  --budget 127 \
+  --tree-depth 20 \
+  --budget 128 \
   --session
 ```
 
@@ -204,7 +206,7 @@ DRAFT_MODEL=/path/to/jetspec-draft-head
 PROFILER_DIR=/path/to/output/jetspec-math500
 TP_SIZE=4
 BATCH_SIZE=1
-MAX_TREE_BUDGET=127
+MAX_TREE_BUDGET=128
 MAX_TOKENS=512
 MAX_SAMPLES=16
 

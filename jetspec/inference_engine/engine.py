@@ -595,7 +595,8 @@ class JetSpecEngine:
                       return_stats: bool = False, prompt_info: dict = None,
                       profile_table: dict = None, tree_diag: bool = False,
                       session: bool = False, session_prompt_capacity: int = None,
-                      max_tree_depth: int = None, extend_kwargs: dict = None) -> dict:
+                      max_tree_depth: int = None, tree_depth: int = None,
+                      extend_kwargs: dict = None) -> dict:
         """Tree speculative decode over a PERSISTENT paged KV cache (JetSpec N1).
 
         The owned-substrate analogue of `jetspec.core.llm.LLM._generate_tree_kv_cached`:
@@ -626,6 +627,21 @@ class JetSpecEngine:
         reset_drafter_cache = getattr(tree_drafter, "reset_cache", None)
         if reset_drafter_cache is not None:
             reset_drafter_cache()
+        if tree_depth is not None:
+            tree_depth = int(tree_depth)
+            if tree_depth < 1:
+                raise ValueError(f"tree_depth must be >= 1; got {tree_depth}")
+            expected_block_size = tree_depth + 1
+            if block_size != 4 and int(block_size) != expected_block_size:
+                raise ValueError(
+                    "block_size and tree_depth disagree: "
+                    f"block_size={block_size} implies tree_depth={int(block_size) - 1}, "
+                    f"but tree_depth={tree_depth}"
+                )
+            block_size = expected_block_size
+            if max_tree_depth is None:
+                max_tree_depth = tree_depth
+
         prompt_len = committed.shape[1]
         configured_max_tree_depth = (
             block_size - 1 if max_tree_depth is None else int(max_tree_depth)

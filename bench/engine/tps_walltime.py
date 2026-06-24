@@ -8,8 +8,8 @@ README Results table:
 
     JETSPEC_FUSE_GEMMS=1 JETSPEC_BACKEND=triton_paged_tree_cudagraph_nogather \
       PYTHONPATH=. JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
-      python bench/engine/tps_walltime.py --samples 64 --max-tokens 2048 --budget 127 \
-        --session --prompt-set gsm8k
+      python bench/engine/tps_walltime.py --samples 64 --max-tokens 2048 \
+        --tree-depth 15 --budget 127 --session --prompt-set gsm8k
 
 The same script also runs under torchrun; each rank owns a disjoint prompt shard
 and rank 0 reports aggregate throughput using total tokens / slowest-rank wall
@@ -134,6 +134,8 @@ def main():
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--max-tokens", type=int, default=210)
     ap.add_argument("--budget", type=int, default=255)
+    ap.add_argument("--tree-depth", type=int, default=None,
+                    help="Maximum draft tree depth excluding root. Defaults to draft-head block_size - 1.")
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", default="accum_logp")
     ap.add_argument("--session", action="store_true",
@@ -166,8 +168,13 @@ def main():
         dtype=torch.bfloat16,
         attn_implementation=resolved_attn,
     )
-    tli, bs = head.target_layer_ids, head.block_size
-    drafter = _build_drafter(head, eng, bs, tli)
+    tli = head.target_layer_ids
+    tree_block_size = (
+        head.block_size if args.tree_depth is None else int(args.tree_depth) + 1
+    )
+    if tree_block_size < 2:
+        raise ValueError(f"--tree-depth must be >= 1; got {args.tree_depth}")
+    drafter = _build_drafter(head, eng, tree_block_size, tli)
 
     bank = _load_prompt_bank(args.prompt_set, args.samples)
     shard_bank = bank[rank::world_size]
@@ -177,7 +184,8 @@ def main():
         for p in shard_bank]
 
     sp = SamplingParams(0.0, args.max_tokens)
-    tkw = dict(block_size=bs, tree_width=args.tree_width, budget=args.budget,
+    tkw = dict(block_size=tree_block_size, tree_width=args.tree_width,
+               budget=args.budget, tree_depth=tree_block_size - 1,
                algo=args.algo, target_layer_ids=tli, return_stats=True)
     if args.session and prompts:
         tkw["session"] = True
@@ -222,7 +230,8 @@ def main():
               f"draft_attn={resolved_attn}  torch_compile={args.torch_compile}  "
               f"fused_moe_blocks={eng.fused_moe_blocks}")
         print(f"samples={args.samples} world_size={world_size} budget={args.budget} "
-              f"width={args.tree_width} max_tokens={args.max_tokens}")
+              f"tree_depth={tree_block_size - 1} width={args.tree_width} "
+              f"max_tokens={args.max_tokens}")
         print(f"AR    : {ar_tok_total:5d} tok  {ar_t_max:7.3f}s  ->  {ar_tps:8.1f} tok/s   (1x baseline)")
         print(f"tree  : {tree_tok_total:5d} tok  {tree_t_max:7.3f}s  ->  {spec_tps:8.1f} tok/s   "
               f"accept_len={accept_len:.2f}")

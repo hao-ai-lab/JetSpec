@@ -215,6 +215,40 @@ def test_jetspec_tree_stats_shape():
     assert all(a >= 1 for a in full["accept_lengths"])   # each round commits >= the correction
 
 
+def test_jetspec_tree_depth_alias_matches_block_size():
+    """tree_depth is the user-facing alias for block_size - 1."""
+    model = _tiny_model(0)
+    drafter = TargetEchoTreeDrafter(model)
+    tree_depth = 5
+    budget = tree_depth + 1
+    sp = SamplingParams(0.0, 24)
+
+    alias = _tiny_jetspec(model).generate_tree(
+        PROMPT,
+        drafter,
+        tree_depth=tree_depth,
+        tree_width=1,
+        budget=budget,
+        sampling_params=sp,
+        return_stats=True,
+        tree_diag=True,
+    )
+    by_block_size = _tiny_jetspec(model).generate_tree(
+        PROMPT,
+        drafter,
+        block_size=tree_depth + 1,
+        tree_width=1,
+        budget=budget,
+        sampling_params=sp,
+        return_stats=True,
+        tree_diag=True,
+    )
+
+    assert alias["token_ids"] == by_block_size["token_ids"]
+    assert alias["accept_lengths"] == by_block_size["accept_lengths"]
+    assert len(alias["tree_nodes_per_depth"]) == tree_depth + 1
+
+
 def test_jetspec_tree_lossless_deep_tree_beyond_block_depth():
     """A spliced tree can be much deeper than the drafter horizon.
 
