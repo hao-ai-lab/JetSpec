@@ -164,9 +164,10 @@ python bench/reference/benchmark.py \
   --dataset gsm8k \
   --samples 64 \
   --algos accum_logp \
+  --depth 20 \
   --width 7 \
   --budget 255 \
-  --max-new 256 \
+  --max-new 1024 \
   --warmup-rounds 3 \
   --include-dflash-baseline
 ```
