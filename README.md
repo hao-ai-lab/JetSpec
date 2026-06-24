@@ -212,7 +212,7 @@ MAX_SAMPLES=16
 
 cd "${VLLM_FORK_DIR}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}" \
-bash examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep_dgx_pod.sh \
+bash examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh \
   --model "${TARGET_MODEL}" \
   --draft-model "${DRAFT_MODEL}" \
   --profiler-dir "${PROFILER_DIR}" \
@@ -232,7 +232,7 @@ bash examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep_
   --max-num-batched-tokens 16384
 ```
 
-The [`vLLM integration`](https://github.com/hao-ai-lab/JetSpec) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout_dgx_pod.sh`.
+The [`vLLM integration`](https://github.com/hao-ai-lab/JetSpec) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
 
 
 
