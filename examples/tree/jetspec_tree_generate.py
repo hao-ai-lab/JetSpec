@@ -8,7 +8,7 @@ construction (see README "Results"), faster than autoregressive decode.
 
 Usage:
 
-    python examples/tree/tree_spec_generate.py [model] [draft_head]
+    python examples/tree/jetspec_tree_generate.py [model] [draft_head]
 
 Needs a CUDA GPU and a trained draft head. Defaults to Qwen3-8B with the
 published head `JetSpec/jetspec-qwen3-8b`.

@@ -1,7 +1,7 @@
 """JetSpec N3 throughput A/B: continuous-batched AR (`generate_batch`) under the
 SDPA path vs the paged tree-attention triton kernel, on a real model.
 
-    JETSPEC_TEST_MODEL=Qwen/Qwen3-8B python examples/engine/jetspec_engine_throughput.py
+    JETSPEC_TEST_MODEL=Qwen/Qwen3-8B python examples/engine/jetspec_engine_generate.py
 
 Reports tok/s for each backend over a fixed batch (B=8, 64 new tokens, greedy). The
 SDPA N2a baseline reconstructs every seq's dense KV + pads + masks each step; the

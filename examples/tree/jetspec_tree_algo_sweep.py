@@ -12,7 +12,7 @@ Needs CUDA + a real Qwen3-8B target + a trained DFlash head; run on b200:
     CUDA_VISIBLE_DEVICES=0 JETSPEC_TEST_MODEL=Qwen/Qwen3-8B \
       JETSPEC_DRAFT_HEAD="JetSpec/jetspec-qwen3-8b" \
       HF_HOME=/path/to/hf_cache \
-      python examples/tree/tree_algo_sweep.py
+      python examples/tree/jetspec_tree_algo_sweep.py
 
 Env knobs: JETSPEC_SWEEP_BUDGETS (comma list, default "15,63,127"),
 JETSPEC_SWEEP_WIDTH (tree_width, default 7), JETSPEC_SWEEP_MAXNEW (default 128).
