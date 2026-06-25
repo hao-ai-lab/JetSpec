@@ -13,7 +13,7 @@
 JetSpec is an implementation of **parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
 <p align="center">
-  <img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="180" align="center">
+  <img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="760" align="center">
 </p>
 
 ## Contents
