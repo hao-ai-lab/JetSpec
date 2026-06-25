@@ -12,7 +12,9 @@
 
 JetSpec is an implementation of **parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
-
+<p align="center">
+  <img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="180" align="center">
+</p>
 
 ## Contents
 
@@ -173,11 +175,7 @@ python bench/reference/benchmark.py \
   --include-dflash-baseline
 ```
 
-With `--include-dflash-baseline`, the HF reference benchmark reports the shared
-AR-greedy baseline, the linear DFlash block baseline using the draft head's
-`block_size`, and the selected JetSpec tree-decode algorithms. The DFlash block
-baseline is linear block drafting and verification only; it does not use
-`--width`, `--budget`, tree attention, or tree construction.
+With `--include-dflash-baseline`, the HF reference benchmark reports the shared AR-greedy baseline, the linear DFlash block baseline using the draft head's `block_size`, and the selected JetSpec tree-decode algorithms. The DFlash block baseline is linear block drafting and verification only; it does not use `--width`, `--budget`, tree attention, or tree construction.
 
 
 
