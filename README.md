@@ -271,9 +271,10 @@ Common algorithms exposed by `bench/reference/benchmark.py`:
 ## Citation
 
 ```bibtex
-@inproceedings{jetspec2026,
+@article{hu2026jetspec,
   title = {JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting},
   author = {Hu, Lanxiang and Feng, Zhaoxiang and Wu, Yulun and Yuan, Haoran and Zhao, Yujie and Qian, Yu-Yang and Wang, Bojun and Zhao, Peng and Jiang, Daxin and Zhu, Yibo and Rosing, Tajana and Zhang, Hao},
+  journal = {arXiv preprint arXiv:2606.18394},
   year = {2026},
   url = {https://arxiv.org/abs/2606.18394},
   eprint = {2606.18394},
