@@ -179,7 +179,11 @@ With `--include-dflash-baseline`, the HF reference benchmark reports the shared 
 
 
 
-Optimized JetSpec engine with wall-clock latency and throughput benchmarking:
+Optimized JetSpec engine with wall-clock latency and throughput benchmarking.
+The headline throughput uses `--drafter graphed` — a CUDA-graph replay of the
+draft-head forward, per context-capacity bucket. At batch size 1 the tree round is
+host-launch-bound, so graphing the draft head (like the verify stack) is what reaches
+the engine-results numbers; `--drafter eager` is correct but ~2x slower:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -192,6 +196,7 @@ python bench/engine/tps_walltime.py \
   --max-tokens 2048 \
   --tree-depth 20 \
   --budget 128 \
+  --drafter graphed \
   --session
 ```
 
