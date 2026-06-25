@@ -5,8 +5,9 @@
 <div align="center"><h1>JetSpec: Parallel Tree Drafting</h1></div>
 
 <p align="center">
-  <a href="https://hao-ai-lab.github.io/JetSpec">Project Webpage</a> ·
+  <a href="https://jetspec-project.github.io/jetspec-web/">Project Webpage</a> ·
   <a href="https://arxiv.org/pdf/2606.18394">Paper</a> ·
+  <a href="https://haoailab.com/blogs/parallel-tree-decoding/">Blog</a> ·
   <a href="https://huggingface.co/JetSpec">Hugging Face</a>
 </p>
 
@@ -200,7 +201,7 @@ python bench/engine/tps_walltime.py \
   --session
 ```
 
-Run [`our vLLM v1 integration with JetSpec support`](https://github.com/hao-ai-lab/JetSpec) on MATH-500 for performance test:
+Run [`our vLLM v1 integration with JetSpec support`](https://github.com/JetSpec-project/vllm-jetspec) on MATH-500 for performance test:
 
 ```bash
 VLLM_FORK_DIR=/path/to/JetSpec
@@ -235,7 +236,7 @@ bash examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.
   --max-num-batched-tokens 16384
 ```
 
-The [`vLLM integration`](https://github.com/hao-ai-lab/JetSpec) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
+The [`vLLM integration`](https://github.com/JetSpec-project/vllm-jetspec) supports MATH-500 testing through the command above and HumanEval testing through `examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
 
 
 
@@ -243,7 +244,7 @@ The [`vLLM integration`](https://github.com/hao-ai-lab/JetSpec) supports MATH-50
 
 ### Engine Results
 
-The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with [`vLLM v1 integration`](https://github.com/hao-ai-lab/JetSpec).
+The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with [`vLLM v1 integration`](https://github.com/JetSpec-project/vllm-jetspec).
 
 | dataset | JetSpec engine TPS | accept_len |
 |---|---:|---:|
