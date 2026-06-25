@@ -248,11 +248,11 @@ The optimized engine runs single-stream (batch size 1) Qwen3-8B tree-speculative
 
 | dataset | JetSpec engine TPS | accept_len |
 |---|---:|---:|
-| MATH-500 | **1159 tok/s** | 9.60 |
-| GSM8K | **968 tok/s** | 7.84 |
+| MATH-500 | **1150 tok/s** | 9.56 |
+| GSM8K | **984 tok/s** | 7.94 |
 | AIME25 | **925 tok/s** | 8.61 |
 | MBPP | **910 tok/s** | 7.48 |
-| HumanEval | **831 tok/s** | 6.78 |
+| HumanEval | **867 tok/s** | 6.92 |
 | LiveCodeBench | **795 tok/s** | 7.81 |
 | MT-Bench | **620 tok/s** | 4.80 |
 

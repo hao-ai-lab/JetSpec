@@ -190,7 +190,8 @@ def main():
     ap.add_argument("--session", action="store_true",
                     help="W11: reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
-                    choices=["gsm8k", "math500", "humaneval", "aime"])
+                    choices=["gsm8k", "math500", "humaneval", "aime",
+                             "aime25", "mbpp", "livecodebench", "mt_bench"])
     args = ap.parse_args()
 
     rank, local_rank, world_size = _dist_info()
