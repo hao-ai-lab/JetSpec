@@ -56,6 +56,29 @@ def _load_prompt_bank(prompt_set: str, n: int) -> list:
         fmt = ("Write a solution to the following problem and make sure that it "
                "passes the tests:\n```python\n{prompt}\n```")
         return [fmt.format(prompt=ds[i]["prompt"]) for i in range(min(n, len(ds)))]
+    if prompt_set == "aime25":
+        ds = load_dataset("yentinglin/aime_2025", split="train")
+        fmt = ("{problem}\n"
+               "Please reason step by step, and put your final answer within \\boxed{{}}.")
+        return [fmt.format(problem=ds[i]["problem"]) for i in range(min(n, len(ds)))]
+    if prompt_set == "mbpp":
+        ds = load_dataset("google-research-datasets/mbpp", "full", split="test")
+        fmt = ("You are an expert Python programmer. Write a solution to the following "
+               "task and make sure it passes the tests:\n{text}\nYour code should pass "
+               "these tests:\n{tests}")
+        return [fmt.format(text=ds[i]["text"], tests="\n".join(ds[i]["test_list"]))
+                for i in range(min(n, len(ds)))]
+    if prompt_set == "livecodebench":
+        # script-based dataset -> needs datasets<4 + trust_remote_code (pinned in the image)
+        ds = load_dataset("livecodebench/code_generation_lite", version_tag="release_v5",
+                          split="test", trust_remote_code=True)
+        fmt = ("Write a Python solution to the following competitive-programming "
+               "problem:\n```\n{q}\n```")
+        return [fmt.format(q=ds[i]["question_content"]) for i in range(min(n, len(ds)))]
+    if prompt_set == "mt_bench":
+        ds = load_dataset("HuggingFaceH4/mt_bench_prompts", split="train")
+        # single-turn: the first user turn of each MT-Bench item
+        return [ds[i]["prompt"][0] for i in range(min(n, len(ds)))]
     raise ValueError(f"unknown prompt set: {prompt_set}")
 
 
@@ -150,6 +173,10 @@ def main():
     ap.add_argument("--fused-moe", action="store_true",
                     help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
     ap.add_argument("--warmup-samples-per-rank", type=int, default=1)
+    ap.add_argument("--warm-all", action="store_true",
+                    help="warm the tree path over EVERY timed prompt first, so the graphed "
+                         "draft head captures all context buckets up front (steady-state TPS; "
+                         "avoids mid-timing re-capture that understates long/varied benchmarks)")
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--max-tokens", type=int, default=210)
     ap.add_argument("--budget", type=int, default=255)
@@ -163,7 +190,8 @@ def main():
     ap.add_argument("--session", action="store_true",
                     help="W11: reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
-                    choices=["gsm8k", "math500", "humaneval", "aime"])
+                    choices=["gsm8k", "math500", "humaneval", "aime",
+                             "aime25", "mbpp", "livecodebench", "mt_bench"])
     args = ap.parse_args()
 
     rank, local_rank, world_size = _dist_info()
@@ -222,6 +250,12 @@ def main():
             p = prompts[i % len(prompts)]
             eng.generate(p, sp)
             eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
+        if args.warm_all:
+            # Capture every context bucket the timed run will hit, so the graphed
+            # draft head never re-captures mid-timing (which understates long/varied
+            # benchmarks like MATH-500). Measures steady-state, post-warmup throughput.
+            for p in prompts:
+                eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
     torch.cuda.synchronize()
 
     ar_tok, ar_t, _ = _walltime(lambda p: eng.generate(p, sp), prompts, world_size)

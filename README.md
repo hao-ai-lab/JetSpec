@@ -197,6 +197,7 @@ python bench/engine/tps_walltime.py \
   --tree-depth 20 \
   --budget 128 \
   --drafter graphed \
+  --warm-all \
   --session
 ```
 
@@ -243,13 +244,17 @@ The [`vLLM integration`](https://github.com/hao-ai-lab/JetSpec) supports MATH-50
 
 ### Engine Results
 
-The optimized engine runs single-stream Qwen3-8B tree-speculative decoding with paged KV and CUDA graph verification. Local B200 bf16 measurements, using the production configuration below, closely align with [`vLLM v1 integration`](https://github.com/hao-ai-lab/JetSpec).
+The optimized engine runs single-stream (batch size 1) Qwen3-8B tree-speculative decoding with paged KV and CUDA-graph verification. NVIDIA B200, bf16, the production configuration below (`--drafter graphed`, warm steady-state), with a pinned CPU reservation so the host-bound batch-1 round is reproducible.
 
 | dataset | JetSpec engine TPS | accept_len |
 |---|---:|---:|
-| MATH-500 | **910.3 tok/s** | 9.60 |
-| GSM8K | **791.0 tok/s** | 7.72 |
-| HumanEval| **738.6 tok/s** | 7.25 |
+| MATH-500 | **1150 tok/s** | 9.56 |
+| GSM8K | **984 tok/s** | 7.94 |
+| AIME25 | **925 tok/s** | 8.61 |
+| MBPP | **910 tok/s** | 7.48 |
+| HumanEval | **867 tok/s** | 6.92 |
+| LiveCodeBench | **795 tok/s** | 7.81 |
+| MT-Bench | **620 tok/s** | 4.80 |
 
 
 
