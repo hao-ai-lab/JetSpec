@@ -25,7 +25,11 @@ import torch.distributed as dist
 from jetspec.core.llm import SamplingParams
 from jetspec.inference_engine.engine import JetSpecEngine
 from jetspec.models.draft_head import load_draft_head
-from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.draft_head_adapter import (
+    CompiledDraftHead,
+    DraftHeadTreeDrafter,
+    GraphedDraftHead,
+)
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -112,7 +116,22 @@ def _rank_details(values: list[float], device: str, world_size: int):
     return [item.cpu().tolist() for item in gathered]
 
 
-def _build_drafter(head, eng: JetSpecEngine, block_size: int, target_layer_ids):
+def _build_drafter(head, eng: JetSpecEngine, block_size: int, target_layer_ids,
+                   drafter: str = "eager"):
+    """eager = per-round head forward; compiled = torch.compile per ctx bucket;
+    graphed = CUDA-graph replay per ctx bucket. graphed is the production headline
+    config — at bs=1 the tree round is host-launch-bound, so replaying the draft-head
+    forward as a CUDA graph (instead of an eager per-round forward) is ~2x."""
+    if drafter == "graphed":
+        return GraphedDraftHead(
+            head, target=eng.model, block_size=block_size,
+            target_layer_ids=target_layer_ids, draft_shift=False,
+        )
+    if drafter == "compiled":
+        return CompiledDraftHead(
+            head, target=eng.model, block_size=block_size,
+            target_layer_ids=target_layer_ids, draft_shift=False,
+        )
     return DraftHeadTreeDrafter(
         head, target=eng.model, block_size=block_size,
         target_layer_ids=target_layer_ids, draft_shift=False,
@@ -138,6 +157,9 @@ def main():
                     help="Maximum draft tree depth excluding root. Defaults to draft-head block_size - 1.")
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", default="accum_logp")
+    ap.add_argument("--drafter", default="eager", choices=["eager", "compiled", "graphed"],
+                    help="graphed = CUDA-graph draft head (the production headline config); "
+                         "eager is correct but ~2x slower at bs=1 (host-launch-bound)")
     ap.add_argument("--session", action="store_true",
                     help="W11: reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
@@ -174,7 +196,7 @@ def main():
     )
     if tree_block_size < 2:
         raise ValueError(f"--tree-depth must be >= 1; got {args.tree_depth}")
-    drafter = _build_drafter(head, eng, tree_block_size, tli)
+    drafter = _build_drafter(head, eng, tree_block_size, tli, args.drafter)
 
     bank = _load_prompt_bank(args.prompt_set, args.samples)
     shard_bank = bank[rank::world_size]
