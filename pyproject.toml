@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jetflow"
+name = "jetspec"
 version = "0.0.1"
-description = "JetFlow — lightweight offline tree-speculative decoding on top of HF transformers (Qwen3-8B)."
+description = "JetSpec — lightweight offline tree-speculative decoding on top of HF transformers (Qwen3-8B)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -20,6 +20,7 @@ test = ["pytest>=7.0"]
 kernel = ["triton"]
 bench = [
     "datasets",
+    "tqdm",
     "psutil",
     "ninja",
     "packaging",
@@ -33,4 +34,4 @@ flash-attn = ["psutil", "packaging", "ninja"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["jetflow*"]
+include = ["jetspec*"]

@@ -7,3 +7,10 @@ dist/
 .pytest_cache/
 .venv/
 *.log
+
+# specific files and paths
+ptd_venv/
+bench/reference/ar_inference_baseline.py
+bench/outputs
+.cache/
+tests/
