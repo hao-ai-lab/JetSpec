@@ -42,7 +42,7 @@ On Qwen3-8B evaluations, JetSpec reaches up to **9.64x end-to-end speedup on MAT
 
 
 <p align="center">
-  <img src="assets/end_to_end_speedup_barplot_refined_v2_page.jpg" alt="End-to-end speedup over autoregressive decoding on Qwen3-8B across benchmarks" width="760">
+  <img src="assets/end_to_end_speedup_barplot_refined_v2_page.png" alt="End-to-end speedup over autoregressive decoding on Qwen3-8B across benchmarks" width="760">
 </p>
 
 
