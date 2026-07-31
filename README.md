@@ -93,6 +93,10 @@ count, layer taps, and mask token are validated before generation.
 
 Example model-zoo evaluation:
 
+The reference evaluator supports `gsm8k`, `math500`, `aime25`, `humaneval`,
+`mbpp`, and genuine two-turn `mt-bench` conversations. The model-zoo scripts
+discover this registry automatically and run every dataset by default.
+
 ```bash
 source jetspec_venv/bin/activate
 

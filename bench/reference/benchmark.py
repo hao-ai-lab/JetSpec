@@ -48,6 +48,14 @@ PROMPT_FMT = {
     "humaneval": ("openai/openai_humaneval", None, "test", "prompt",
                   "Write a solution to the following problem and make sure that it "
                   "passes the tests:\n```python\n{q}\n```"),
+    # Match the upstream DFlash benchmark dataset definitions.  The sanitized
+    # MBPP prompt already contains the problem statement and test context.
+    "mbpp": ("google-research-datasets/mbpp", "sanitized", "test", "prompt",
+             "{q}"),
+    # Each MT-Bench row contains a two-element list.  build_prompts preserves
+    # those turns; _run_sample creates the second-turn context using the first
+    # generated assistant response.
+    "mt-bench": ("HuggingFaceH4/mt_bench_prompts", None, "train", "prompt", None),
 }
 
 ALGO_KWARGS = {
@@ -70,11 +78,62 @@ def build_prompts(tokenizer, dataset, n):
         ds = ds.shuffle(seed=0).select(range(n))   # MATCH reference benchmark.py:770 exactly
     prompts = []
     for i in range(min(n, len(ds))):
-        user = fmt.format(q=ds[i][field])
-        prompts.append(tokenizer.apply_chat_template(
-            [{"role": "user", "content": user}],
-            tokenize=False, add_generation_prompt=True, enable_thinking=False))
+        value = ds[i][field]
+        if dataset == "mt-bench":
+            if not isinstance(value, (list, tuple)) or not value:
+                raise ValueError(
+                    f"MT-Bench row {i} has invalid prompt turns: {value!r}"
+                )
+            prompts.append(tuple(str(turn) for turn in value))
+        else:
+            user = fmt.format(q=value)
+            prompts.append(tokenizer.apply_chat_template(
+                [{"role": "user", "content": user}],
+                tokenize=False, add_generation_prompt=True, enable_thinking=False))
     return prompts
+
+
+def _merge_turn_outputs(outputs: list[dict]) -> dict:
+    """Combine per-turn generation metrics into one benchmark sample result."""
+    merged = {
+        "token_ids": [token for out in outputs for token in out["token_ids"]],
+        "text": outputs[-1]["text"] if outputs else "",
+        "decode_time": sum(float(out.get("decode_time", 0.0)) for out in outputs),
+    }
+    if any("accept_lengths" in out for out in outputs):
+        merged["accept_lengths"] = [
+            value for out in outputs for value in out.get("accept_lengths", [])
+        ]
+        merged["tree_sizes"] = [
+            value for out in outputs for value in out.get("tree_sizes", [])
+        ]
+        merged["rounds"] = sum(int(out.get("rounds", 0)) for out in outputs)
+        merged["tpf"] = (
+            len(merged["token_ids"]) / merged["rounds"]
+            if merged["rounds"] else 0.0
+        )
+    return merged
+
+
+def _run_sample(sample, tokenizer, generate_fn) -> dict:
+    """Run a single-turn prompt or a genuine multi-turn conversation."""
+    if isinstance(sample, str):
+        return generate_fn(sample)
+
+    messages = []
+    outputs = []
+    for user_content in sample:
+        messages.append({"role": "user", "content": user_content})
+        prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        output = generate_fn(prompt)
+        outputs.append(output)
+        messages.append({"role": "assistant", "content": output["text"]})
+    return _merge_turn_outputs(outputs)
 
 
 def _dist_info():
@@ -100,7 +159,15 @@ def _all_reduce_sum(value: float, device, world_size: int) -> float:
 
 
 @torch.inference_mode()
-def _timed_samples(fn, prompts, world_size: int):
+def _timed_samples(
+    fn,
+    prompts,
+    world_size: int,
+    *,
+    rank: int,
+    total_samples: int,
+    label: str,
+):
     """Run prompts one by one and return summed sample latency.
 
     Under torchrun this intentionally does NOT compute data-parallel throughput
@@ -114,13 +181,27 @@ def _timed_samples(fn, prompts, world_size: int):
     """
     torch.cuda.synchronize()
     _barrier(world_size)
+    print(
+        f"[progress][{label}][rank {rank}/{world_size}] "
+        f"starting {len(prompts)} local samples",
+        flush=True,
+    )
     outs, total_latency = [], 0.0
-    for prompt in prompts:
+    for local_index, prompt in enumerate(prompts, start=1):
         torch.cuda.synchronize()
         t0 = time.perf_counter()
         outs.append(fn(prompt))
         torch.cuda.synchronize()
-        total_latency += time.perf_counter() - t0
+        sample_latency = time.perf_counter() - t0
+        total_latency += sample_latency
+        global_index = rank + (local_index - 1) * world_size + 1
+        print(
+            f"[progress][{label}][rank {rank}/{world_size}] "
+            f"local {local_index}/{len(prompts)} "
+            f"global_sample {global_index}/{total_samples} "
+            f"latency={sample_latency:.2f}s",
+            flush=True,
+        )
     return outs, total_latency
 
 
@@ -133,6 +214,11 @@ def _build_drafter(head, target, block_size: int, target_layer_ids):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--list-datasets",
+        action="store_true",
+        help="print all supported dataset names and exit",
+    )
     ap.add_argument("--model", default="Qwen/Qwen3-8B")
     ap.add_argument("--draft-head", default=None)
     ap.add_argument("--attn-implementation", default="auto",
@@ -168,6 +254,9 @@ def main():
     ap.add_argument("--b2-tau", type=float, default=None,
                     help="override depth_rank_histogram tau (per-(depth,rank) accept cutoff)")
     args = ap.parse_args()
+    if args.list_datasets:
+        print(" ".join(PROMPT_FMT))
+        return
     profile_table = None
     if args.profile:
         import json
@@ -218,20 +307,46 @@ def main():
     if prompts:
         for i in range(max(0, args.warmup_samples_per_rank)):
             prompt = prompts[i % len(prompts)]
-            llm.generate(prompt, sp)
+            _run_sample(
+                prompt,
+                llm.tokenizer,
+                lambda text: llm.generate(text, sp),
+            )
             # Warm each selected algorithm shape once; this absorbs FA2/compile and
             # persistent-KV setup outside the timed window.
             for algo in algos:
-                llm.generate_tree(
-                    prompt, drafter, block_size=bs, tree_width=args.width,
-                    budget=args.budget, algo=algo, algo_kwargs=ALGO_KWARGS[algo],
-                    target_layer_ids=tli, sampling_params=sp, return_stats=True,
-                    tree_attn=args.tree_attn,
-                    profile_table=profile_table)
+                _run_sample(
+                    prompt,
+                    llm.tokenizer,
+                    lambda text, algo=algo: llm.generate_tree(
+                        text, drafter, block_size=bs, tree_width=args.width,
+                        budget=args.budget, algo=algo,
+                        algo_kwargs=ALGO_KWARGS[algo],
+                        target_layer_ids=tli, sampling_params=sp,
+                        return_stats=True, tree_attn=args.tree_attn,
+                        profile_table=profile_table,
+                    ),
+                )
+            print(
+                f"[progress][warmup][rank {rank}/{world_size}] "
+                f"sample {i + 1}/{args.warmup_samples_per_rank}",
+                flush=True,
+            )
         torch.cuda.synchronize()
 
     # AR-greedy (KV-cache) baseline = the 1x wall-clock denominator.
-    ar_outs, ar_wall_latency_local = _timed_samples(lambda p: llm.generate(p, sp), prompts, world_size)
+    ar_outs, ar_wall_latency_local = _timed_samples(
+        lambda sample: _run_sample(
+            sample,
+            llm.tokenizer,
+            lambda text: llm.generate(text, sp),
+        ),
+        prompts,
+        world_size,
+        rank=rank,
+        total_samples=len(all_prompts),
+        label="ar",
+    )
     ar_tokens = [out["token_ids"] for out in ar_outs]
     ar_ntok_local = sum(len(t) for t in ar_tokens)
     ar_ntok = int(_all_reduce_sum(ar_ntok_local, device, world_size))
@@ -257,14 +372,24 @@ def main():
 
     for algo in algos:
         outs, spec_wall_latency_local = _timed_samples(
-            lambda p: llm.generate_tree(
-                p, drafter, block_size=bs, tree_width=args.width, budget=args.budget,
-                algo=algo, algo_kwargs=ALGO_KWARGS[algo], target_layer_ids=tli,
-                sampling_params=sp, return_stats=True,
-                tree_attn=args.tree_attn,
-                profile_table=profile_table),
+            lambda sample: _run_sample(
+                sample,
+                llm.tokenizer,
+                lambda text: llm.generate_tree(
+                    text, drafter, block_size=bs, tree_width=args.width,
+                    budget=args.budget, algo=algo,
+                    algo_kwargs=ALGO_KWARGS[algo], target_layer_ids=tli,
+                    sampling_params=sp, return_stats=True,
+                    tree_attn=args.tree_attn,
+                    profile_table=profile_table,
+                ),
+            ),
             prompts,
-            world_size)
+            world_size,
+            rank=rank,
+            total_samples=len(all_prompts),
+            label=f"spec:{algo}",
+        )
 
         all_acc, all_tree = [], []
         spec_ntok_local = 0
