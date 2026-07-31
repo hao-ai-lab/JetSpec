@@ -33,6 +33,7 @@ import torch.distributed as dist
 
 from jetflow.core.llm import LLM, SamplingParams
 from jetflow.models.draft_head import load_draft_head
+from jetflow.models.qwen3 import resolve_attn_implementation
 from jetflow.draft_head_adapter import DraftHeadTreeDrafter
 
 # Same prompt formatting as the reference (model/utils.load_and_process_dataset)
@@ -42,6 +43,11 @@ PROMPT_FMT = {
               "{q}\nPlease reason step by step, and put your final answer within \\boxed{{}}."),
     "math500": ("HuggingFaceH4/MATH-500", None, "test", "problem",
                 "{q}\nPlease reason step by step, and put your final answer within \\boxed{{}}."),
+    "aime25": ("math-ai/aime25", None, "test", "problem",
+               "{q}\nPlease reason step by step, and put your final answer within \\boxed{{}}."),
+    "humaneval": ("openai/openai_humaneval", None, "test", "prompt",
+                  "Write a solution to the following problem and make sure that it "
+                  "passes the tests:\n```python\n{q}\n```"),
 }
 
 ALGO_KWARGS = {
@@ -58,6 +64,8 @@ def build_prompts(tokenizer, dataset, n):
     from datasets import load_dataset
     repo, cfg, split, field, fmt = PROMPT_FMT[dataset]
     ds = load_dataset(repo, cfg, split=split) if cfg else load_dataset(repo, split=split)
+    if n <= 0:
+        n = len(ds)
     if n < len(ds):
         ds = ds.shuffle(seed=0).select(range(n))   # MATCH reference benchmark.py:770 exactly
     prompts = []
@@ -128,7 +136,13 @@ def main():
     ap.add_argument("--model", default="Qwen/Qwen3-8B")
     ap.add_argument("--draft-head", default=None)
     ap.add_argument("--attn-implementation", default="auto",
-                    choices=["auto", "sdpa", "flash_attention_2"])
+                    choices=["auto", "eager", "sdpa", "flash_attention_2"])
+    ap.add_argument(
+        "--draft-attn-implementation",
+        default=None,
+        choices=["auto", "eager", "sdpa", "flash_attention_2"],
+        help="draft-head attention backend; defaults to --attn-implementation",
+    )
     ap.add_argument("--torch-compile", action="store_true", default=False,
                     help="Apply torch.compile(dynamic=True) to the target model")
     ap.add_argument("--no-torch-compile", action="store_false", dest="torch_compile")
@@ -136,13 +150,19 @@ def main():
                     help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
     ap.add_argument("--warmup-samples-per-rank", type=int, default=0)
     ap.add_argument("--dataset", default="gsm8k", choices=list(PROMPT_FMT))
-    ap.add_argument("--samples", type=int, default=5)
+    ap.add_argument("--samples", type=int, default=5,
+                    help="number of samples; <=0 evaluates the full dataset")
     ap.add_argument("--algos", default="accum_logp,top2gap_fanout,task_router,reasoning_router,class_histogram")
     ap.add_argument("--width", type=int, default=7)
     ap.add_argument("--budget", type=int, default=255)
     ap.add_argument("--max-new", type=int, default=256)
-    ap.add_argument("--tree-attn", default="triton", choices=["sdpa", "triton"],
-                    help="tree verify attention backend")
+    ap.add_argument(
+        "--tree-attn-implementation", "--tree-attn",
+        dest="tree_attn",
+        default="triton",
+        choices=["sdpa", "triton"],
+        help="tree verify attention backend",
+    )
     ap.add_argument("--profile", default=None,
                     help="JSON profile_table (bench/profiling/collect_profile.py) for depth_rank_histogram")
     ap.add_argument("--b2-tau", type=float, default=None,
@@ -179,7 +199,15 @@ def main():
         llm.model._jetflow_attn_implementation = resolved_attn
         llm.runner.model = llm.model
 
-    head = load_draft_head(head_path, device=device, attn_implementation=resolved_attn)
+    draft_attn = resolve_attn_implementation(
+        args.draft_attn_implementation or resolved_attn,
+        model_type="qwen3",
+    )
+    head = load_draft_head(
+        head_path,
+        device=device,
+        attn_implementation=draft_attn,
+    )
     tli = head.target_layer_ids
     bs = head.block_size
     drafter = _build_drafter(head, llm.model, bs, tli)
@@ -217,7 +245,7 @@ def main():
               f"block_size={bs} width={args.width} budget={args.budget} max_new={args.max_new}")
         print(f"attn_implementation={resolved_attn} torch_compile={args.torch_compile} "
               f"fused_moe_blocks={fused_moe_blocks} tree_attn={args.tree_attn} "
-              f"draft_attn={resolved_attn}")
+              f"draft_attn={draft_attn}")
         ar_avg_ms = 1000.0 * ar_latency / len(all_prompts) if all_prompts else 0.0
         ar_wall_avg_ms = 1000.0 * ar_wall_latency / len(all_prompts) if all_prompts else 0.0
         print(f"AR-greedy baseline: {ar_tps:.1f} tok/s/gpu  "

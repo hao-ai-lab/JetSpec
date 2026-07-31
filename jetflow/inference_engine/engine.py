@@ -24,6 +24,10 @@ import torch
 from transformers import DynamicCache
 
 from jetflow.models.qwen3 import load_target
+from jetflow.models.target_adapter import (
+    build_tree_attention_mask,
+    require_backend_support,
+)
 from jetflow.core.llm import SamplingParams
 from jetflow.core.model_runner import ModelRunner
 from jetflow.core.sampler import sample
@@ -292,6 +296,9 @@ class JetFlowEngine:
         # weights/format; only the interface HF dispatches to is replaced). Affects
         # N0/N1/N2a; N2b stays on SDPA regardless (see generate_tree_batch).
         self.attn_backend = attn_backend
+        require_backend_support(
+            self.model, "sdpa" if attn_backend == "sdpa" else attn_backend
+        )
         self.fuse_gemms = bool(fuse_gemms) or _env_flag("JETFLOW_FUSE_GEMMS")
         if attn_backend == "triton_paged_tree":
             from jetflow.inference_engine.paged_attn_backend import register_jetflow_paged_tree
@@ -637,7 +644,6 @@ class JetFlowEngine:
         D = max(1, block_size - 1)
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         dtype = self.dtype
-        neg = torch.finfo(dtype).min
         need_hidden = target_layer_ids is not None and block_size > 1
         generated_len, rounds = 0, 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
@@ -1055,11 +1061,13 @@ class JetFlowEngine:
             else:
                 # 4D additive mask: queries = N nodes; keys = past_len cached prefix
                 # (all visible) + N nodes (ancestor mask, incl self).
-                allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-                allowed[:, :past_len] = True
-                allowed[:, past_len:] = build_ancestor_matrix(tree).bool()
-                mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
-                                   torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+                mask = build_tree_attention_mask(
+                    self.model,
+                    build_ancestor_matrix(tree).bool(),
+                    past_len=past_len,
+                    depths=tree.depth,
+                    dtype=dtype,
+                )
                 logits, cache, new_hidden = self.runner.forward(
                     seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
                     output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,

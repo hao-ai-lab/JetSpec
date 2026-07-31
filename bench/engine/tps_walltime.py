@@ -34,24 +34,28 @@ GSM8K_FMT = ("{question}\n"
 def _load_prompt_bank(prompt_set: str, n: int) -> list:
     """Raw prompt texts, formatted exactly like the fork's dflash_profiling bank."""
     from datasets import load_dataset
+    def take(ds):
+        limit = len(ds) if n <= 0 else min(n, len(ds))
+        return range(limit)
+
     if prompt_set == "gsm8k":
         ds = load_dataset("openai/gsm8k", "main", split="test")
-        return [GSM8K_FMT.format(question=ds[i]["question"]) for i in range(min(n, len(ds)))]
+        return [GSM8K_FMT.format(question=ds[i]["question"]) for i in take(ds)]
     if prompt_set == "math500":
         ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
         fmt = ("{problem}\n"
                "Please reason step by step, and put your final answer within \\boxed{{}}.")
-        return [fmt.format(problem=ds[i]["problem"]) for i in range(min(n, len(ds)))]
-    if prompt_set == "aime":
-        ds = load_dataset("HuggingFaceH4/aime_2024", split="train")
+        return [fmt.format(problem=ds[i]["problem"]) for i in take(ds)]
+    if prompt_set == "aime25":
+        ds = load_dataset("math-ai/aime25", split="test")
         fmt = ("{problem}\n"
                "Please reason step by step, and put your final answer within \\boxed{{}}.")
-        return [fmt.format(problem=ds[i]["problem"]) for i in range(min(n, len(ds)))]
+        return [fmt.format(problem=ds[i]["problem"]) for i in take(ds)]
     if prompt_set == "humaneval":
         ds = load_dataset("openai/openai_humaneval", split="test")
         fmt = ("Write a solution to the following problem and make sure that it "
                "passes the tests:\n```python\n{prompt}\n```")
-        return [fmt.format(prompt=ds[i]["prompt"]) for i in range(min(n, len(ds)))]
+        return [fmt.format(prompt=ds[i]["prompt"]) for i in take(ds)]
     raise ValueError(f"unknown prompt set: {prompt_set}")
 
 
@@ -124,14 +128,15 @@ def main():
     ap.add_argument("--model", default="Qwen/Qwen3-8B")
     ap.add_argument("--draft-head", default=None)
     ap.add_argument("--attn-implementation", default="sdpa",
-                    choices=["auto", "sdpa", "flash_attention_2"])
+                    choices=["auto", "eager", "sdpa", "flash_attention_2"])
     ap.add_argument("--torch-compile", action="store_true", default=False,
                     help="Apply torch.compile(dynamic=True) to the target model")
     ap.add_argument("--no-torch-compile", action="store_false", dest="torch_compile")
     ap.add_argument("--fused-moe", action="store_true",
                     help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
     ap.add_argument("--warmup-samples-per-rank", type=int, default=1)
-    ap.add_argument("--samples", type=int, default=5)
+    ap.add_argument("--samples", type=int, default=5,
+                    help="number of samples; <=0 evaluates the full prompt set")
     ap.add_argument("--max-tokens", type=int, default=210)
     ap.add_argument("--budget", type=int, default=255)
     ap.add_argument("--tree-width", type=int, default=7)
@@ -139,7 +144,7 @@ def main():
     ap.add_argument("--session", action="store_true",
                     help="W11: reuse the tree session (pool + captured graphs) across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
-                    choices=["gsm8k", "math500", "humaneval", "aime"])
+                    choices=["gsm8k", "math500", "humaneval", "aime25"])
     args = ap.parse_args()
 
     rank, local_rank, world_size = _dist_info()

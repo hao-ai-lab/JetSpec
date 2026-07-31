@@ -398,5 +398,11 @@ def load_draft_head(
     kwargs = {"dtype": dtype, "attn_implementation": attn_implementation}
     if subfolder:
         kwargs["subfolder"] = subfolder
-    head = DFlashDraftModel.from_pretrained(repo, **kwargs).to(device).eval()
+    target_device = torch.device(device)
+    if target_device.type == "cuda":
+        kwargs["device_map"] = {"": str(target_device)}
+    head = DFlashDraftModel.from_pretrained(repo, **kwargs)
+    if target_device.type != "cuda":
+        head = head.to(target_device)
+    head = head.eval()
     return head

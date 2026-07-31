@@ -22,6 +22,11 @@ import torch
 from transformers import DynamicCache
 
 from jetflow.draft import Drafter, TreeDrafter
+from jetflow.models.target_adapter import (
+    get_target_input_embeddings,
+    get_target_output_embeddings,
+    validate_draft_target_compatibility,
+)
 
 
 class _DraftHeadForward:
@@ -38,6 +43,13 @@ class _DraftHeadForward:
         self.block_size = block_size
         self.target_layer_ids = target_layer_ids
         self.draft_shift = draft_shift
+        # Lightweight test/custom targets may intentionally expose only the
+        # embedding/head contract. Real HF targets carry config and get the full
+        # model-zoo compatibility validation.
+        if hasattr(target, "config") or hasattr(getattr(target, "_orig_mod", None), "config"):
+            validate_draft_target_compatibility(head, target)
+        self.input_embeddings = get_target_input_embeddings(target)
+        self.output_embeddings = get_target_output_embeddings(target)
         # The head's device + dtype are the source of truth: every tensor we
         # build (anchor row, mask-id placeholders, position ids) goes here so
         # embed_tokens / fc / lm_head never hit a device or dtype mismatch.
@@ -70,7 +82,7 @@ class _DraftHeadForward:
 
     def noise_embedding(self, context_ids: torch.Tensor, fill_tokens=None) -> torch.Tensor:
         block_output_ids = self.block_output_ids(context_ids, fill_tokens=fill_tokens)
-        return self.target.model.embed_tokens(block_output_ids)  # (1, block_size, H)
+        return self.input_embeddings(block_output_ids)  # (1, block_size, H)
 
     def _forward_head(
         self,
@@ -126,7 +138,7 @@ class _DraftHeadForward:
         #   shift (draft_shift=True): positions 0..block_size-2 are predictions
         #     -> slice(0, block_size-1)
         draft_slice = slice(0, block_size - 1) if self.draft_shift else slice(-block_size + 1, None)
-        draft_logits = self.target.lm_head(hidden[:, draft_slice, :])  # (1, block_size-1, V)
+        draft_logits = self.output_embeddings(hidden[:, draft_slice, :])  # (1, block_size-1, V)
         return draft_logits[:, :depth, :]
 
 

@@ -12,6 +12,10 @@ import torch
 from transformers import DynamicCache
 
 from jetflow.models.qwen3 import load_target
+from jetflow.models.target_adapter import (
+    build_tree_attention_mask,
+    require_backend_support,
+)
 from jetflow.core.model_runner import ModelRunner
 from jetflow.core.sampler import sample
 
@@ -294,6 +298,9 @@ class LLM:
         algo_obj = get_algorithm(algo, **(algo_kwargs or {}))
         if tree_attn not in {"sdpa", "triton"}:
             raise ValueError(f"unknown tree_attn {tree_attn!r}; expected 'sdpa' or 'triton'")
+        require_backend_support(
+            self.model, "sdpa" if tree_attn == "sdpa" else "triton"
+        )
         return self._generate_tree_kv_cached(
             committed, tree_drafter, block_size, tree_width, budget, algo_obj,
             target_layer_ids, sp, return_stats, prompt_info, profile_table,
@@ -326,7 +333,6 @@ class LLM:
             )
 
         dtype = self.model.dtype
-        neg = torch.finfo(dtype).min
         D = max(1, block_size - 1)
         need_hidden = target_layer_ids is not None and block_size > 1
         new_ids, rounds = [], 0
@@ -377,18 +383,25 @@ class LLM:
                 )
                 with (
                     use_attention_implementation(self.model, "sdpa"),
-                    use_tree_attention(attn_ancestor, prefix_len=past_len, attn_impl="triton"),
+                    use_tree_attention(
+                        attn_ancestor,
+                        depths=tree.depth,
+                        prefix_len=past_len,
+                        attn_impl="triton",
+                    ),
                 ):
                     logits, cache, new_hidden = self.runner.forward(
                         seq_step, cache, posN, attention_mask=None, cache_position=cache_pos,
                         output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,
                     )
             else:
-                allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-                allowed[:, :past_len] = True
-                allowed[:, past_len:] = ancestor
-                mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
-                                   torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+                mask = build_tree_attention_mask(
+                    self.model,
+                    ancestor,
+                    past_len=past_len,
+                    depths=tree.depth,
+                    dtype=dtype,
+                )
                 logits, cache, new_hidden = self.runner.forward(
                     seq_step, cache, posN, attention_mask=mask, cache_position=cache_pos,
                     output_hidden_states=need_hidden, target_layer_ids=target_layer_ids,

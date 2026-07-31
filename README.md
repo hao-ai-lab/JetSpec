@@ -74,6 +74,46 @@ Most benchmark and diagnostic scripts read the draft head from `JETFLOW_DRAFT_HE
 export JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo>
 ```
 
+### Model Zoo
+
+The correctness-first Hugging Face/SDPA path supports the following target
+families. Accelerated Triton/compiled verification remains Qwen3-specific and
+fails loudly for other architectures.
+
+| Target | Draft head | Supported tree backend |
+|---|---|---|
+| Qwen3 / Qwen3-MoE | matching DFlash checkpoint | FA2 target/draft, Triton tree verify |
+| GPT-OSS | matching Qwen3-shaped DFlash checkpoint | FA2 target/draft, Triton tree verify |
+| Gemma 4 / Gemma 4 MoE | matching Qwen3-shaped DFlash checkpoint | SDPA target, FA2 draft, Triton tree verify |
+
+Gemma 4 and GPT-OSS use hybrid full/sliding attention. JetFlow constructs a
+prepared mask for each layer type so tree verification retains the target's
+sliding-window semantics. Draft/target hidden size, vocabulary, target layer
+count, layer taps, and mask token are validated before generation.
+
+Example model-zoo evaluation:
+
+```bash
+source jetspec_venv/bin/activate
+
+python bench/reference/benchmark.py \
+  --model /mnt/lanxiangh/models/gpt-oss-20b \
+  --draft-head /mnt/lanxiangh/models/jetspec-gpt-oss-20b \
+  --attn-implementation flash_attention_2 \
+  --tree-attn-implementation triton \
+  --dataset gsm8k \
+  --samples 5
+
+python bench/reference/benchmark.py \
+  --model google/gemma-4-26B-A4B-it \
+  --draft-head /mnt/lanxiangh/models/jetspec-gemma4-26B-A4B0-it \
+  --attn-implementation sdpa \
+  --draft-attn-implementation flash_attention_2 \
+  --tree-attn-implementation triton \
+  --dataset gsm8k \
+  --samples 5
+```
+
 
 ## Repo Overview
 
@@ -156,7 +196,7 @@ JETFLOW_DRAFT_HEAD=JetFlow/<draft-head-repo> \
 python bench/reference/benchmark.py \
   --model Qwen/Qwen3-8B \
   --attn-implementation flash_attention_2 \
-  --tree-attn triton \
+  --tree-attn-implementation triton \
   --dataset gsm8k \
   --samples 64 \
   --algos accum_logp \

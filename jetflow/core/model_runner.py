@@ -21,12 +21,12 @@ def _config_owner(model):
 
 @contextmanager
 def _masked_verify_attention(model, attention_mask):
-    """Use SDPA for explicit tree masks when the normal backend is FA2.
+    """Use a mask-capable backend for explicit tree masks when normal is FA2.
 
     FlashAttention2 is the right backend for normal target forwards, but HF's
     FA2 path does not support the 4D additive ancestor masks used by tree verify.
-    The reference benchmark temporarily dispatches masked verify through SDPA;
-    keep that behavior at the shared model-forward seam.
+    Prefer SDPA where the target advertises it; GPT-OSS does not, so its masked
+    verify calls use eager attention.
     """
     owner = _config_owner(model)
     if attention_mask is None or owner is None:
@@ -37,7 +37,8 @@ def _masked_verify_attention(model, attention_mask):
     if previous != "flash_attention_2":
         yield
         return
-    config._attn_implementation = "sdpa"
+    supports_sdpa = bool(getattr(type(owner), "_supports_sdpa", False))
+    config._attn_implementation = "sdpa" if supports_sdpa else "eager"
     try:
         yield
     finally:
