@@ -381,6 +381,31 @@ class DFlashDraftModel(Qwen3PreTrainedModel):
         return self.hidden_norm(self.fc(self.hidden_dim_adapter(target_hidden)))
 
 
+def load_qwen3_config_with_rope_compat(repo_or_path: str, **kwargs) -> Qwen3Config:
+    """Load a Qwen3 config while preserving transformers-5 nested RoPE settings."""
+    raw_config, _ = Qwen3Config.get_config_dict(repo_or_path, **kwargs)
+    config = Qwen3Config.from_pretrained(repo_or_path, **kwargs)
+    rope_parameters = raw_config.get("rope_parameters")
+    if "rope_theta" not in raw_config and isinstance(rope_parameters, dict):
+        if "rope_theta" in rope_parameters:
+            config.rope_theta = rope_parameters["rope_theta"]
+    return config
+
+
+def assert_matching_rotary(head, target, *, arm: str) -> None:
+    """Fail before generation when a draft head and target use different RoPE."""
+    head_inv_freq = head.rotary_emb.inv_freq
+    target_inv_freq = target.model.rotary_emb.inv_freq
+    if not torch.equal(head_inv_freq, target_inv_freq):
+        raise AssertionError(
+            f"{arm}: rotary inv_freq mismatch between draft head and target"
+        )
+    print(
+        f"[gate G1] arm={arm} rope_theta={head.config.rope_theta} "
+        f"target_rope_theta={target.config.rope_theta} rotary_match=True"
+    )
+
+
 def load_draft_head(
     repo_or_path: str,
     device: str = "cuda",
@@ -395,8 +420,15 @@ def load_draft_head(
     use the `'repo::subfolder'` form, mapped to HF `subfolder=`.
     """
     repo, _, subfolder = repo_or_path.partition("::")  # "repo::subfolder" optional form
-    kwargs = {"dtype": dtype, "attn_implementation": attn_implementation}
+    config_kwargs = {}
     if subfolder:
-        kwargs["subfolder"] = subfolder
-    head = DFlashDraftModel.from_pretrained(repo, **kwargs).to(device).eval()
+        config_kwargs["subfolder"] = subfolder
+    config = load_qwen3_config_with_rope_compat(repo, **config_kwargs)
+    head = DFlashDraftModel.from_pretrained(
+        repo,
+        config=config,
+        dtype=dtype,
+        attn_implementation=attn_implementation,
+        **config_kwargs,
+    ).to(device).eval()
     return head

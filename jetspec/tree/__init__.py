@@ -35,6 +35,7 @@ from jetspec.tree._core.accept import gpu_tree_accept, tree_accept
 from jetspec.tree._core.extend import should_extend, splice_extension
 from jetspec.tree._core.topk_build import build_from_topk
 from jetspec.tree import baselines        # noqa: F401  (import to register algorithms)
+from jetspec.tree import correction       # noqa: F401  (import correction algorithms)
 from jetspec.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
 from jetspec.tree import semantic_aware   # noqa: F401  (import to register algorithms)
 from jetspec.tree import profile_guided   # noqa: F401  (import to register algorithms)
