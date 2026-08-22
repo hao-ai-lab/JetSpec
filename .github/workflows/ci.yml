@@ -6,9 +6,9 @@ name: CI
 # no triton). GPU-gated tests (JETSPEC_TEST_MODEL / CUDA model load) run separately.
 on:
   push:
-    branches: [main]
+    branches: [master, main]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 jobs:
   cpu-tests:
