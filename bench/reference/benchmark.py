@@ -38,6 +38,7 @@ from jetspec.core.llm import LLM, SamplingParams, make_cache
 from jetspec.core.sampler import sample
 from jetspec.models.draft_head import load_draft_head
 from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.self_refine_adapter import SelfRefiningDraftHeadTreeDrafter
 
 # Same prompt formatting as the reference (model/utils.load_and_process_dataset)
 # then chat-templated with enable_thinking=False (benchmark.py:834).
@@ -127,10 +128,19 @@ def _timed_samples(fn, prompts, world_size: int, *, desc: str, disable_progress:
     return outs, total_latency
 
 
-def _build_drafter(head, target, block_size: int, target_layer_ids):
-    return DraftHeadTreeDrafter(
+def _build_drafter(head, target, block_size: int, target_layer_ids, self_refine_j: int = 1):
+    """self_refine_j=1 returns the plain drafter -- byte-identical to before this
+    flag existed. self_refine_j>1 returns the J-pass self-refining variant; see
+    jetspec/self_refine_adapter.py for exactly what "J passes" means and its
+    train/serve distribution caveat."""
+    if self_refine_j == 1:
+        return DraftHeadTreeDrafter(
+            head, target=target, block_size=block_size,
+            target_layer_ids=target_layer_ids, draft_shift=False,
+        )
+    return SelfRefiningDraftHeadTreeDrafter(
         head, target=target, block_size=block_size,
-        target_layer_ids=target_layer_ids, draft_shift=False,
+        target_layer_ids=target_layer_ids, draft_shift=False, j=self_refine_j,
     )
 
 
@@ -263,6 +273,11 @@ def main():
                     help="JSON profile_table (bench/profiling/collect_depth_rank_stats.py) for depth_rank_histogram")
     ap.add_argument("--b2-tau", type=float, default=None,
                     help="override depth_rank_histogram tau (per-(depth,rank) accept cutoff)")
+    ap.add_argument("--self-refine-j", type=int, default=1,
+                    help="Jacobi self-refinement passes per drafting round (chain and tree "
+                         "both call propose_logits once per round, so this applies to both). "
+                         "J=1 is the existing single-pass behaviour, byte-identical to before "
+                         "this flag existed.")
     args = ap.parse_args()
     profile_table = None
     if args.profile:
@@ -324,7 +339,7 @@ def main():
     tli = head.target_layer_ids
     bs = head.block_size
     tree_bs = min(args.depth, bs)   # tree depth, clamped to head's native block_size
-    drafter = _build_drafter(head, llm.model, bs, tli)
+    drafter = _build_drafter(head, llm.model, bs, tli, self_refine_j=args.self_refine_j)
     show_progress = rank == 0
     all_prompts = build_prompts(
         llm.tokenizer, args.dataset, args.samples,
@@ -563,7 +578,8 @@ def main():
     if rank == 0:
         print(f"\nmodel={args.model} head={head_path}")
         print(f"dataset={args.dataset} samples={len(all_prompts)} world_size={world_size} "
-              f"block_size={bs} tree_depth={tree_bs} width={args.width} budget={args.budget} max_new={args.max_new}")
+              f"block_size={bs} tree_depth={tree_bs} width={args.width} budget={args.budget} max_new={args.max_new} "
+              f"self_refine_j={args.self_refine_j}")
         print(f"attn_implementation={resolved_attn} torch_compile={args.torch_compile} "
               f"fused_moe_blocks={fused_moe_blocks} tree_attn_implementation={args.tree_attn_implementation} "
               f"draft_attn={resolved_attn}")
