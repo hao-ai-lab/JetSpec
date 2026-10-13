@@ -1,0 +1,529 @@
+{
+  "head.safetensors": {
+    "extra_stream_layers.3.0.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.0.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.3.0.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.3.0.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.0.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.3.0.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.3.0.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.3.0.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.3.0.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.0.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.3.0.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.3.0.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.3.1.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.1.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.3.1.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.3.1.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.1.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.3.1.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.3.1.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.3.1.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.3.1.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.1.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.3.1.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.3.1.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.3.2.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.2.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.3.2.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.3.2.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.2.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.3.2.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.3.2.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.3.2.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.3.2.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.3.2.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.3.2.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.3.2.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.0.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.0.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.0.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.0.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.0.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.4.0.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.0.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.0.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.0.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.0.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.0.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.0.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.1.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.1.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.1.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.1.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.1.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.4.1.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.1.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.1.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.1.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.1.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.1.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.1.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.2.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.2.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.2.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.2.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.2.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.4.2.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.2.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.2.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.2.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.2.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.2.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.2.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.3.input_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.3.k_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.3.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "extra_stream_layers.4.3.kv_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.3.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "extra_stream_layers.4.3.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.3.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "extra_stream_layers.4.3.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.3.post_attention_norm.weight": [
+      4096
+    ],
+    "extra_stream_layers.4.3.q_norm.weight": [
+      128
+    ],
+    "extra_stream_layers.4.3.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "extra_stream_layers.4.3.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.0.input_norm.weight": [
+      4096
+    ],
+    "streams.0.k_norm.weight": [
+      128
+    ],
+    "streams.0.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.0.kv_norm.weight": [
+      4096
+    ],
+    "streams.0.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "streams.0.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.0.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.0.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.0.post_attention_norm.weight": [
+      4096
+    ],
+    "streams.0.q_norm.weight": [
+      128
+    ],
+    "streams.0.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.0.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.1.input_norm.weight": [
+      4096
+    ],
+    "streams.1.k_norm.weight": [
+      128
+    ],
+    "streams.1.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.1.kv_norm.weight": [
+      4096
+    ],
+    "streams.1.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "streams.1.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.1.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.1.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.1.post_attention_norm.weight": [
+      4096
+    ],
+    "streams.1.q_norm.weight": [
+      128
+    ],
+    "streams.1.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.1.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.2.input_norm.weight": [
+      4096
+    ],
+    "streams.2.k_norm.weight": [
+      128
+    ],
+    "streams.2.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.2.kv_norm.weight": [
+      4096
+    ],
+    "streams.2.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "streams.2.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.2.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.2.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.2.post_attention_norm.weight": [
+      4096
+    ],
+    "streams.2.q_norm.weight": [
+      128
+    ],
+    "streams.2.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.2.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.3.input_norm.weight": [
+      4096
+    ],
+    "streams.3.k_norm.weight": [
+      128
+    ],
+    "streams.3.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.3.kv_norm.weight": [
+      4096
+    ],
+    "streams.3.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "streams.3.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.3.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.3.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.3.post_attention_norm.weight": [
+      4096
+    ],
+    "streams.3.q_norm.weight": [
+      128
+    ],
+    "streams.3.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.3.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.4.input_norm.weight": [
+      4096
+    ],
+    "streams.4.k_norm.weight": [
+      128
+    ],
+    "streams.4.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "streams.4.kv_norm.weight": [
+      4096
+    ],
+    "streams.4.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "streams.4.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.4.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "streams.4.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.4.post_attention_norm.weight": [
+      4096
+    ],
+    "streams.4.q_norm.weight": [
+      128
+    ],
+    "streams.4.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "streams.4.v_proj.weight": [
+      1024,
+      4096
+    ]
+  },
+  "converter.safetensors": {
+    "fc.weight": [
+      4096,
+      20480
+    ],
+    "hidden_norm.weight": [
+      4096
+    ]
+  }
+}
