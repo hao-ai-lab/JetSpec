@@ -17,7 +17,7 @@ import sys
 
 from jetspec.methods.jetspec.draft_head import load_draft_head
 from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
-from jetspec.inference_engine import JetSpecEngine, SamplingParams
+from jetspec.engines.jetspec import JetSpecEngine, SamplingParams
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-8B"
 DRAFT_HEAD = sys.argv[2] if len(sys.argv) > 2 else "JetSpec/jetspec-qwen3-8b"
