@@ -96,18 +96,20 @@ export JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b
 | Method | Execution path | Status |
 |---|---|---|
 | JetSpec | Hugging Face reference core (`jetspec/core/`) | shipped |
-| JetSpec | Optimized inference engine (`jetspec/inference_engine/`) | shipped |
+| JetSpec | Optimized inference engine (`jetspec/engines/jetspec/`) | shipped |
 | JetSpec++ | Torch reference method (`jetspec/methods/jetspec_plus_plus/`) | preview |
 
 The project has two execution paths:
 
 - `jetspec/core/`: a lightweight HuggingFace-based reference implementation.
-- `jetspec/inference_engine/`: an optimized serving engine with paged KV, custom Triton tree attention, and CUDA graphs for better wall-clock latency and throughput.
+- `jetspec/engines/jetspec/`: an optimized serving engine with paged KV, custom Triton tree attention, and CUDA graphs for better wall-clock latency and throughput.
 
 ```text
 jetspec/
   core/                 # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
-  inference_engine/     # optimized JetSpec engine: paged KV, scheduler, kernels, CUDA graphs
+  engines/
+    jetspec/            # optimized JetSpec engine: serving, kernels, verify, draft, models, wire
+  inference_engine/     # compatibility shim to engines/jetspec
   models/               # target/draft-head loading and model utilities
   methods/
     jetspec/            # causal parallel tree drafting: tree, drafters, draft head
@@ -147,7 +149,7 @@ The optimized engine uses paged KV, a Triton tree-attention backend, compiled ve
 
 ```python
 from jetspec import load_draft_head, DraftHeadTreeDrafter
-from jetspec.inference_engine import JetSpecEngine, SamplingParams
+from jetspec.engines.jetspec import JetSpecEngine, SamplingParams
 
 engine = JetSpecEngine(
     "Qwen/Qwen3-8B",
