@@ -1,0 +1,112 @@
+{
+  "architectures": [
+    "DFlashDraftModel"
+  ],
+  "attention_bias": false,
+  "attention_dropout": 0.0,
+  "auto_map": {
+    "AutoModel": "dflash.DFlashDraftModel"
+  },
+  "block_size": 16,
+  "bos_token_id": 151643,
+  "dflash_config": {
+    "mask_token_id": 151669,
+    "target_layer_ids": [
+      1,
+      9,
+      17,
+      25,
+      33
+    ],
+    "ctxkv_head": {
+      "mode": "c1_tap_aligned_h2h",
+      "layers_per_stream": 3,
+      "stream_depths": [
+        1,
+        1,
+        1,
+        4,
+        5
+      ],
+      "smooth_l1_weight": 1.0,
+      "cosine_lambda": 1.0,
+      "projection_weight": 0.0,
+      "g_distribution": {
+        "1": 0.6,
+        "4": 0.25,
+        "9": 0.15
+      },
+      "attention_init": "target_layer_plus_one",
+      "window_causal_over_tokens": true,
+      "ffn_source": "target_init",
+      "extra_block_attention_init": "target_same_layer",
+      "block1_attention_init": "target_same_layer",
+      "distance_weight_tilt": 0.5
+    },
+    "drafter_mlp": true,
+    "group_loop": true,
+    "stage_groups": [
+      [
+        0
+      ],
+      [
+        1
+      ],
+      [
+        2
+      ],
+      [
+        3
+      ],
+      [
+        4
+      ]
+    ],
+    "group_repeats_support": [
+      1,
+      2,
+      3
+    ],
+    "group_repeats_diagonal_prob": 1.0,
+    "deep_supervision_map": [
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "deep_supervision_weight": 1.0
+  },
+  "dtype": "bfloat16",
+  "eos_token_id": 151645,
+  "head_dim": 128,
+  "hidden_act": "silu",
+  "hidden_size": 4096,
+  "initializer_range": 0.02,
+  "intermediate_size": 12288,
+  "layer_types": [
+    "full_attention",
+    "full_attention",
+    "full_attention",
+    "full_attention",
+    "full_attention"
+  ],
+  "learning_rate": 0.0003,
+  "max_position_embeddings": 40960,
+  "max_window_layers": 5,
+  "model_type": "qwen3",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 5,
+  "num_key_value_heads": 8,
+  "num_target_layers": 36,
+  "output_dir": "/root/w375_C5d3_C1b_v5/C1b/train",
+  "rms_norm_eps": 1e-06,
+  "rope_scaling": null,
+  "rope_theta": 1000000,
+  "run_name": "w375-C5d3-C1b-v5",
+  "sliding_window": null,
+  "tie_word_embeddings": false,
+  "use_cache": true,
+  "use_sliding_window": false,
+  "vocab_size": 151936
+}
