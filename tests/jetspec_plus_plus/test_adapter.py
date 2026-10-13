@@ -215,7 +215,7 @@ def test_loader_preserves_nested_rope_theta(seed, checkpoint):
     path = checkpoint / 'config.json'
     config = json.loads(path.read_text())
     theta = float(torch.randint(1000, 100000, ()).item())
-    config.pop('rope_theta')
+    config.pop('rope_theta', None)
     config['rope_parameters'] = {'rope_type': 'default', 'rope_theta': theta}
     path.write_text(json.dumps(config))
     actual = load_adapter(checkpoint, 'cpu', torch.float32)

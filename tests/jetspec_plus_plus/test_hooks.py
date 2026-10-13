@@ -197,7 +197,7 @@ def test_loader_leaf_functions_match_golden(seed, tmp_path):
             module.check_state_keys(keys, set())
     assert golden('key_contract') == {'equal': True, 'unexpected': 'RuntimeError', 'missing': 'RuntimeError'}
     raw = draft_config().to_dict()
-    raw.pop('rope_theta')
+    raw.pop('rope_theta', None)
     raw['rope_parameters'] = {'rope_theta': float(10000 + seed), 'rope_type': 'default'}
     (tmp_path / 'config.json').write_text(json.dumps(raw))
     configs = [module.load_qwen3_config_with_rope_compat(str(tmp_path))
