@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+jetspec-plus-plus = ["safetensors", "huggingface_hub"]
 kernel = ["triton"]
 bench = [
     "datasets",
