@@ -1,0 +1,191 @@
+{
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "config": {
+    "model_type": "qwen3_5_text",
+    "vocab_size": 41,
+    "hidden_size": 16,
+    "intermediate_size": 32,
+    "num_hidden_layers": 8,
+    "num_attention_heads": 2,
+    "num_key_value_heads": 1,
+    "head_dim": 8,
+    "rms_norm_eps": 1e-06,
+    "attention_bias": false,
+    "hidden_act": "silu",
+    "linear_num_key_heads": 1,
+    "linear_num_value_heads": 2,
+    "linear_key_head_dim": 4,
+    "linear_value_head_dim": 4,
+    "linear_conv_kernel_dim": 4,
+    "layer_types": [
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "full_attention"
+    ],
+    "rope_parameters": {
+      "rope_type": "default",
+      "rope_theta": 10000000.0,
+      "partial_rotary_factor": 0.5
+    },
+    "eos_token_id": null,
+    "_attn_implementation": "sdpa"
+  },
+  "contract": "hybrid_anchor_window and isolated per-row tails, fp32 CPU, bitwise",
+  "files": {
+    "tail-0.safetensors": "c978731bd7356aac4911498ca84cf7677c611aaf7c12ff7bbb6bd439d28a61d9",
+    "tail-1.safetensors": "07d825daa0772ebb1fbe009a98507876113472be03ba116046f61bf9f4058e4c",
+    "tail-2.safetensors": "adf44cf99389ac573e9f54e93c0f64759f245e94995b88fa05bc79729e9c8296"
+  },
+  "tensor_shapes": {
+    "blocks": [
+      2,
+      3,
+      16
+    ],
+    "branch_logits": [
+      5,
+      41
+    ],
+    "conv": [
+      1,
+      16,
+      4
+    ],
+    "hidden": [
+      4,
+      16
+    ],
+    "key": [
+      3,
+      1,
+      8
+    ],
+    "logits": [
+      4,
+      41
+    ],
+    "recurrent": [
+      1,
+      2,
+      4,
+      4
+    ],
+    "tail": [
+      2,
+      16
+    ],
+    "value": [
+      3,
+      1,
+      8
+    ],
+    "weight.layers.0.input_layernorm.weight": [
+      16
+    ],
+    "weight.layers.0.linear_attn.A_log": [
+      2
+    ],
+    "weight.layers.0.linear_attn.conv1d.weight": [
+      16,
+      1,
+      4
+    ],
+    "weight.layers.0.linear_attn.dt_bias": [
+      2
+    ],
+    "weight.layers.0.linear_attn.in_proj_a.weight": [
+      2,
+      16
+    ],
+    "weight.layers.0.linear_attn.in_proj_b.weight": [
+      2,
+      16
+    ],
+    "weight.layers.0.linear_attn.in_proj_qkv.weight": [
+      16,
+      16
+    ],
+    "weight.layers.0.linear_attn.in_proj_z.weight": [
+      8,
+      16
+    ],
+    "weight.layers.0.linear_attn.norm.weight": [
+      4
+    ],
+    "weight.layers.0.linear_attn.out_proj.weight": [
+      16,
+      8
+    ],
+    "weight.layers.0.mlp.down_proj.weight": [
+      16,
+      32
+    ],
+    "weight.layers.0.mlp.gate_proj.weight": [
+      32,
+      16
+    ],
+    "weight.layers.0.mlp.up_proj.weight": [
+      32,
+      16
+    ],
+    "weight.layers.0.post_attention_layernorm.weight": [
+      16
+    ],
+    "weight.layers.1.input_layernorm.weight": [
+      16
+    ],
+    "weight.layers.1.mlp.down_proj.weight": [
+      16,
+      32
+    ],
+    "weight.layers.1.mlp.gate_proj.weight": [
+      32,
+      16
+    ],
+    "weight.layers.1.mlp.up_proj.weight": [
+      32,
+      16
+    ],
+    "weight.layers.1.post_attention_layernorm.weight": [
+      16
+    ],
+    "weight.layers.1.self_attn.k_norm.weight": [
+      8
+    ],
+    "weight.layers.1.self_attn.k_proj.weight": [
+      8,
+      16
+    ],
+    "weight.layers.1.self_attn.o_proj.weight": [
+      16,
+      16
+    ],
+    "weight.layers.1.self_attn.q_norm.weight": [
+      8
+    ],
+    "weight.layers.1.self_attn.q_proj.weight": [
+      32,
+      16
+    ],
+    "weight.layers.1.self_attn.v_proj.weight": [
+      8,
+      16
+    ],
+    "weight.lm_head.weight": [
+      41,
+      16
+    ],
+    "weight.norm.weight": [
+      16
+    ]
+  }
+}

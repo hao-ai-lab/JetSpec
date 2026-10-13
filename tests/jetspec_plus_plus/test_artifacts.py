@@ -20,6 +20,8 @@ from jetspec.methods.jetspec_plus_plus.round import JetSpecPPConfig
 def local_artifacts(tmp_path, seed):
     config = target_config()
     config.rope_theta = tiny_config('drafter')['rope_theta']
+    if hasattr(config, 'rope_parameters'):
+        config.rope_parameters['rope_theta'] = config.rope_theta
     config.num_hidden_layers = 36
     config.layer_types = ['full_attention'] * 36
     torch.manual_seed(seed)
