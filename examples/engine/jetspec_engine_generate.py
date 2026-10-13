@@ -13,7 +13,7 @@ import time
 import torch
 
 from jetspec.core.llm import SamplingParams
-from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.engines.jetspec.engine import JetSpecEngine
 
 
 def _run(engine, prompts, sp):

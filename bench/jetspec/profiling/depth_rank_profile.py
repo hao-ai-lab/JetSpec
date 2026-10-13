@@ -332,7 +332,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     from bench.jetspec.profiling.collect_tree_diagnostics import build_drafter, build_prompts
     from jetspec.core.llm import SamplingParams
-    from jetspec.inference_engine.engine import JetSpecEngine
+    from jetspec.engines.jetspec.engine import JetSpecEngine
 
     args = parse_args()
     backend = args.attention_backend or os.environ.get(
