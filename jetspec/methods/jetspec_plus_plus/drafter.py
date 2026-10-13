@@ -66,12 +66,16 @@ class JetSpecPPDrafter(Drafter):
         if exact is None or exact.shape[1] != context_ids.shape[1] - 1:
             raise ValueError('target taps must end immediately before the correction')
         self.sequence.taps = exact[0].reshape(-1, 5, self.driver.decoder.hidden_size)
+        hybrid = getattr(self.driver.decoder, 'hybrid', False)
         # The reference casts before marker/tail assembly.
         exact = exact.to(next(self.driver.head.parameters()))
         if self.staged.start_position is not None:
             _, _, accepted = self.staged.consume(exact, context_ids)
             tail = self.staged.predicted_hidden[0, :accepted, -self.driver.decoder.hidden_size:]
-            self.decoder_tail = torch.cat((self.decoder_tail.to(tail), tail))[-4:].clone()
+            if not hybrid:
+                self.decoder_tail = torch.cat((self.decoder_tail.to(tail), tail))[-4:].clone()
+        elif hybrid:
+            self.decoder_tail = None
         elif exact.shape[1] >= 5:
             boundary = exact.shape[1] - 4
             tokens = torch.cat((context_ids[:, boundary:exact.shape[1]],
@@ -106,11 +110,11 @@ class JetSpecPPDrafter(Drafter):
                 record.update(k_true=keys[0][0], anchor_true=keys[0][1],
                               true_anchor=keys[0][1], correction=keys[0][1])
             self.candidate_records.append(record)
-        length = exact.shape[1] - 4
+        length = exact.shape[1] if hybrid else exact.shape[1] - 4
         self.driver.decoder._prefix(self.sequence, length)
         logits, _, _ = refresh_decoder_logits(
             self.driver.decoder, self.sequence, length=length, tail_hidden=self.decoder_tail,
-            tail_counts=[4], block_hidden=result.predicted, slot_counts=[16])
+            tail_counts=[0 if hybrid else 4], block_hidden=result.predicted, slot_counts=[16])
         # The reference joint rule scores the whole top-32 pool, independently of LAC coverage.
         offers = anchor_offers(logits, result.ids[0, 1:],
                                q_hat=1.0 if self.config.score_all_anchors else self.thresholds['anchor_q_hat'],
@@ -213,11 +217,19 @@ def build_drafter(*, llm, config, drafter_checkpoint, adapter_artifact, heads_bu
         if digest.hexdigest() != expected:
             raise ValueError(f'target-file SHA256 mismatch: {name}')
     dtype = llm.dtype if draft_dtype is None else draft_dtype
-    head = load_drafter(drafter_checkpoint, device=llm.device, dtype=dtype)
+    hybrid = llm.model.config.model_type == 'qwen3_5_text'
+    head = load_drafter(drafter_checkpoint, device=llm.device, dtype=dtype,
+                        model_family='27b' if hybrid else '8b')
     adapter = load_adapter(adapter_artifact, device=llm.device, dtype=dtype)
     # C1 requires projection_weight=0: its validated converter is provenance only, as in the reference.
-    if not torch.equal(head.rotary_emb.inv_freq, llm.model.model.rotary_emb.inv_freq):
+    if (not hybrid and not torch.equal(head.rotary_emb.inv_freq, llm.model.model.rotary_emb.inv_freq)):
         raise ValueError('drafter and target rotary frequencies differ')
+    if (head.config.num_target_layers != llm.model.config.num_hidden_layers
+            or head.config.hidden_size != llm.model.config.hidden_size
+            or head.config.vocab_size != llm.model.config.vocab_size):
+        raise ValueError('drafter geometry differs from target config')
+    if hybrid and head.config.rope_theta != llm.model.config.rope_parameters['rope_theta']:
+        raise ValueError('drafter and target rotary theta differ')
     raw = bundle.thresholds
     if dataset is None:
         names = set(raw['e04_kscore_blend']) & set(raw['e04_rowrule_joint'])
@@ -235,7 +247,14 @@ def build_drafter(*, llm, config, drafter_checkpoint, adapter_artifact, heads_bu
                       anchor_q_hat=float(anchor), row_tau=rule['tau'],
                       row_temperature=rule['temperature']['value'])
     mixed = dtype != llm.dtype
-    decoder = (AnchorDecoder.from_checkpoint(llm.model, tap_ids=head.target_layer_ids,
+    if hybrid:
+        if mixed:
+            raise ValueError('hybrid target and draft artifacts must share the checkpoint dtype')
+        from .models.hybrid import HybridAnchorDecoder
+        decoder = HybridAnchorDecoder.from_checkpoint(llm.model, tap_ids=head.target_layer_ids,
+            file_pins=bundle.decoder_manifest['target_files'])
+    else:
+        decoder = (AnchorDecoder.from_checkpoint(llm.model, tap_ids=head.target_layer_ids,
                    device=llm.device, dtype=dtype, file_pins=bundle.decoder_manifest['target_files'])
                if mixed else AnchorDecoder.from_target(llm.model, tap_ids=head.target_layer_ids))
     drafter = JetSpecPPDrafter(target=llm.model, head=head, adapter=adapter, decoder=decoder,

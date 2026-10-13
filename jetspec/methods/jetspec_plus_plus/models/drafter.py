@@ -110,9 +110,12 @@ def load_qwen3_config_with_rope_compat(repo_or_path: str, **kwargs):
     raw_config, _ = Qwen3Config.get_config_dict(repo_or_path, **kwargs)
     config = Qwen3Config.from_pretrained(repo_or_path, **kwargs)
     rope_parameters = raw_config.get("rope_parameters")
-    if "rope_theta" not in raw_config and isinstance(rope_parameters, dict):
-        if "rope_theta" in rope_parameters:
-            config.rope_theta = rope_parameters["rope_theta"]
+    theta = raw_config.get('rope_theta', (rope_parameters or {}).get('rope_theta'))
+    if theta is not None:
+        # Transformers 5 consumes nested RoPE and can discard the legacy attribute.
+        config.rope_theta = theta
+        if hasattr(config, 'rope_parameters'):
+            config.rope_parameters = dict(config.rope_parameters or {}, rope_theta=theta)
     return config
 
 
@@ -128,7 +131,8 @@ def check_state_keys(expected: set[str], found: set[str], *, jacobi: bool = Fals
 
 
 def load_drafter(checkpoint: str | Path = CHECKPOINT, *, device: str = 'cpu',
-                 dtype: torch.dtype = torch.bfloat16, revision: str = REVISION):
+                 dtype: torch.dtype = torch.bfloat16, revision: str = REVISION,
+                 model_family: str = 'auto'):
     """Build the checkpoint's bundled model and load every safetensor strictly."""
     from safetensors import safe_open
     from safetensors.torch import load_file
@@ -143,14 +147,22 @@ def load_drafter(checkpoint: str | Path = CHECKPOINT, *, device: str = 'cpu',
         checkpoint_path = Path(snapshot_download(CHECKPOINT, revision=revision, local_files_only=True))
     raw_config = json.loads((checkpoint_path / 'config.json').read_text(encoding='utf-8'))
     options = raw_config.get('dflash_config') or {}
+    family = ('8b' if raw_config.get('num_target_layers') == 36 else '27b') if model_family == 'auto' else model_family
+    taps, target_layers = options.get('target_layer_ids'), raw_config.get('num_target_layers')
+    if family not in ('8b', '27b'):
+        raise ValueError('model_family must be auto, 8b or 27b')
+    valid_taps = (isinstance(taps, list) and len(taps) == 5
+                  and isinstance(target_layers, int) and target_layers >= 7
+                  and all(type(tap) is int and 0 <= tap < target_layers for tap in taps)
+                  and taps == sorted(set(taps)) and taps[-1] == target_layers - 3)
     if (raw_config.get('model_type') != 'qwen3'
             or raw_config.get('num_hidden_layers') != 5
-            or raw_config.get('num_target_layers') != 36
             or raw_config.get('block_size') != 16
-            or options.get('target_layer_ids') != [1, 9, 17, 25, 33]
+            or not valid_taps
+            or (family == '8b' and (target_layers != 36 or taps != [1, 9, 17, 25, 33]))
             or raw_config.get('auto_map', {}).get('AutoModel') != 'dflash.DFlashDraftModel'):
-        raise ValueError('expected the Qwen3-8B B16 five-layer drafter with taps [1,9,17,25,33] '
-                         'and auto_map dflash.DFlashDraftModel')
+        raise ValueError('expected a Qwen3 B16 five-layer drafter with five ordered target taps, '
+                         'two target layers after the deepest tap, and auto_map dflash.DFlashDraftModel')
     stock = resolve_stock_drafter(options, checkpoint_path / 'config.json')
     resolve_causal_head(options, checkpoint_path / 'config.json')
     if not stock or options.get('jacobi_forcing') is not True:
