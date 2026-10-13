@@ -148,7 +148,7 @@ class ModelRunner:
                 dim=-1,
             )
         elif need_hidden:
-            from jetspec.models.draft_head import extract_context_feature
+            from jetspec.methods.jetspec.draft_head import extract_context_feature
 
             target_hidden = extract_context_feature(out.hidden_states, target_layer_ids)
         return out.logits, out.past_key_values, target_hidden

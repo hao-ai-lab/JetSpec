@@ -9,4 +9,4 @@ Planned (placeholders, NOT registered — build() raises; see ``jetspec/tree/ROA
 
 Importing this package registers the implemented algorithms only.
 """
-from jetspec.tree.profile_guided import depth_rank_histogram  # noqa: F401  (registers B2)
+from jetspec.methods.jetspec.tree.profile_guided import depth_rank_histogram  # noqa: F401  (registers B2)

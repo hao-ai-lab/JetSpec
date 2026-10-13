@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import torch
 
-from jetspec.tree._core.base import DraftTree, TreeAlgorithm
+from jetspec.methods.jetspec.tree._core.base import DraftTree, TreeAlgorithm
 
 
 class PathConditionalRefresh(TreeAlgorithm):

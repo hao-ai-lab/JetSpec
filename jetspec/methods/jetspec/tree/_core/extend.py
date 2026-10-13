@@ -142,7 +142,7 @@ def _splice_subtree(
     topk_tokens_cpu = topk_tok_t.tolist()
     topk_logprobs_cpu = topk_lp_t.tolist()
 
-    from jetspec.tree.tree_to_chain.fanout_cap.top2gap import Top2GapFanout
+    from jetspec.methods.jetspec.tree.tree_to_chain.fanout_cap.top2gap import Top2GapFanout
 
     caps = Top2GapFanout().caps_from_topk(topk_logprobs_cpu, topk_width)
     subtree = build_with_per_depth_cap(

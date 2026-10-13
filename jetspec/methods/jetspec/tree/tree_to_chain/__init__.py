@@ -7,4 +7,4 @@ depth from a confidence signal (the top-2 logprob gap).
 
 Importing this package registers its algorithms via @register_tree_algo.
 """
-from jetspec.tree.tree_to_chain import fanout_cap    # noqa: F401
+from jetspec.methods.jetspec.tree.tree_to_chain import fanout_cap    # noqa: F401

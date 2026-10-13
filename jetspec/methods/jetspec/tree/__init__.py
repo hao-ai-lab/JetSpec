@@ -2,12 +2,12 @@
 
 This package is the *method*: it turns per-depth draft logits into a verification
 tree and selects the accepted path. It is deliberately decoupled from any decode
-engine — it imports nothing from `jetspec.core` / `jetspec.draft` / `jetspec.models`, depends
+engine — it imports nothing from `jetspec.core` / `jetspec.methods.jetspec.draft` / `jetspec.models`, depends
 only on torch + numpy, and is consumed one-way (engine -> tree). Any verify backend
 plugs in through the public contract below: this HF engine today, a vLLM / SGLang
 integration tomorrow.
 
-Public contract (the only surface an engine should import — never `jetspec.tree._core`):
+Public contract (the only surface an engine should import — never `jetspec.methods.jetspec.tree._core`):
 
     get_algorithm(name).build(draft_logits, block_size, tree_width, budget, device)
         -> DraftTree                                  # construct the speculative tree
@@ -28,16 +28,16 @@ Bundled algorithms, by family:
 All recover accum_logp at their identity knob. Importing this package
 registers all of them; `list_algorithms()` enumerates the registry.
 """
-from jetspec.tree._core.base import DraftTree, TreeAlgorithm
-from jetspec.tree._core.registry import get_algorithm, register_tree_algo, list_algorithms
-from jetspec.tree._core.ancestor import build_ancestor_matrix
-from jetspec.tree._core.accept import gpu_tree_accept, tree_accept
-from jetspec.tree._core.extend import should_extend, splice_extension
-from jetspec.tree._core.topk_build import build_from_topk
-from jetspec.tree import baselines        # noqa: F401  (import to register algorithms)
-from jetspec.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
-from jetspec.tree import semantic_aware   # noqa: F401  (import to register algorithms)
-from jetspec.tree import profile_guided   # noqa: F401  (import to register algorithms)
+from jetspec.methods.jetspec.tree._core.base import DraftTree, TreeAlgorithm
+from jetspec.methods.jetspec.tree._core.registry import get_algorithm, register_tree_algo, list_algorithms
+from jetspec.methods.jetspec.tree._core.ancestor import build_ancestor_matrix
+from jetspec.methods.jetspec.tree._core.accept import gpu_tree_accept, tree_accept
+from jetspec.methods.jetspec.tree._core.extend import should_extend, splice_extension
+from jetspec.methods.jetspec.tree._core.topk_build import build_from_topk
+from jetspec.methods.jetspec.tree import baselines        # noqa: F401  (import to register algorithms)
+from jetspec.methods.jetspec.tree import tree_to_chain    # noqa: F401  (import to register algorithms)
+from jetspec.methods.jetspec.tree import semantic_aware   # noqa: F401  (import to register algorithms)
+from jetspec.methods.jetspec.tree import profile_guided   # noqa: F401  (import to register algorithms)
 
 __all__ = [
     "DraftTree", "TreeAlgorithm",

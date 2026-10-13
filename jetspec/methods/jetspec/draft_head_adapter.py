@@ -1,7 +1,7 @@
 """DraftHead-backed drafters — the real (checkpoint-gated) speculative drafters.
 
 `DraftHeadDrafter` (chain) and `DraftHeadTreeDrafter` (tree) wrap a loaded DFlash
-draft head (`jetspec.models.draft_head.DFlashDraftModel`). The head owns neither
+draft head (`jetspec.methods.jetspec.draft_head.DFlashDraftModel`). The head owns neither
 `embed_tokens` nor `lm_head` — it shares the *target's* (the DFlash convention),
 so these drafters take the target module too and call `target.model.embed_tokens`
 / `target.lm_head` exactly as the reference `benchmark.py` does.
@@ -21,7 +21,7 @@ after each proposal, and the engine owns resetting the cache per generation.
 import torch
 from transformers import DynamicCache
 
-from jetspec.draft import Drafter, TreeDrafter
+from jetspec.methods.jetspec.draft import Drafter, TreeDrafter
 
 
 class _DraftHeadForward:

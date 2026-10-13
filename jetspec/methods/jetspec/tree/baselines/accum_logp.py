@@ -16,10 +16,10 @@ import heapq
 import numpy as np
 import torch
 
-from jetspec.tree._core.ancestor import _build_ancestor_matrix_np, _build_packed_ancestor_matrix_np
-from jetspec.tree._core.accept import _build_child_maps_cpu
-from jetspec.tree._core.base import DraftTree, TreeAlgorithm
-from jetspec.tree._core.registry import register_tree_algo
+from jetspec.methods.jetspec.tree._core.ancestor import _build_ancestor_matrix_np, _build_packed_ancestor_matrix_np
+from jetspec.methods.jetspec.tree._core.accept import _build_child_maps_cpu
+from jetspec.methods.jetspec.tree._core.base import DraftTree, TreeAlgorithm
+from jetspec.methods.jetspec.tree._core.registry import register_tree_algo
 
 
 def _topk_pair_to_lists(

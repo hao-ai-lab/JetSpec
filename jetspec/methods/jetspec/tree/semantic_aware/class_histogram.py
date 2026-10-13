@@ -35,9 +35,9 @@ from typing import Any, Optional
 
 import torch
 
-from jetspec.tree._core.base import DraftTree, TreeAlgorithm
-from jetspec.tree._core.fanout_cap_builder import build_with_per_depth_cap
-from jetspec.tree._core.registry import register_tree_algo
+from jetspec.methods.jetspec.tree._core.base import DraftTree, TreeAlgorithm
+from jetspec.methods.jetspec.tree._core.fanout_cap_builder import build_with_per_depth_cap
+from jetspec.methods.jetspec.tree._core.registry import register_tree_algo
 
 
 # Default per-class fanout templates (stand-ins until a real per-(class, depth,
