@@ -178,7 +178,7 @@ def main():
                     help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
     ap.add_argument("--warmup-samples-per-rank", type=int, default=1)
     ap.add_argument("--warm-all", action="store_true",
-                    help="warm the tree path over EVERY timed prompt first, so the graphed "
+                    help="warm both AR and tree over EVERY timed prompt first, so the graphed "
                          "draft head captures all context buckets up front (steady-state TPS; "
                          "avoids mid-timing re-capture that understates long/varied benchmarks)")
     ap.add_argument("--samples", type=int, default=5)
@@ -192,7 +192,7 @@ def main():
                     help="graphed = CUDA-graph draft head (the production headline config); "
                          "eager is correct but ~2x slower at bs=1 (host-launch-bound)")
     ap.add_argument("--session", action="store_true",
-                    help="W11: reuse the tree session (pool + captured graphs) across prompts")
+                    help="reuse tree and CUDA-graphed AR pools and graphs across prompts")
     ap.add_argument("--prompt-set", default="gsm8k",
                     choices=["gsm8k", "math500", "humaneval", "aime",
                              "aime25", "mbpp", "livecodebench", "mt_bench"])
@@ -241,28 +241,32 @@ def main():
     tkw = dict(block_size=tree_block_size, tree_width=args.tree_width,
                budget=args.budget, tree_depth=tree_block_size - 1,
                algo=args.algo, target_layer_ids=tli, return_stats=True)
+    arkw = {}
     if args.session and prompts:
         tkw["session"] = True
         # capacity = the longest prompt in the set (session guard is loud, not growing)
         max_len = max(eng.tokenizer(p, return_tensors="pt").input_ids.shape[1] for p in prompts)
         tkw["session_prompt_capacity"] = ((max_len + 255) // 256) * 256
+        if getattr(eng, "_use_cudagraph", False):
+            arkw = dict(session=True, session_prompt_capacity=tkw["session_prompt_capacity"])
 
     # Warmup (excluded): absorb HF compile, torch.compile, Triton autotune, and
     # first CUDA graph captures before the measured windows.
     if prompts:
         for i in range(max(0, args.warmup_samples_per_rank)):
             p = prompts[i % len(prompts)]
-            eng.generate(p, sp)
+            eng.generate(p, sp, **arkw)
             eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
         if args.warm_all:
             # Capture every context bucket the timed run will hit, so the graphed
             # draft head never re-captures mid-timing (which understates long/varied
             # benchmarks like MATH-500). Measures steady-state, post-warmup throughput.
             for p in prompts:
+                eng.generate(p, sp, **arkw)
                 eng.generate_tree(p, drafter, sampling_params=sp, **tkw)
     torch.cuda.synchronize()
 
-    ar_tok, ar_t, _ = _walltime(lambda p: eng.generate(p, sp), prompts, world_size)
+    ar_tok, ar_t, _ = _walltime(lambda p: eng.generate(p, sp, **arkw), prompts, world_size)
     ar_tok_total, ar_t_max = _sum_and_max(ar_tok, ar_t, device, world_size)
     ar_tps = ar_tok_total / ar_t_max if ar_t_max > 0 else 0.0
 
