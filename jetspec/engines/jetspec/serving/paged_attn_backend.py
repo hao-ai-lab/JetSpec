@@ -20,8 +20,8 @@ import torch
 
 from transformers.integrations.sdpa_attention import sdpa_attention_forward
 
-from jetspec.inference_engine.paged_kv_cache import PagedHandle
-from jetspec.inference_engine.paged_tree_attn_op import paged_tree_attn
+from jetspec.engines.jetspec.serving.paged_kv_cache import PagedHandle
+from jetspec.engines.jetspec.kernels.paged_tree_attn_op import paged_tree_attn
 
 
 def _jetspec_paged_tree_attn_forward(

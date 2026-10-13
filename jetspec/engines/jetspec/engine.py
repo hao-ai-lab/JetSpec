@@ -27,8 +27,8 @@ from jetspec.models.qwen3 import load_target
 from jetspec.core.llm import SamplingParams
 from jetspec.core.model_runner import ModelRunner
 from jetspec.core.sampler import sample
-from jetspec.inference_engine.paged_kv_cache import PagedKVCache
-from jetspec.inference_engine.scheduler import Scheduler, SequenceRequest
+from jetspec.engines.jetspec.serving.paged_kv_cache import PagedKVCache
+from jetspec.engines.jetspec.serving.scheduler import Scheduler, SequenceRequest
 
 # A3-BUCKET: tree-N bucket sizes for the compiled verify stack. `torch.compile(
 # dynamic=False)` specializes `_stack` on the concrete node count N, so a variable-N
@@ -294,7 +294,7 @@ class JetSpecEngine:
         self.attn_backend = attn_backend
         self.fuse_gemms = bool(fuse_gemms) or _env_flag("JETSPEC_FUSE_GEMMS")
         if attn_backend == "triton_paged_tree":
-            from jetspec.inference_engine.paged_attn_backend import register_jetspec_paged_tree
+            from jetspec.engines.jetspec.serving.paged_attn_backend import register_jetspec_paged_tree
 
             register_jetspec_paged_tree()
             self.model.config._attn_implementation = "jetspec_paged_tree"
@@ -314,8 +314,8 @@ class JetSpecEngine:
             # verify stacks in per-bucket CUDA graphs (built lazily in generate_tree
             # once the pool is reserved + the bucket set known). `_use_cudagraph` gates
             # that extra layer; everything else is identical to the compiled backend.
-            from jetspec.inference_engine.paged_attn_backend import register_jetspec_paged_tree
-            from jetspec.inference_engine.compiled_verify_stack import CompiledVerifyStack
+            from jetspec.engines.jetspec.serving.paged_attn_backend import register_jetspec_paged_tree
+            from jetspec.engines.jetspec.serving.compiled_verify_stack import CompiledVerifyStack
 
             register_jetspec_paged_tree()
             self.model.config._attn_implementation = "jetspec_paged_tree"
@@ -394,7 +394,7 @@ class JetSpecEngine:
             # only for the cudagraph backend; the compiled-non-graph path is left untouched
             # as the losslessness oracle.
             if getattr(self, "_use_cudagraph", False):
-                from jetspec.inference_engine.graph_capture import GraphedVerify
+                from jetspec.engines.jetspec.verify.graph_capture import GraphedVerify
                 cfg = self.model.config
                 head_dim = (getattr(cfg, "head_dim", None)
                             or cfg.hidden_size // cfg.num_attention_heads)
@@ -502,7 +502,7 @@ class JetSpecEngine:
         we cache one compiled stack per distinct tap tuple (different heads tap
         different layers and need their own DCE'd graph). Robust to the test fixtures
         that bypass `__init__` (no `_compiled_verify_hidden` dict)."""
-        from jetspec.inference_engine.compiled_verify_stack import CompiledVerifyStack
+        from jetspec.engines.jetspec.serving.compiled_verify_stack import CompiledVerifyStack
 
         cache = getattr(self, "_compiled_verify_hidden", None)
         if cache is None:
@@ -539,7 +539,7 @@ class JetSpecEngine:
         and graphs) whenever the pool tensor or width differs. Within one decode the pool
         + width are constant, so the entry is built once and every round replays it — the
         gate (no per-ROUND recapture) holds; a new prompt rebuilds once (per decode)."""
-        from jetspec.inference_engine.graph_capture import GraphedVerify
+        from jetspec.engines.jetspec.verify.graph_capture import GraphedVerify
 
         cache = getattr(self, "_graphed_verify", None)
         if cache is None:
@@ -573,7 +573,7 @@ class JetSpecEngine:
         return gv
 
     def _get_graphed_tree_accept(self, num_nodes, max_depth, score_dtype):
-        from jetspec.inference_engine.graph_capture import GraphedTreeAccept
+        from jetspec.engines.jetspec.verify.graph_capture import GraphedTreeAccept
 
         cache = getattr(self, "_graphed_tree_accept", None)
         if cache is None:
