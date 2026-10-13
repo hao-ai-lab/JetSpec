@@ -85,6 +85,11 @@ export JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b
 
 ## Repo Overview
 
+| Method | Execution path | Status |
+|---|---|---|
+| JetSpec | Hugging Face reference core (`jetspec/core/`) | shipped |
+| JetSpec | Optimized inference engine (`jetspec/inference_engine/`) | shipped |
+
 The project has two execution paths:
 
 - `jetspec/core/`: a lightweight HuggingFace-based reference implementation.
