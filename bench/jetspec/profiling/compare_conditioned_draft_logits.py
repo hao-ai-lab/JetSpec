@@ -21,18 +21,18 @@ from typing import Any, Sequence
 import torch
 from transformers import DynamicCache
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from bench.profiling.depth_rank_profile import (
+from bench.jetspec.profiling.depth_rank_profile import (
     accepted_path_from_committed_tokens,
     rebuild_recorded_tree,
 )
-from bench.profiling.collect_tree_diagnostics import build_prompts
-from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from bench.jetspec.profiling.collect_tree_diagnostics import build_prompts
+from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 from jetspec.core.llm import SamplingParams
-from jetspec.models.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head import load_draft_head
 from jetspec.inference_engine.engine import JetSpecEngine
 
 

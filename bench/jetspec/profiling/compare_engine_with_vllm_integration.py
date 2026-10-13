@@ -36,14 +36,18 @@ a condition to match.
 import argparse
 import os
 import statistics
+import sys
+
+if __package__ in (None, ''):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 import torch
 from torch.cuda import Event
 
 from jetspec.core.llm import SamplingParams
 from jetspec.inference_engine.engine import JetSpecEngine
-from jetspec.models.draft_head import load_draft_head
-from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.methods.jetspec.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 # Fork-exact gsm8k prompt format (dflash_profiling.py `load_dataset_prompt_bank`).
 GSM8K_FMT = ("{question}\n"

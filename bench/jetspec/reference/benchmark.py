@@ -27,17 +27,21 @@ decode timing.
 import argparse
 import json
 import os
+import sys
 import time
+
+if __package__ in (None, ''):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 import torch
 import torch.distributed as dist
 from tqdm import tqdm
 
-from bench.reference.dflash_baseline import dflash_generate
+from bench.jetspec.reference.dflash_baseline import dflash_generate
 from jetspec.core.llm import LLM, SamplingParams, make_cache
 from jetspec.core.sampler import sample
-from jetspec.models.draft_head import load_draft_head
-from jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.methods.jetspec.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
 # Same prompt formatting as the reference (model/utils.load_and_process_dataset)
 # then chat-templated with enable_thinking=False (benchmark.py:834).
@@ -282,7 +286,7 @@ def main():
     # Both env vars are read lazily (at first compile call), so setting them here
     # takes effect even though torch is already imported.
     _cache_root = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
         ".cache",
     )
     os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", os.path.join(_cache_root, "torchinductor"))
@@ -502,7 +506,7 @@ def main():
             _ts = time.strftime("%Y%m%d_%H%M%S")
             _mshort = args.model.split("/")[-1]
             out_dir = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                 "outputs", f"{_ts}_{_mshort}",
             )
         os.makedirs(out_dir, exist_ok=True)

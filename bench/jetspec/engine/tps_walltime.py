@@ -17,15 +17,19 @@ time, matching data-parallel benchmark accounting.
 """
 import argparse
 import os
+import sys
 import time
+
+if __package__ in (None, ''):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 import torch
 import torch.distributed as dist
 
 from jetspec.core.llm import SamplingParams
 from jetspec.inference_engine.engine import JetSpecEngine
-from jetspec.models.draft_head import load_draft_head
-from jetspec.draft_head_adapter import (
+from jetspec.methods.jetspec.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head_adapter import (
     CompiledDraftHead,
     DraftHeadTreeDrafter,
     GraphedDraftHead,

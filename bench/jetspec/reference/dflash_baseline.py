@@ -7,12 +7,17 @@ longest greedy-agreeing prefix plus one correction, and repeats.
 from __future__ import annotations
 
 import time
+from pathlib import Path
+import sys
 from types import SimpleNamespace
+
+if __package__ in (None, ''):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import torch
 
 from jetspec.core.llm import make_cache
-from jetspec.models.draft_head import extract_context_feature
+from jetspec.methods.jetspec.draft_head import extract_context_feature
 
 
 def _cuda_time(device: torch.device | str) -> float:

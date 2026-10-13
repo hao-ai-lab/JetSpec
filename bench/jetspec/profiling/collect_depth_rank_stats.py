@@ -18,15 +18,19 @@ like the engine so the DraftHead sees its real context.
 import argparse
 import json
 import os
+import sys
+
+if __package__ in (None, ''):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 import torch
 from transformers import DynamicCache
 
 from jetspec.core.llm import LLM, SamplingParams
-from jetspec.models.draft_head import load_draft_head
-from jetspec.draft_head_adapter import DraftHeadTreeDrafter
-from jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
-from bench.reference.benchmark import build_prompts
+from jetspec.methods.jetspec.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.methods.jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
+from bench.jetspec.reference.benchmark import build_prompts
 
 
 @torch.inference_mode()
