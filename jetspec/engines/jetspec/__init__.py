@@ -21,6 +21,6 @@ path is the default + lossless oracle; the kernel / compiled / cudagraph
 backends are opt-in via ``JetSpecEngine(attn_backend=...)``. See ``DESIGN.md``.
 """
 from jetspec.core.llm import SamplingParams
-from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.engines.jetspec.engine import JetSpecEngine
 
 __all__ = ["JetSpecEngine", "SamplingParams"]

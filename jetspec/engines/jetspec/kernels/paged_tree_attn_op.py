@@ -47,7 +47,7 @@ def paged_tree_attn(
     ``paged_tree_attn.py`` (imported lazily so this module loads without triton).
     Returns ``(total_q, Hq, D)`` in ``q``'s dtype/device. See the wrapper's
     docstring for the per-seq attention contract."""
-    from jetspec.inference_engine.paged_tree_attn import paged_tree_attn as _paged_tree_attn_impl
+    from jetspec.engines.jetspec.kernels.paged_tree_attn import paged_tree_attn as _paged_tree_attn_impl
 
     return _paged_tree_attn_impl(
         q, k_pool, v_pool, block_table, cu_seqlens_q, seq_lens_k,

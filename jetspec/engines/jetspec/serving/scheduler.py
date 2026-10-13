@@ -27,7 +27,7 @@ from typing import Callable, Optional
 
 import torch
 
-from jetspec.inference_engine.paged_kv_cache import EvictionFailed, PagedKVCache
+from jetspec.engines.jetspec.serving.paged_kv_cache import EvictionFailed, PagedKVCache
 
 
 @dataclass
