@@ -53,7 +53,7 @@ the real model handles), so it stays importable on a CPU/no-triton host — the
 import torch
 import torch.nn.functional as F
 
-from jetspec.inference_engine.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (registers jetspec::paged_tree_attn)
+from jetspec.engines.jetspec.kernels.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (registers jetspec::paged_tree_attn)
 
 
 def _cat_linear_params(modules):

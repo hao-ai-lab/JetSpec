@@ -1,0 +1,1 @@
+"""JetSpec engine wire role."""
