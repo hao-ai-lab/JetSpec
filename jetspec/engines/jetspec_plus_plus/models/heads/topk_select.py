@@ -1,0 +1,351 @@
+"""Exact top-k anchor selection without the [rows, V] fp64 probability tensor.
+
+Reference semantics (heads/decoder.py::anchor_offers with JETSPEC_HEADS_FAST=1):
+  probabilities = softmax_fp32(logits with d_rej set to -inf).double()
+  keep = probabilities >= 1 - q_hat, minus d_rej
+  selected = the first min(count, cap) kept ids by (p descending, id ascending)
+  lac_fallbacks = rows with count > cap and p[cap-1] == p[cap] (a tie across the cap)
+
+Why the fp32 softmax stays: the reference probabilities are fp32 softmax outputs widened to
+fp64, so the only way to match them to 1e-12 relative is to run the same fp32 softmax kernel on
+the same masked logits. Recomputing exp(logit - logsumexp) in fp64 differs from the fp32 kernel
+by about 1e-7 relative and orders fp32-tied probabilities by logit instead of by id (equiv.py
+measures both on the recorded rounds). The fp32 softmax is ~0.06 ms; what this removes is the
+full-vocab fp64 widening, keep mask, masked_fill and fp64 top-k, the per-row loop, and every host
+sync before one transfer at the end.
+
+Order and ties: an fp32 top-k of width cap + 1 + slack returns the right multiset of values but
+an arbitrary member of a tied group. Inside that small set, key = (bits(p) << id_bits) |
+(id_mask - id) is a strict total order equal to (p descending, id ascending), since the fp32 bit
+pattern of p >= 0 read as int32 is monotone in p. d_rej is written as p = -1.0 (negative bits,
+below every token). The first cap ids are exact unless the value at cap-1 is kept and still tied
+at the last slot of the set (the tied group may extend past it); only those rows are recomputed
+with a full-row int64 key top-k, after the transfer (no extra sync: the rows are known on host).
+
+fast_offers_topk runs eagerly (any device); GraphedSelect replays the same device body as one
+CUDA graph per (device, shape, cap, q pair), which removes ~40 kernel launches of host overhead
+and runs the argmax on a side branch beside the softmax chain. (A chunk-maximum prefilter
+before the top-k, and a Triton key top-64, were measured and did not beat torch.topk here: the
+full-vocab top-k over 15 rows is latency-bound at ~0.12 ms either way.)
+"""
+from __future__ import annotations
+
+import os
+import torch
+
+SLACK = 16
+
+
+def _eager_fused_enabled(logits, rejected, q_a, cap, width):
+    return (os.environ.get('JETSPEC_ANCHOR_SELECT_EAGER_FUSED', '0') == '1'
+            and logits.device.type == 'cuda' and logits.dtype == torch.float32
+            and logits.is_contiguous() and rejected.is_contiguous()
+            and 1 <= cap <= logits.shape[1]
+            and width <= 128
+            and (not isinstance(q_a, torch.Tensor) or q_a.dtype == torch.float64))
+
+
+def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_merge=False,
+                 bf16_logits=None):
+    """Device-only body: no host syncs. q_a applies to rows whose top-1 is d_rej, q_b otherwise.
+    With a side stream on the default path, argmax runs beside softmax."""
+    rows, vocab = logits.shape
+    if _eager_fused_enabled(logits, rejected, q_a, cap, width):
+        from jetspec.engines.jetspec_plus_plus.models.heads.anchor_select_fused import eager_select
+        outputs, _ = eager_select(logits, rejected, q_a, q_b, cap, width)
+        if exact_merge:
+            ids, p64, pack, probabilities = outputs
+            if cap & (cap - 1) == 0:
+                from jetspec.engines.jetspec_plus_plus.models.heads.anchor_select_fused import repair_ties
+                ids, p64 = repair_ties(probabilities, ids, p64, pack, cap)
+            else:
+                exact_ids, exact_p = _exact_rows(
+                    probabilities, torch.arange(rows, device=logits.device), cap)
+                inexact = pack[4].bool()
+                ids = torch.cat((torch.where(inexact[:, None], exact_ids, ids[:, :cap]),
+                                 ids[:, cap:]), dim=1)
+                p64 = torch.cat((torch.where(inexact[:, None], exact_p, p64[:, :cap]),
+                                 p64[:, cap:]), dim=1)
+            outputs = ids, p64, pack, probabilities
+        return outputs
+    fused = (os.environ.get('JETSPEC_ANCHOR_SELECT_FUSED', '0') == '1'
+             and logits.device.type == 'cuda' and logits.dtype == torch.float32
+             and logits.is_contiguous() and rejected.is_contiguous() and cap <= vocab
+             and (not isinstance(q_a, torch.Tensor) or q_a.dtype == torch.float64))
+    if fused:
+        from jetspec.engines.jetspec_plus_plus.models.heads.anchor_select_fused import prepare_probabilities
+        probabilities, before_top1 = prepare_probabilities(logits, rejected)
+    else:
+        if side is not None:
+            main = torch.cuda.current_stream(logits.device)
+            side.wait_stream(main)
+            with torch.cuda.stream(side):
+                before_top1 = logits.argmax(-1) == rejected
+        else:
+            before_top1 = logits.argmax(-1) == rejected
+        valid = (rejected >= 0)[:, None]
+        column = torch.where(valid, rejected[:, None], 0)
+        filtered = logits.clone()
+        filtered.scatter_(1, column, torch.where(valid, float('-inf'), filtered.gather(1, column)))
+        probabilities = filtered.softmax(-1)
+        probabilities.scatter_add_(1, column, -valid.to(probabilities.dtype))
+    radix = (fused and bf16_logits is not None
+             and bf16_logits.dtype == torch.bfloat16 and bf16_logits.is_contiguous()
+             and width <= 64 and width < vocab and cap & (cap - 1) == 0
+             and os.environ.get('JETSPEC_DECODER_SELECT_RADIX', '0') == '1')
+    if radix:
+        from jetspec.engines.jetspec_plus_plus.models.heads.decoder_select import radix_topk
+        values, ids = radix_topk(bf16_logits, probabilities, rejected, width,
+                                logit_pivot=True, bin_tile=16)
+    else:
+        values, ids = probabilities.topk(width, dim=-1, largest=True, sorted=False)
+    if side is not None and not fused:
+        main.wait_stream(side)
+    if fused:
+        from jetspec.engines.jetspec_plus_plus.models.heads.anchor_select_fused import select_post
+        ids, p64, pack = select_post(values, ids, before_top1, q_a, q_b, cap, vocab)
+        inexact = pack[4].bool()
+    else:
+        # a non-finite softmax row is NaN throughout (NaN or +inf logits, or an all -inf row
+        # make the row sum NaN), and top-k ranks NaN first.
+        finite = torch.isfinite(values).all(-1)
+        id_bits = max(1, (vocab - 1).bit_length())
+        id_mask = (1 << id_bits) - 1
+        keys = (values.view(torch.int32).long() << id_bits) | (id_mask - ids)
+        # keys are distinct, so rank is a permutation: (p desc, id asc)
+        rank = (keys[:, None, :] > keys[:, :, None]).sum(-1)
+        keys = torch.empty_like(keys).scatter_(1, rank, keys)
+        ids = id_mask - (keys & id_mask)
+        values = (keys >> id_bits).int().view(torch.float32)
+        p64 = values.double()
+        if not isinstance(q_a, torch.Tensor):
+            q_a, q_b = torch.full_like(p64[:, 0], q_a), torch.full_like(p64[:, 0], q_b)
+        q = torch.where(before_top1, q_a, q_b)
+        kept = p64 >= (1.0 - q)[:, None]
+        sizes = kept[:, :cap].sum(-1)
+        if width > cap:
+            crosses = kept[:, cap] & (values[:, cap - 1] == values[:, cap])
+        else:
+            crosses = torch.zeros_like(before_top1)
+        if width < vocab:
+            inexact = kept[:, cap - 1] & (values[:, width - 1] == values[:, cap - 1])
+        else:
+            inexact = torch.zeros_like(before_top1)
+        pack = torch.stack((sizes, before_top1.long(), crosses.long(), finite.long(), inexact.long()))
+    if exact_merge:
+        if fused and cap & (cap - 1) == 0:
+            from jetspec.engines.jetspec_plus_plus.models.heads.anchor_select_fused import repair_ties
+            ids, p64 = repair_ties(probabilities, ids, p64, pack, cap)
+        else:
+            # A fixed-shape full-vocabulary selection keeps the tie fallback on device.
+            # Only the first cap columns are observable; preserve the slack columns.
+            exact_ids, exact_p = _exact_rows(
+                probabilities, torch.arange(rows, device=logits.device), cap)
+            ids = torch.cat((torch.where(inexact[:, None], exact_ids, ids[:, :cap]),
+                             ids[:, cap:]), dim=1)
+            p64 = torch.cat((torch.where(inexact[:, None], exact_p, p64[:, :cap]),
+                             p64[:, cap:]), dim=1)
+    return ids, p64, pack, probabilities
+
+
+def _exact_rows(probabilities, rows, cap):
+    """Full-row (p desc, id asc) top-cap for the few rows whose tied group reaches the slack."""
+    part = probabilities.index_select(0, rows)
+    vocab = part.shape[1]
+    id_bits = max(1, (vocab - 1).bit_length())
+    id_mask = (1 << id_bits) - 1
+    ids = torch.arange(vocab, device=part.device, dtype=torch.long)
+    keys = (part.view(torch.int32).long() << id_bits) | (id_mask - ids)
+    keys = keys.topk(min(cap, vocab), dim=-1, largest=True, sorted=True).values
+    top_ids = id_mask - (keys & id_mask)
+    return top_ids, (keys >> id_bits).int().view(torch.float32).double()
+
+
+
+
+def _q_pair(q_hats):
+    """A float (pooled) or a (drej-top1, not-drej-top1) pair (grouped)."""
+    pair = (float(q_hats[0]), float(q_hats[1])) if isinstance(q_hats, tuple) else \
+        (float(q_hats), float(q_hats))
+    if not all(0.0 <= value <= 1.0 for value in pair):
+        raise ValueError('fast LAC probabilities and q values must be finite')
+    return pair
+
+
+def _check(logits, rejected, cap):
+    if logits.ndim != 2 or rejected.shape != logits.shape[:1]:
+        raise ValueError('decoder logits and rejected ids must have shapes [15,V] and [15]')
+    if int(cap) < 1:
+        raise ValueError('fast LAC cap must be positive')
+
+
+def fast_offers_topk(logits, rejected, q_hats, cap, *, slack=SLACK):
+    """Eager form. Returns (ids, probabilities, set_sizes, rejected_was_top1, lac_fallbacks)
+    with ids[k] long and probabilities[k] float64 on the logits device, identical to the
+    reference fast path; q_hats is a float (pooled), a (drej-top1, not-drej-top1) pair, or a
+    per-row sequence (tests)."""
+    logits = torch.as_tensor(logits).float()
+    rejected = torch.as_tensor(rejected, device=logits.device, dtype=torch.long)
+    _check(logits, rejected, cap)
+    cap = int(cap)
+    width = min(logits.shape[1], cap + 1 + int(slack))
+    if isinstance(q_hats, (tuple, int, float)):
+        q_a, q_b = _q_pair(q_hats)
+    else:
+        q_rows = torch.as_tensor(q_hats, dtype=torch.float64).reshape(-1)
+        if q_rows.shape != logits.shape[:1] or not bool(((q_rows >= 0) & (q_rows <= 1)).all()):
+            raise ValueError('fast LAC probabilities and q values must be finite')
+        q_a = q_b = q_rows.to(logits.device)
+    ids, p64, pack, probabilities = _select_body(logits, rejected, q_a, q_b, cap, width)
+    return _finish(ids, p64, pack.cpu(), probabilities, cap)
+
+
+def _home(ids, p64, pack, probabilities, cap, width, *, combined=None):
+    """The offers' trip home in ONE device-to-host copy (pack, ids and fp64 probabilities
+    together).  Host (ids, probabilities) per row, set sizes, rejected-was-top1 flags and
+    the LAC fallback count; a row needing the exact full-row recompute takes the two-copy
+    path."""
+    rows = ids.shape[0]
+    host = (torch.cat((pack.reshape(-1), ids.reshape(-1),
+                       p64.view(torch.int64).reshape(-1)))
+            if combined is None else combined).cpu()
+    pack_host = host[:pack.numel()].view(pack.shape)
+    flags = pack_host.tolist()
+    if not all(flags[3]):
+        raise ValueError('fast LAC probabilities and q values must be finite')
+    if any(flags[4]):
+        selected, chosen, sizes, top1, fallbacks = _finish(
+            ids.clone(), p64.clone(), pack_host, probabilities, cap)
+        total = sum(sizes)
+        both = torch.cat((torch.cat(selected).long(),
+                          torch.cat(chosen).double().view(torch.int64))).cpu()
+        return (both[:total].split(sizes), both[total:].view(torch.float64).split(sizes),
+                sizes, top1, fallbacks)
+    start = pack.numel()
+    host_ids = host[start:start + ids.numel()].view(rows, width)
+    host_p = host[start + ids.numel():].view(rows, width).view(torch.float64)
+    sizes = flags[0]
+    return ([host_ids[row, :size] for row, size in enumerate(sizes)],
+            [host_p[row, :size] for row, size in enumerate(sizes)],
+            sizes, [bool(flag) for flag in flags[1]], sum(flags[2]))
+
+
+def fast_offers_topk_home(logits, rejected, q_hats, cap, *, slack=SLACK):
+    """``fast_offers_topk`` with ``GraphedSelect.home``'s one-copy trip home, eagerly
+    (JETSPEC_ANCHOR_SELECT_HOME=one on the eager path): host ids and probabilities."""
+    logits = torch.as_tensor(logits).float()
+    rejected = torch.as_tensor(rejected, device=logits.device, dtype=torch.long)
+    _check(logits, rejected, cap)
+    cap = int(cap)
+    width = min(logits.shape[1], cap + 1 + int(slack))
+    q_a, q_b = _q_pair(q_hats)
+    ids, p64, pack, probabilities = _select_body(logits, rejected, q_a, q_b, cap, width)
+    return _home(ids, p64, pack, probabilities, cap, width)
+
+
+class EagerSelect:
+    """Anchor selection in call, home and device modes, without capture or compile.
+
+    The new knob fuses metadata and the home-copy buffer on CUDA. CPU and
+    unsupported layouts retain the existing eager body.
+    """
+
+    def device(self, logits, rejected, q_hats, cap, *, slack=SLACK):
+        logits = torch.as_tensor(logits).float()
+        rejected = torch.as_tensor(rejected, device=logits.device, dtype=torch.long)
+        _check(logits, rejected, cap)
+        cap = int(cap)
+        width = min(logits.shape[1], cap + 1 + int(slack))
+        q_a, q_b = _q_pair(q_hats)
+        return _select_body(logits, rejected, q_a, q_b, cap, width), cap, width
+
+    def __call__(self, logits, rejected, q_hats, cap, *, slack=SLACK):
+        body, cap, _ = self.device(logits, rejected, q_hats, cap, slack=slack)
+        ids, p64, pack, probabilities = body
+        return _finish(ids, p64, pack.cpu(), probabilities, cap)
+
+
+
+class GraphedSelect:
+    """One CUDA graph per (device, rows, vocab, cap, width, q pair); inputs copied in."""
+
+    def __init__(self):
+        self._graphs = {}
+
+    @staticmethod
+    def chain_body(logits, rejected, q_hats, cap, *, slack=SLACK):
+        """Capture-safe selection with tie correction and no trip to the host."""
+        cap = int(cap)
+        width = min(logits.shape[1], cap + 1 + int(slack))
+        if isinstance(q_hats, torch.Tensor):
+            if q_hats.shape != (2,):
+                raise ValueError('chain thresholds must be a device pair')
+            q_a, q_b = q_hats.unbind()
+        else:
+            q_a, q_b = _q_pair(q_hats)
+        ids, p64, pack, _ = _select_body(
+            logits.float(), rejected, q_a, q_b, cap, width, exact_merge=True,
+            bf16_logits=logits if os.environ.get('JETSPEC_DECODER_SELECT_RADIX', '0') == '1' else None)
+        return ids, p64, pack
+
+    def __call__(self, logits, rejected, q_hats, cap, *, slack=SLACK):
+        logits = torch.as_tensor(logits).float()
+        rejected = torch.as_tensor(rejected, device=logits.device, dtype=torch.long)
+        _check(logits, rejected, cap)
+        if logits.device.type != 'cuda':
+            return fast_offers_topk(logits, rejected, q_hats, cap, slack=slack)
+        cap = int(cap)
+        width = min(logits.shape[1], cap + 1 + int(slack))
+        q_a, q_b = _q_pair(q_hats)
+        key = (logits.device, tuple(logits.shape), cap, width, q_a, q_b)
+        entry = self._graphs.get(key)
+        if entry is None:
+            entry = self._capture(logits, rejected, q_a, q_b, cap, width)
+            self._graphs[key] = entry
+        graph, static_logits, static_rejected, outputs = entry
+        static_logits.copy_(logits)
+        static_rejected.copy_(rejected)
+        graph.replay()
+        ids, p64, pack, probabilities = outputs
+        ids, p64 = ids.clone(), p64.clone()
+        return _finish(ids, p64, pack.cpu(), probabilities, cap)
+
+
+    def device(self, logits, rejected, q_hats, cap, *, slack=SLACK):
+        """The graph's (ids, p64, pack, probabilities) left on the device (the first
+        three cloned, so a later replay cannot change them), and the width."""
+        logits = torch.as_tensor(logits).float()
+        rejected = torch.as_tensor(rejected, device=logits.device, dtype=torch.long)
+        _check(logits, rejected, cap)
+        cap = int(cap)
+        width = min(logits.shape[1], cap + 1 + int(slack))
+        q_a, q_b = _q_pair(q_hats)
+        key = (logits.device, tuple(logits.shape), cap, width, q_a, q_b)
+        entry = self._graphs.get(key)
+        if entry is None:
+            entry = self._capture(logits, rejected, q_a, q_b, cap, width)
+            self._graphs[key] = entry
+        graph, static_logits, static_rejected, outputs = entry
+        static_logits.copy_(logits)
+        static_rejected.copy_(rejected)
+        graph.replay()
+        ids, p64, pack, probabilities = outputs
+        return (ids.clone(), p64.clone(), pack.clone(), probabilities), cap, width
+
+    @staticmethod
+    def _capture(logits, rejected, q_a, q_b, cap, width):
+        static_logits = logits.clone()
+        static_rejected = rejected.clone()
+        stream = torch.cuda.Stream(device=logits.device)
+        stream.wait_stream(torch.cuda.current_stream(logits.device))
+        side = torch.cuda.Stream(device=logits.device)
+        with torch.cuda.stream(stream):
+            for _ in range(2):
+                _select_body(static_logits, static_rejected, q_a, q_b, cap, width, side)
+        torch.cuda.current_stream(logits.device).wait_stream(stream)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph, capture_error_mode='thread_local'):
+            outputs = _select_body(static_logits, static_rejected, q_a, q_b, cap, width, side)
+        return graph, static_logits, static_rejected, outputs
+
+

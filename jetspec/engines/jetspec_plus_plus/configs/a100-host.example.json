@@ -1,0 +1,17 @@
+{
+  "schema": "jetspec.serve_host_values/1",
+  "cuda_arch": "8.0",
+  "rendezvous_mode": "host_port",
+  "environment": {
+    "JETSPEC_TARGET_MODEL_PATH": "/path/to/target",
+    "SSD_HF_CACHE": "/path/to/hf/hub",
+    "SSD_DATASET_DIR": "/path/to/datasets"
+  },
+  "artifacts": {
+    "mask_original_drafter": "/path/to/target-release",
+    "jetspecpp_e6_drafter": "/path/to/drafter",
+    "jetspecpp_e6_adapter": "/path/to/adapter",
+    "served_heads_reused_e6v2_b16": "/path/to/served_heads_reused_e6v2_b16",
+    "served_heads_reused_e6v3_b16": "/path/to/served_heads_reused_e6v3_b16"
+  }
+}

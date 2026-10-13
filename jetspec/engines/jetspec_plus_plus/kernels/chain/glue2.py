@@ -1,0 +1,200 @@
+"""Capture-safe level-2 decoder window glue."""
+
+from __future__ import annotations
+
+import torch
+
+try:
+    from jetspec.engines.jetspec_plus_plus._optional import triton
+    from jetspec.engines.jetspec_plus_plus._optional import tl
+except ImportError:  # CPU development hosts do not install Triton.
+    triton = None
+    tl = None
+
+
+def available() -> bool:
+    return triton is not None
+
+
+
+
+if triton is not None:
+    @triton.jit
+    def _window_mask_rope(LENGTH, COS_TABLE, SIN_TABLE, MASK, COS, SIN,
+                          ROWS: tl.constexpr, BUCKET: tl.constexpr,
+                          DIM: tl.constexpr, NEG: tl.constexpr,
+                          MASK_BLOCKS: tl.constexpr, BLOCK: tl.constexpr):
+        program = tl.program_id(0)
+        offset = tl.arange(0, BLOCK)
+        length = tl.load(LENGTH)
+        if program < MASK_BLOCKS:
+            flat = program * BLOCK + offset
+            query = flat // BUCKET
+            key = flat % BUCKET
+            allowed = (key < length) | ((key >= length) & (key - length <= query))
+            tl.store(MASK + flat, tl.where(allowed, 0., NEG), flat < ROWS * BUCKET)
+        else:
+            flat = (program - MASK_BLOCKS) * BLOCK + offset
+            row = flat // DIM
+            column = flat % DIM
+            source = (length + row) * DIM + column
+            cos = tl.load(COS_TABLE + source, flat < ROWS * DIM, other=0)
+            sin = tl.load(SIN_TABLE + source, flat < ROWS * DIM, other=0)
+            tl.store(COS + flat, cos, flat < ROWS * DIM)
+            tl.store(SIN + flat, sin, flat < ROWS * DIM)
+
+    @triton.jit
+    def _mask_token_guard(IDS, ACTIVE, ERR, ROWS: tl.constexpr,
+                          LANES: tl.constexpr, TOKEN: tl.constexpr,
+                          BLOCK: tl.constexpr):
+        flat = tl.arange(0, BLOCK)
+        row = flat // LANES
+        ids = tl.load(IDS + flat, flat < ROWS * LANES, other=0)
+        active = tl.load(ACTIVE + row, row < ROWS, other=0)
+        found = tl.sum((ids == TOKEN) & active & (flat < ROWS * LANES), 0) > 0
+        old = tl.load(ERR)
+        tl.store(ERR, old | tl.where(found, 1 << 7, 0).to(tl.int64))
+
+    @triton.jit
+    def _j0_prep(COMMITTED, RP, KEYS, ACTIVE, IDS, FINISHED, PASSES, ERR,
+                 ROWS: tl.constexpr, LANES: tl.constexpr,
+                 OWNS_ERR: tl.constexpr, BLOCK: tl.constexpr):
+        flat = tl.arange(0, BLOCK)
+        row = flat // LANES
+        lane = flat % LANES
+        rng = tl.load(RP + 32 + lane - 1, (lane > 0) & (lane < LANES), other=0)
+        value = tl.load(COMMITTED + rng, (lane > 0) & (flat < ROWS * LANES), other=0)
+        anchor = tl.load(KEYS + row * 2 + 1, (lane == 0) & (row < ROWS), other=0)
+        tl.store(IDS + flat, tl.where(lane == 0, tl.maximum(anchor, 0), value),
+                 flat < ROWS * LANES)
+        tl.store(FINISHED + row, ~tl.load(ACTIVE + row, row < ROWS, other=0),
+                 (lane == 0) & (row < ROWS))
+        tl.store(PASSES + row, 0, (lane == 0) & (row < ROWS))
+        if OWNS_ERR:
+            tl.store(ERR, 0)
+
+    @triton.jit
+    def _c1_front_prep(RP, COMMITTED, PENDING, IDS, POSITIONS, SLOTS,
+                       CAPACITY: tl.constexpr, LANES: tl.constexpr,
+                       BLOCK: tl.constexpr):
+        lane = tl.arange(0, BLOCK)
+        length = tl.load(RP)
+        start = tl.load(RP + 1)
+        count = tl.load(RP + 2)
+        pending = tl.load(PENDING + lane - 1, (lane > 0) & (lane < LANES), other=0)
+        current = tl.load(COMMITTED + length)
+        tl.store(IDS + lane, tl.where(lane == 0, current, pending), lane < LANES)
+        tl.store(POSITIONS + lane, start + lane, lane < LANES)
+        tl.store(SLOTS + lane, tl.where(lane < count, start + lane, CAPACITY + lane),
+                 lane < LANES)
+
+    @triton.jit
+    def _c1_mask(LENGTH, MASK, ROWS: tl.constexpr, BUCKET: tl.constexpr,
+                 NEG: tl.constexpr, BLOCK: tl.constexpr):
+        flat = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        query = flat // BUCKET
+        key = flat % BUCKET
+        length = tl.load(LENGTH)
+        allowed = (key < length) | ((key >= length) & (key - length < query))
+        tl.store(MASK + flat, tl.where(allowed, 0., NEG), flat < ROWS * BUCKET)
+
+    @triton.jit
+    def _context_copy_mark(LENGTH, PREFIX, TAIL, EMBEDDING, CONTEXT,
+                           P: tl.constexpr, T: tl.constexpr,
+                           H: tl.constexpr, BLOCK: tl.constexpr):
+        flat = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        position = flat // H
+        column = flat % H
+        prefix_row = position < P
+        valid = flat < (P + T) * H
+        length = tl.load(LENGTH)
+        prefix = tl.load(PREFIX + flat, valid & prefix_row, other=0).to(tl.float32)
+        tail = tl.load(TAIL + flat - P * H, valid & ~prefix_row, other=0).to(tl.float32)
+        mark0 = tl.load(EMBEDDING + column, valid & prefix_row, other=0).to(tl.float32)
+        mark1 = tl.load(EMBEDDING + H + column, valid & ~prefix_row, other=0).to(tl.float32)
+        base = tl.where(prefix_row, tl.where(position < length, prefix, 0.), tail)
+        marked = base + tl.where(prefix_row, mark0, mark1)
+        tl.store(CONTEXT + flat, marked, valid)
+
+
+def window_mask_rope(length: torch.Tensor, cos_table: torch.Tensor,
+                     sin_table: torch.Tensor, mask: torch.Tensor,
+                     cos: torch.Tensor, sin: torch.Tensor) -> None:
+    """Write the level-1 mask and both table gathers in one CUDA launch."""
+    if triton is None or not length.is_cuda:
+        raise RuntimeError("window glue fusion requires CUDA Triton")
+    rows, bucket = mask.shape[-2:]
+    dim = cos.shape[-1]
+    if (length.numel() != 1 or mask.shape != (1, 1, rows, bucket)
+            or cos.shape != sin.shape or cos.shape != (1, rows, dim)
+            or cos_table.ndim != 2 or cos_table.shape != sin_table.shape
+            or cos_table.shape[1] != dim):
+        raise ValueError("window glue tensors do not match the captured shape")
+    block = 256
+    mask_blocks = triton.cdiv(rows * bucket, block)
+    rope_blocks = triton.cdiv(rows * dim, block)
+    _window_mask_rope[(mask_blocks + rope_blocks,)](
+        length, cos_table, sin_table, mask, cos, sin, rows, bucket, dim,
+        float(torch.finfo(mask.dtype).min), mask_blocks, block)
+
+
+def mask_token_guard(ids: torch.Tensor, active: torch.Tensor,
+                     err: torch.Tensor, token: int) -> None:
+    """Set the existing mask-token error bit for active rows."""
+    rows, lanes = ids.shape
+    if (active.shape != (rows,) or err.shape != (1,)
+            or ids.dtype != torch.int64 or err.dtype != torch.int64):
+        raise ValueError("mask-token guard tensors do not match the captured shape")
+    if ids.is_cuda and triton is not None:
+        _mask_token_guard[(1,)](ids, active, err, rows, lanes, token,
+                                triton.next_power_of_2(rows * lanes))
+    else:
+        err.bitwise_or_((ids.eq(token) & active[:, None]).any().long().reshape(1) * (1 << 7))
+
+
+def j0_prep(committed, rp, keys, active, ids, finished, passes, err,
+            *, owns_err: bool) -> None:
+    """Fill J0 ids and reset pass outputs with device-side RNG indices."""
+    rows, lanes = ids.shape
+    if triton is None or not ids.is_cuda:
+        raise RuntimeError("J0 prep fusion requires CUDA Triton")
+    _j0_prep[(1,)](committed, rp, keys, active, ids, finished, passes, err,
+                    rows, lanes, owns_err, triton.next_power_of_2(rows * lanes))
+
+
+def c1_front_prep(rp, committed, pending, ids, positions, slots, capacity) -> None:
+    lanes = ids.shape[1]
+    if triton is None or not ids.is_cuda:
+        raise RuntimeError("C1 front prep fusion requires CUDA Triton")
+    _c1_front_prep[(1,)](rp, committed, pending, ids, positions, slots,
+                          capacity, lanes, triton.next_power_of_2(lanes))
+
+
+def c1_mask(length, mask) -> None:
+    rows, bucket = mask.shape[-2:]
+    if triton is None or not mask.is_cuda:
+        raise RuntimeError("C1 mask fusion requires CUDA Triton")
+    _c1_mask[(triton.cdiv(rows * bucket, 256),)](
+        length, mask, rows, bucket, float(torch.finfo(mask.dtype).min), 256)
+
+
+
+
+def context_copy_mark(length: torch.Tensor, prefix: torch.Tensor,
+                      tail: torch.Tensor, embedding: torch.Tensor,
+                      context: torch.Tensor) -> None:
+    """Fuse the captured fixed-P context preparation into one launch."""
+    p, hidden = prefix.shape
+    t = tail.shape[1]
+    if (length.numel() != 1 or tail.shape != (1, t, hidden)
+            or context.shape != (1, p + t, hidden)
+            or embedding.shape != (2, hidden)):
+        raise ValueError("context glue tensors do not match the captured shape")
+    if triton is None or not length.is_cuda:
+        reference_context_copy_mark(length, prefix, tail, embedding, context)
+    else:
+        if not all(x.is_contiguous() for x in (prefix, tail, embedding, context)):
+            raise ValueError("context glue requires contiguous capture buffers")
+        block = 256
+        _context_copy_mark[(triton.cdiv((p + t) * hidden, block),)](
+            length, prefix, tail, embedding, context, p, t, hidden, block)
