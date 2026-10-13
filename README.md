@@ -94,10 +94,11 @@ The project has two execution paths:
 jetspec/
   core/                 # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
   inference_engine/     # optimized JetSpec engine: paged KV, scheduler, kernels, CUDA graphs
-  tree/                 # engine-agnostic tree construction and acceptance
+  methods/jetspec/      # tree construction, drafters and trained draft head
+  tree/                 # compatibility shim to methods/jetspec/tree
   models/               # target/draft-head loading and model utilities
-  draft.py              # simple drafters used in tests and correctness gates
-  draft_head_adapter.py # trained draft-head adapter
+  draft.py              # compatibility shim to methods/jetspec/draft.py
+  draft_head_adapter.py # compatibility shim to methods/jetspec/draft_head_adapter.py
 ```
 
 

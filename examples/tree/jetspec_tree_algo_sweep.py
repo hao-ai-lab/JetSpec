@@ -23,9 +23,9 @@ import torch
 from transformers import DynamicCache
 
 from jetspec.core.llm import LLM, SamplingParams
-from jetspec.models.draft_head import load_draft_head
-from jetspec.draft_head_adapter import DraftHeadTreeDrafter
-from jetspec.tree import list_algorithms
+from jetspec.methods.jetspec.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
+from jetspec.methods.jetspec.tree import list_algorithms
 
 MODEL = os.environ.get("JETSPEC_TEST_MODEL", "Qwen/Qwen3-8B")
 DRAFT_HEAD = os.environ.get("JETSPEC_DRAFT_HEAD")
