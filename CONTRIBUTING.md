@@ -18,7 +18,7 @@ Optional extras (install only what you need):
 - `pip install -e '.[kernel]'` — `triton`, for the JetSpec tree-attention
   kernel (GPU only; imported lazily, so the rest of the package works without it).
 - `pip install -e '.[bench]'` — `datasets`, `psutil`, `ninja`, and `packaging`,
-  for benchmark scripts and profiling helpers under `bench/`.
+  for benchmark scripts and profiling helpers under `bench/jetspec/`.
 - `pip install -e '.[flash-attn]'` — `flash-attn`, for FA2 reference benchmarks.
 
 You can combine them: `pip install -e '.[test,kernel,bench,flash-attn]'`.
@@ -47,11 +47,12 @@ engine, and an engine-agnostic tree layer, with a strict one-way dependency
   and **`jetspec/models/draft_head.py`** — compatibility shims to the JetSpec
   method package. Existing public imports stay supported.
 
-Top-level scripts are grouped by purpose:
+Top-level scripts are grouped by method and purpose; the old JetSpec benchmark
+paths remain forwarding scripts:
 
-- **`bench/reference/`** — HF/reference benchmarks and raw HF FA2 sanity checks.
-- **`bench/engine/`** — optimized JetSpec engine throughput scripts.
-- **`bench/profiling/`** — profiling, diagnostics, probes, and profile-table builders.
+- **`bench/jetspec/reference/`** — HF/reference benchmarks and raw HF FA2 sanity checks.
+- **`bench/jetspec/engine/`** — optimized JetSpec engine throughput scripts.
+- **`bench/jetspec/profiling/`** — profiling, diagnostics, probes, and profile-table builders.
 - **`examples/basic/`**, **`examples/tree/`**, **`examples/engine/`** — runnable
   examples grouped by scope.
 - **`tests/manual/profiling/`** — scratch/manual profiling utilities that are not
