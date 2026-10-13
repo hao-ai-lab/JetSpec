@@ -1,0 +1,1 @@
+{"test_kth_init[0]":{"value_1":[{"__tensor__":"tensor_0"},{"__tensor__":"tensor_1"},{"__tensor__":"tensor_2"}]},"test_kth_init[1]":{"value_1":[{"__tensor__":"tensor_1"},{"__tensor__":"tensor_0"},{"__tensor__":"tensor_3"}]},"test_kth_init[2]":{"value_1":[{"__tensor__":"tensor_4"},{"__tensor__":"tensor_5"},{"__tensor__":"tensor_6"}]}}
