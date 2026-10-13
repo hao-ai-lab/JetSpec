@@ -45,7 +45,7 @@ import torch
 from torch.cuda import Event
 
 from jetspec.core.llm import SamplingParams
-from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.engines.jetspec.engine import JetSpecEngine
 from jetspec.methods.jetspec.draft_head import load_draft_head
 from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
@@ -144,7 +144,7 @@ def main():
         # verify no longer routes through it, so wrapping replay is what captures the
         # tree leg. Wrapping both is safe: AR -> stack, tree -> replay, disjoint.
         eng.runner.forward = prefill.wrap(eng.runner.forward)
-        from jetspec.inference_engine.compiled_verify_stack import CompiledVerifyStack
+        from jetspec.engines.jetspec.serving.compiled_verify_stack import CompiledVerifyStack
         CompiledVerifyStack.__call__ = verify.wrap(CompiledVerifyStack.__call__)
         if backend == "triton_paged_tree_cudagraph":
             # The tree verify leg is `GraphedVerify.replay` (copy-in + `g.replay()`). The
@@ -155,7 +155,7 @@ def main():
             # `graphs` dict growing) — recording it to a separate `capture` timer instead.
             # The reported verify/round is then pure per-round cost (copy-in + launch),
             # matching how the compiled leg times only its per-round forward.
-            from jetspec.inference_engine.graph_capture import GraphedVerify
+            from jetspec.engines.jetspec.verify.graph_capture import GraphedVerify
             _orig_replay = GraphedVerify.replay
 
             def _timed_replay(self, *a, **k):
