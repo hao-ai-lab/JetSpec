@@ -167,7 +167,7 @@ HF reference benchmark:
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
-python bench/reference/benchmark.py \
+python bench/jetspec/reference/benchmark.py \
   --model Qwen/Qwen3-8B \
   --attn-implementation flash_attention_2 \
   --tree-attn-implementation triton \
@@ -197,7 +197,7 @@ CUDA_VISIBLE_DEVICES=0 \
 JETSPEC_FUSE_GEMMS=1 \
 JETSPEC_BACKEND=triton_paged_tree_cudagraph_nogather \
 JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
-python bench/engine/tps_walltime.py \
+python bench/jetspec/engine/tps_walltime.py \
   --prompt-set gsm8k \
   --samples 64 \
   --max-tokens 2048 \
@@ -267,7 +267,7 @@ The optimized engine runs single-stream (batch size 1) Qwen3-8B tree-speculative
 
 ### Tree Algorithms
 
-Common algorithms exposed by `bench/reference/benchmark.py`:
+Common algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 
 | Algorithm | Purpose |
 |---|---|
