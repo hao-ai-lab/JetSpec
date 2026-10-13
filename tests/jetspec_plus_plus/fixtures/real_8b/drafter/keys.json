@@ -1,0 +1,214 @@
+{
+  "drafter": {
+    "fc.weight": [
+      4096,
+      20480
+    ],
+    "hidden_norm.weight": [
+      4096
+    ],
+    "layers.0.input_layernorm.weight": [
+      4096
+    ],
+    "layers.0.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "layers.0.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.0.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.0.post_attention_layernorm.weight": [
+      4096
+    ],
+    "layers.0.self_attn.k_norm.weight": [
+      128
+    ],
+    "layers.0.self_attn.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.0.self_attn.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.0.self_attn.q_norm.weight": [
+      128
+    ],
+    "layers.0.self_attn.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.0.self_attn.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.1.input_layernorm.weight": [
+      4096
+    ],
+    "layers.1.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "layers.1.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.1.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.1.post_attention_layernorm.weight": [
+      4096
+    ],
+    "layers.1.self_attn.k_norm.weight": [
+      128
+    ],
+    "layers.1.self_attn.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.1.self_attn.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.1.self_attn.q_norm.weight": [
+      128
+    ],
+    "layers.1.self_attn.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.1.self_attn.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.2.input_layernorm.weight": [
+      4096
+    ],
+    "layers.2.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "layers.2.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.2.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.2.post_attention_layernorm.weight": [
+      4096
+    ],
+    "layers.2.self_attn.k_norm.weight": [
+      128
+    ],
+    "layers.2.self_attn.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.2.self_attn.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.2.self_attn.q_norm.weight": [
+      128
+    ],
+    "layers.2.self_attn.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.2.self_attn.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.3.input_layernorm.weight": [
+      4096
+    ],
+    "layers.3.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "layers.3.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.3.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.3.post_attention_layernorm.weight": [
+      4096
+    ],
+    "layers.3.self_attn.k_norm.weight": [
+      128
+    ],
+    "layers.3.self_attn.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.3.self_attn.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.3.self_attn.q_norm.weight": [
+      128
+    ],
+    "layers.3.self_attn.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.3.self_attn.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.4.input_layernorm.weight": [
+      4096
+    ],
+    "layers.4.mlp.down_proj.weight": [
+      4096,
+      12288
+    ],
+    "layers.4.mlp.gate_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.4.mlp.up_proj.weight": [
+      12288,
+      4096
+    ],
+    "layers.4.post_attention_layernorm.weight": [
+      4096
+    ],
+    "layers.4.self_attn.k_norm.weight": [
+      128
+    ],
+    "layers.4.self_attn.k_proj.weight": [
+      1024,
+      4096
+    ],
+    "layers.4.self_attn.o_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.4.self_attn.q_norm.weight": [
+      128
+    ],
+    "layers.4.self_attn.q_proj.weight": [
+      4096,
+      4096
+    ],
+    "layers.4.self_attn.v_proj.weight": [
+      1024,
+      4096
+    ],
+    "norm.weight": [
+      4096
+    ]
+  }
+}
