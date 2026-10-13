@@ -284,6 +284,9 @@ def refresh_decoder_logits(decoder, sequence, *, length, tail_hidden, tail_count
     The last four committed rows extend a private cache, leaving the round's
     cached prefix unchanged. No block row attends to another block row.
     """
+    if getattr(decoder, 'hybrid', False):
+        return decoder.refresh_logits(sequence, length=length, tail_hidden=tail_hidden,
+            tail_counts=tail_counts, block_hidden=block_hidden, slot_counts=slot_counts)
     parameter = next(decoder.layers.parameters())
     hidden_size = decoder.hidden_size
     tail_counts = torch.as_tensor(tail_counts, dtype=torch.long).reshape(-1).cpu()
