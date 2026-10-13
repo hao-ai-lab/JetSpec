@@ -14,7 +14,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from jetspec.core.llm import SamplingParams
-from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.engines.jetspec.engine import JetSpecEngine
 from jetspec.methods.jetspec.draft_head import load_draft_head
 from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 
