@@ -1,14 +1,13 @@
-"""Core: ABC, registry, helpers shared across all algorithm categories."""
-from .base import DraftTree, TreeAlgorithm
-from .extend import should_extend, splice_extension
-from .registry import register_tree_algo, get_algorithm, list_algorithms
+"""Compatibility exports for jetspec.methods.jetspec.tree._core."""
+from importlib import import_module as _import_module
 
-__all__ = [
-    "DraftTree",
-    "TreeAlgorithm",
-    "should_extend",
-    "splice_extension",
-    "register_tree_algo",
-    "get_algorithm",
-    "list_algorithms",
-]
+_impl = _import_module("jetspec.methods.jetspec.tree._core")
+__all__ = getattr(_impl, "__all__", [name for name in vars(_impl) if not name.startswith("_")])
+
+
+def __getattr__(name):
+    return getattr(_impl, name)
+
+
+def __dir__():
+    return dir(_impl)

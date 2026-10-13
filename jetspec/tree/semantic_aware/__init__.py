@@ -1,13 +1,13 @@
-"""semantic_aware — prompt-adaptive tree shaping (route by prompt, not logits alone).
+"""Compatibility exports for jetspec.methods.jetspec.tree.semantic_aware."""
+from importlib import import_module as _import_module
 
-Each algorithm derives the tree shape from a prompt-level signal supplied via
-the `prompt_info` kwarg on `build()` (a task label, reasoning mode, or decoded
-text). When `prompt_info` is None they fall back to a logit-fingerprint
-heuristic over `draft_logits`, so every variant is runnable without the routing
-input wired — and recovers accum_logp at its `force_baseline` knob.
+_impl = _import_module("jetspec.methods.jetspec.tree.semantic_aware")
+__all__ = getattr(_impl, "__all__", [name for name in vars(_impl) if not name.startswith("_")])
 
-Importing this package registers every algorithm via @register_tree_algo.
-"""
-from . import task_router        # noqa: F401  (task_router)
-from . import reasoning_router   # noqa: F401  (reasoning_router)
-from . import class_histogram    # noqa: F401  (class_histogram)
+
+def __getattr__(name):
+    return getattr(_impl, name)
+
+
+def __dir__():
+    return dir(_impl)

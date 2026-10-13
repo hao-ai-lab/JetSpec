@@ -1,12 +1,13 @@
-"""profile_guided — tree shape driven by external acceptance profiles.
+"""Compatibility exports for jetspec.methods.jetspec.tree.profile_guided."""
+from importlib import import_module as _import_module
 
-Implemented:
-- `depth_rank_histogram` (B2) — per-(depth, rank) acceptance cap; the budget-aware
-  generalization of the low-budget winners. Profiler: ``bench/profiling/collect_depth_rank_stats.py``.
+_impl = _import_module("jetspec.methods.jetspec.tree.profile_guided")
+__all__ = getattr(_impl, "__all__", [name for name in vars(_impl) if not name.startswith("_")])
 
-Planned (placeholders, NOT registered — build() raises; see ``jetspec/tree/ROADMAP.md``):
-- `online_warmup` (B5), `template_bandit` (B7) — need serving-loop feedback (vLLM phase).
 
-Importing this package registers the implemented algorithms only.
-"""
-from jetspec.tree.profile_guided import depth_rank_histogram  # noqa: F401  (registers B2)
+def __getattr__(name):
+    return getattr(_impl, name)
+
+
+def __dir__():
+    return dir(_impl)

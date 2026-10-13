@@ -26,7 +26,7 @@ from typing import Optional, Sequence
 
 import torch
 
-from jetspec.tree import DraftTree, build_ancestor_matrix
+from jetspec.methods.jetspec.tree import DraftTree, build_ancestor_matrix
 
 
 @dataclass
