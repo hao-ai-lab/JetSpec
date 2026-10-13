@@ -1,6 +1,6 @@
 """Collect B2 depth-rank acceptance profiles on JetSpec.
 
-The output schema matches ``jetspec.tree.profile_guided.depth_rank_histogram``:
+The output schema matches ``jetspec.methods.jetspec.tree.profile_guided.depth_rank_histogram``:
 
     {"depth_rank_accept": [[...]], "meta": {...}}
 
@@ -26,12 +26,12 @@ from typing import Any, Iterable, Sequence
 
 import torch
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from jetspec.tree import get_algorithm
-from jetspec.tree._core.base import DraftTree
+from jetspec.methods.jetspec.tree import get_algorithm
+from jetspec.methods.jetspec.tree._core.base import DraftTree
 
 
 @dataclass
@@ -330,7 +330,7 @@ def parse_args() -> argparse.Namespace:
 
 @torch.inference_mode()
 def main() -> None:
-    from bench.profiling.collect_tree_diagnostics import build_drafter, build_prompts
+    from bench.jetspec.profiling.collect_tree_diagnostics import build_drafter, build_prompts
     from jetspec.core.llm import SamplingParams
     from jetspec.inference_engine.engine import JetSpecEngine
 
