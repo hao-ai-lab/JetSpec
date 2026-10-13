@@ -181,7 +181,17 @@ def test_prepare_casts_before_hypothesis_assembly(mixed, monkeypatch):
         assert torch.equal(prefix, golden('value_4'))
         actual = build(prefix, **kwargs)
         expected = golden('value_5')
-        for value, wanted in zip(actual, expected):
+        # Model-generated adapter tails differ across transformers versions.
+        # Keep the frozen exact prefix and layout; check the live tail's cast.
+        contexts = actual[0]
+        assert contexts.shape == expected[0].shape
+        assert torch.equal(contexts[:, :prefix.shape[1]], expected[0][:, :prefix.shape[1]])
+        count, = kwargs['k_hypotheses']
+        tail = kwargs['predicted_hidden'][:, :count].to(prefix)
+        marker = kwargs['adapted_position_embedding'](torch.ones(
+            (1, count), dtype=torch.long, device=prefix.device)).to(prefix)
+        assert torch.equal(contexts[:, prefix.shape[1]:], tail + marker)
+        for value, wanted in zip(actual[1:], expected[1:]):
             assert torch.equal(value, wanted)
         seen.append(actual[0].dtype)
         return actual
