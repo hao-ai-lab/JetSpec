@@ -85,6 +85,9 @@ def make_cache(model) -> DynamicCache:
 
     Safe to call for non-compiled models too — it just returns a regular DynamicCache.
     """
+    factory = getattr(model, 'new_cache', None)
+    if factory is not None:
+        return factory()
     cache = DynamicCache()
     config = getattr(model, "config", None) or getattr(getattr(model, "_orig_mod", None), "config", None)
     n = getattr(config, "num_hidden_layers", 0) if config is not None else 0
@@ -107,6 +110,10 @@ class SamplingParams:
 
 def _select_kv_cache(cache, prefix_len: int, accepted_tree_indices: torch.Tensor) -> None:
     """Keep cached prefix in place and compact accepted tree nodes after it."""
+    commit = getattr(cache, 'commit_tree', None)
+    if commit is not None:
+        commit(prefix_len, accepted_tree_indices)
+        return
     accepted_tree_indices = accepted_tree_indices.to(dtype=torch.long)
     accepted_len = int(accepted_tree_indices.numel())
     new_len = int(prefix_len) + accepted_len
