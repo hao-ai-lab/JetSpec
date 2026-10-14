@@ -8,6 +8,19 @@ from jetspec.methods.jetspec_plus_plus.method.decoder import core, window, lac
 from jetspec.methods.jetspec_plus_plus.method.calibration import dataset_entry
 
 
+@pytest.mark.parametrize('size', [15, 16])
+def test_window_reads_all_verified_rows_and_isolates_blocks(size):
+    anchors = [3, 7]
+    mask = window.window_mask(anchors, 7, torch.float32, size=size)[0, 0]
+    allowed = mask == 0
+    for row, anchor in enumerate(anchors):
+        for slot in range(size):
+            query = row * size + slot
+            expected = list(range(anchor)) + list(range(7 + row * size, 8 + row * size + slot))
+            assert allowed[query].nonzero().flatten().tolist() == expected
+    assert window.window_mask(anchors, 7, torch.float32).shape == (1, 1, 30, 37)
+
+
 @pytest.mark.parametrize('seed', [0, 1, 2])
 def test_registry_equal_golden(seed):
     torch.manual_seed(seed)
@@ -36,7 +49,7 @@ def test_retained_decoder_leaves_equal_golden(seed):
     hidden = torch.randn(1, 5, 16)
     for left, right in zip(actual(hidden), golden('value_3')):
         assert torch.equal(left, right)
-    assert torch.equal(window.window_mask([7, 9], 5, torch.float32, size=20),
+    assert torch.equal(window.window_mask([3, 5], 5, torch.float32, size=16),
                        golden('value_4'))
     left = window.IncrementalPrefix()
     for _ in range(2):
