@@ -573,12 +573,6 @@ class KthRowsDrafter:
                 object.__setattr__(staged, 'draft_ids', block.draft_ids.clone())
                 staged_blocks.append(staged)
             blocks = staged_blocks
-        if os.environ.get('E04_DECODER_TAIL_SEED'):
-            if os.environ['E04_DECODER_TAIL_SEED'] != 'admission' or self.decoder is None:
-                raise ValueError('E04_DECODER_TAIL_SEED=admission requires the decoder anchor')
-            from jetspec.engines.jetspec_plus_plus.models.heads.decoder import e04_seed_admission_tail
-            for sequence in sequences:
-                e04_seed_admission_tail(self.drafter, sequence, hidden_size=self.decoder.hidden_size)
         if self.optimized:
             if len(sequences) > 1 and batch_draft_front():
                 self._stage_batch_graph(sequences, blocks)

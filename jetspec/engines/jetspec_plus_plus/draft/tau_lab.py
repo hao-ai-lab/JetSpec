@@ -1200,7 +1200,7 @@ def exact_adapter_rows(drafter, sequence, ids):
     slot's row does not depend on the tokens after it.  One call per distinct row.  A cached C1
     head that did not hold this sequence's prefix before the call has its key cleared after it, so
     the next staging call rebuilds from position 0 as it does without the lab (the rule of
-    ``heads.decoder.e04_seed_admission_tail``).  Returns [R, B, H].
+    the historical admission seed).  Returns [R, B, H].
     """
     from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
     head = drafter.adapter.head
@@ -1783,6 +1783,5 @@ def joint_rows(block, prediction, k_probabilities, keys, requested, *, after_mis
 
 
 # --- tl07: the seeded exact round -----------------------------------------------------------------
-
 
 

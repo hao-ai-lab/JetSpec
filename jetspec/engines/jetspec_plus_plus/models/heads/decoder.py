@@ -795,53 +795,6 @@ def _check_reused_fallback(layers, root, expected_sha256):
     print(f'REUSED_DECODER_LOAD_EQUALITY=PASS fallback=decoder/checkpoint-0.pt bitwise_tensors={len(reference)}', flush=True)
 
 
-from jetspec.engines.jetspec_plus_plus.draft.method.decoder.window import remember_committed_tail
-
-
-from jetspec.engines.jetspec_plus_plus.draft.method.decoder.window import remember_committed_tails_batch
-
-
-def e04_seed_admission_tail(drafter, sequence, *, hidden_size):
-    """e04 opt-in (E04_DECODER_TAIL_SEED=admission): fill the 4-row tail before the first stage.
-
-    Rows are adapter predictions for the last 4 prompt positions P-4..P-1 from one exact-tap
-    boundary P-4 (prefix taps < P-4), the stale-row frame remember_committed_tail keeps for
-    accepted rows. Queries attend only to the prefix, so the 11 padding queries do not touch
-    rows 0..3. The C1 cache key is cleared so the admission stage rebuilds from position 0,
-    exactly as it does without a seed.
-    """
-    if sequence.staged.start_position is not None or sequence.decoder_hidden_tail is not None:
-        return False
-    if not hasattr(sequence, '_jetspec_seq_id'):
-        return False  # synthetic warm-up states stay unseeded (the decoder never runs on them)
-    head = drafter.adapter.head
-    exact = sequence.exact_hidden(device=drafter.device, dtype=drafter.dtype)
-    length = int(exact.shape[1])
-    boundary = length - 4
-    if boundary < 1:
-        raise RuntimeError('E04_DECODER_TAIL_SEED needs at least 5 exact prefix positions')
-    committed = sequence.committed_ids.to(drafter.device)
-    from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
-    query_rows = 4 if draft_width() < 15 else 15
-    ids = torch.cat((committed[:, boundary:length], committed[:, -1:].expand(1, query_rows - 4)), dim=1)
-    prefix = exact[:, :boundary]
-    query = torch.arange(query_rows, device=drafter.device)
-    allowed = torch.cat((torch.ones(query_rows, boundary, dtype=torch.bool, device=drafter.device),
-                         torch.eye(query_rows, dtype=torch.bool, device=drafter.device)), dim=1)[None, None]
-    mask = prefix.new_zeros(allowed.shape).masked_fill_(~allowed, torch.finfo(drafter.dtype).min)
-    from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
-    cached = isinstance(head, ServingCtxKVC1Head)
-    predicted = head(token_embeddings=drafter.embed_tokens(ids), h_prev=prefix[:, -1:],
-        prefix_h=prefix, prefix_position_ids=torch.arange(boundary, device=drafter.device)[None],
-        query_position_ids=(boundary + query)[None], attention_mask=mask,
-        shared_prefix_projection=True, **({'prefix_key': sequence} if cached else {}))
-    if cached:
-        head._c1_prefix_key = None
-    sequence.decoder_hidden_tail = predicted[0, :4, -int(hidden_size):].detach().clone()
-    sequence._e04_tail_seeded = True
-    return True
-
-
 class AnchorDecoder(MethodAnchorDecoder):
     """Two trained target layers over one private adapter window per round."""
     def __init__(self, *, layers, prefix_layers, norm, lm_head, rotary, root, hidden_size):
@@ -1000,7 +953,7 @@ class AnchorDecoder(MethodAnchorDecoder):
     def warm_graphs(self):
         """Capture every projection shape before any sequence is admitted.
 
-        Prefix appends use 1..16 positions; the decoder window always uses 19.
+        Prefix appends use 1..16 positions; the decoder window uses draft_width() + 1 rows.
         Attention and cache updates stay outside these shape-only graphs.
         """
         parameter = next(self.layers.parameters())
@@ -1028,7 +981,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     def _warm_lean_graphs(self, parameter):
         """``warm_graphs`` for JETSPEC_DECODER_GRAPH_LEAN: every lean part shape (prefix
-        appends of 1..16 positions, the 19-slot window) captured before admission."""
+        appends of 1..16 positions, the current-slot window) captured before admission."""
         def layer_parts(layers, length, prefix_kv_last):
             hidden = parameter.new_zeros(1, length, self.hidden_size)
             rope = self.rotary(hidden, torch.arange(length, device=parameter.device)[None])
@@ -1051,9 +1004,9 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     @staticmethod
     def _window_rows():
-        """The decoder window, 4 tail rows + [c, d1..d_width]: 19, or 20 with 15 drafts."""
+        """The current decoder slots [c, d1..d_width], following every true tap."""
         from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
-        return 4 + draft_width() + 1
+        return draft_width() + 1
 
     def _chain_lm_head(self, decoded):
         if self._lm_head_kn is not None:
@@ -1112,7 +1065,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                 pending = decoder_lean_finish(layer, fused, hidden[:, lanes:], window_attended)
         decoded, _ = fused.fast_add_rms_norm(*pending, self.norm.weight,
                                              self.norm.variance_epsilon)
-        decoded = decoded.reshape(-1, state['hidden'].shape[1], self.hidden_size)[:, 4:][0]
+        decoded = decoded.reshape(-1, state['hidden'].shape[1], self.hidden_size)[0]
         return self._chain_lm_head(decoded)
 
     def _window_buckets(self):
@@ -1145,7 +1098,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                      sin=like.new_zeros(1, like.shape[1], head_dim),
                      lanes=lanes, slots=lanes.clone(), masks={}, graphs={}, steps={})
         if os.environ.get('JETSPEC_DECODER_GLUE_FUSED', '0') == '1':
-            prefix_lanes = like.shape[1] - 4
+            prefix_lanes = like.shape[1]
             state.update(prefix_positions=torch.empty((1, prefix_lanes), device=like.device,
                                                       dtype=torch.long),
                          prefix_slots=torch.empty(prefix_lanes, device=like.device,
@@ -1162,8 +1115,8 @@ class AnchorDecoder(MethodAnchorDecoder):
     def _window_graph(self, like, bucket):
         """The predict window's graph for ``bucket`` keys (captured on first use).
 
-        Its static inputs: the 19-row window, its rotary rows, the window slots
-        ``context .. context+19`` and the bucket's mask (the eager window mask, then
+        Its static inputs: the current-slot window, its rotary rows, the window slots
+        ``context .. context+rows`` and the bucket's mask (the eager window mask, then
         the dtype minimum); the trained layers attend over decoder-owned K/V
         (the sequence's prefix rows copied in, finite everywhere past them)."""
         state = self._window_state(like, bucket)
@@ -1173,7 +1126,7 @@ class AnchorDecoder(MethodAnchorDecoder):
             rows = state['hidden'].shape[1]
             mask = state['masks'][bucket] = like.new_zeros(1, 1, rows, bucket)
             if 'prefix_masks' in state:
-                state['prefix_masks'][bucket] = like.new_empty(1, 1, rows - 4, bucket)
+                state['prefix_masks'][bucket] = like.new_empty(1, 1, rows, bucket)
             fused = fused_kernels()
 
             def step():
@@ -1191,7 +1144,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                     pending = decoder_lean_finish(layer, fused, hidden, attended)
                 decoded, _ = fused.fast_add_rms_norm(*pending, self.norm.weight,
                                                      self.norm.variance_epsilon)
-                decoded = decoded.reshape(-1, rows, self.hidden_size)[:, 4:][0]
+                decoded = decoded.reshape(-1, rows, self.hidden_size)[0]
                 return decoded, self._chain_lm_head(decoded)
 
             current = torch.cuda.current_stream(like.device)
@@ -1214,7 +1167,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     def _window_graph_predict(self, hidden, rope, mask, prefix, context_length):
         """``decoder_layer_lean`` over both trained layers, the final add+norm and the
-        lm_head, replayed at the bucket of ``context_length + 19`` keys."""
+        lm_head, replayed at the bucket of ``context_length + window rows`` keys."""
         end = context_length + hidden.shape[1]
         bucket = next(b for b in self._window_buckets() if b >= end)
         state = self._window_graph(hidden, bucket)
@@ -1289,7 +1242,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                             and all(table.is_contiguous() for table in self._rope_table))
             if fused_glue:
                 from jetspec.engines.jetspec_plus_plus.models.heads.decoder_glue import window_glue
-                window_glue(length, front.decoder_stale, front.staged_hidden,
+                window_glue(length, front.staged_hidden,
                             *self._rope_table, state['hidden'],
                             state['masks'][front.decoder_bucket], state['slots'],
                             state['cos'], state['sin'])
@@ -1339,7 +1292,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                         and all(table.is_contiguous() for table in self._rope_table))
         if fused_glue:
             from jetspec.engines.jetspec_plus_plus.models.heads.decoder_glue import window_glue
-            window_glue(length, front.decoder_stale, front.staged_hidden,
+            window_glue(length, front.staged_hidden,
                         *self._rope_table, state['hidden'],
                         state['masks'][front.decoder_bucket], state['slots'],
                         state['cos'], state['sin'])
@@ -1417,7 +1370,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
 
         * prefix: the decoder K/V of the TRUE tap-33 states of committed positions 0..length-1:
-          the key's cached prefix (positions below ``Offset.DEC_LEN`` = length - 4) and the 4
+          the key's cached prefix (positions below length - 4) and the 4
           positions length-4..length-1 run through the layers from ``true_taps`` [4, H];
         * tail: ``tail`` [lanes, H] (the staged block's tap-33 rows) at positions length..,
           causal, shared by every row;
@@ -1740,12 +1693,12 @@ class AnchorDecoder(MethodAnchorDecoder):
         return result
 
 
-    def _cached_window_mask(self, context_length, hidden, size=19):
+    def _cached_window_mask(self, context_length, hidden, size=15):
         mask = self._window_mask_cache
         if (mask is None or mask.shape[-1] < context_length + size or mask.shape[-2] != size or
                 mask.device != hidden.device or mask.dtype != hidden.dtype):
             capacity = ((context_length + 255) // 256) * 256
-            mask = window_mask(torch.tensor([capacity + 4]), capacity, hidden.dtype,
+            mask = window_mask(torch.tensor([capacity]), capacity, hidden.dtype,
                                size).to(hidden.device)
             self._window_mask_cache = mask
         return mask[..., mask.shape[-1] - context_length - size:].contiguous()
@@ -1762,14 +1715,13 @@ class AnchorDecoder(MethodAnchorDecoder):
     @torch.inference_mode()
     def predict(self, sequence, pending_block, *, dataset, coverage, grouped, cap,
                 after_miss=False):
-        tail = sequence.decoder_hidden_tail
         staged = sequence.staged.predicted_hidden
-        if tail is None or int(tail.shape[0]) != 4 or staged is None:
+        if staged is None:
             return None
         from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
         # 15 current slots (c, d1..d14), 16 with 15 drafts (k = 0..15)
         count = draft_width() + 1
-        size = 4 + count
+        size = count
         if int(staged.shape[1]) < count:
             raise RuntimeError(f'decoder requires the staged {count}-position adapter block')
         parameter = next(self.layers.parameters())
@@ -1790,10 +1742,10 @@ class AnchorDecoder(MethodAnchorDecoder):
                 torch.cuda.Event(enable_timing=True) for _ in range(13))
             total_begin.record()
         current = staged[0, :count, -self.hidden_size:].to(parameter)
-        hidden = decoder_window(tail.to(parameter), current).to(
+        hidden = decoder_window(current).to(
             device=parameter.device, dtype=parameter.dtype)
         anchor = int(sequence.taps.shape[0])
-        context_length = anchor - 4
+        context_length = anchor
         if context_length < 0:
             return None
         record_root = os.environ.get('W278_RECORD_INPUTS_DIR')
@@ -1803,7 +1755,7 @@ class AnchorDecoder(MethodAnchorDecoder):
             destination.mkdir(parents=True, exist_ok=True)
             torch.save(dict(
                 tap33=sequence.taps[:, 4, :].detach().cpu(),
-                current=current.detach().cpu(), tail=tail.detach().cpu(),
+                current=current.detach().cpu(),
                 draft_ids=pending_block.draft_ids.detach().cpu(),
                 correction_guess=int(pending_block.correction_guess),
                 k_probabilities=(None if pending_block.k_probabilities is None else
@@ -1832,10 +1784,10 @@ class AnchorDecoder(MethodAnchorDecoder):
         if os.environ.get('JETSPEC_DECODER_TABLES') == '1' and rows_fused(hidden):
             # the fused layers read only the rotary rows, never the position ids
             position_ids = None
-            rope = self._rope_range(hidden, anchor - 4, anchor + count)
+            rope = self._rope_range(hidden, anchor, anchor + count)
         else:
             position_ids = torch.arange(
-                anchor - 4, anchor + count, device=hidden.device, dtype=torch.long)[None]
+                anchor, anchor + count, device=hidden.device, dtype=torch.long)[None]
             rope = self._rope(hidden, position_ids)
         mask = self._cached_window_mask(context_length, hidden, size)
         if profile and parameter.device.type == 'cuda':
@@ -1889,7 +1841,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         else:
             decoded = self.norm(hidden)
         if not (window_graph or looped is not None):
-            decoded = decoded.reshape(-1, size, self.hidden_size)[:, 4:][0]
+            decoded = decoded.reshape(-1, size, self.hidden_size)[0]
             logits = self.lm_head(decoded)
         if profile and parameter.device.type == 'cuda':
             torch.cuda.synchronize(parameter.device)

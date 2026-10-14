@@ -222,11 +222,6 @@ class ChainGraph:
             from jetspec.engines.jetspec_plus_plus.kernels.chain.intake_fused import fused_intake
             buffers.setdefault("intake_selected", torch.empty(
                 (1,), dtype=torch.int64, device=buffers["packet"].device))
-            if "front" in buffers:
-                buffers.setdefault("intake_stale_scratch", torch.empty_like(
-                    buffers["front"].decoder_stale.unsqueeze(0)))
-                buffers.setdefault("intake_stale_slot0",
-                                   buffers["intake_stale_scratch"][0])
         if (os.environ.get("JETSPEC_CHAIN_SEGA_GLUE", "0") != "0"
                 and buffers["tokens"].committed_ids.numel() > buffers["row_ring"].rows.shape[-1]):
             buffers.setdefault("append_lanes", torch.arange(

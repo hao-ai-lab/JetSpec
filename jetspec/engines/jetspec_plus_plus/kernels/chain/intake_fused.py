@@ -63,7 +63,7 @@ def _metadata(Packet, Rp, Expected, SafeLength, ControlRound, ControlL,
     tl.store(Rp + 2, tap_count)
     tl.store(Rp + 0, length)
     tl.store(Rp + 1, length - tap_count)
-    tl.store(Rp + 3, length - 4)
+    tl.store(Rp + 3, length)
     if HAS_RNG:
         rng_row = tl.minimum(tl.maximum(length + 1, 0), CAPACITY)
         idx = tl.arange(0, LANES)
@@ -125,7 +125,7 @@ def _metadata(Packet, Rp, Expected, SafeLength, ControlRound, ControlL,
 
 
 @triton.jit
-def _tap_front(Packet, Taps, Backing, FrontTaps, Prefix, Stale, StaleOut, Staged,
+def _tap_front(Packet, Taps, Backing, FrontTaps, Prefix, Staged,
                AdmissionHidden, AdmissionIndex,
                CAPACITY: tl.constexpr, HIDDEN: tl.constexpr, LANES: tl.constexpr,
                HAS_FRONT: tl.constexpr, HAS_ADMISSION: tl.constexpr,
@@ -154,30 +154,7 @@ def _tap_front(Packet, Taps, Backing, FrontTaps, Prefix, Stale, StaleOut, Staged
                      (round_id == 0) & (col[None, :] < 5 * HIDDEN))
         if tl.program_id(0) * BLOCK < HIDDEN:
             h = col
-            accepted = tl.minimum(tl.maximum(count, 0), LANES)
-            old_pos = accepted + lane
-            stale_old = tl.load(Stale + old_pos[:, None] * HIDDEN + h[None, :],
-                                (lane[:, None] < 4) & (old_pos[:, None] < 4) &
-                                (h[None, :] < HIDDEN), other=0)
-            predicted_lane = old_pos - 4
-            staged_prediction = tl.load(
-                Staged + predicted_lane[:, None] * (5 * HIDDEN) +
-                4 * HIDDEN + h[None, :],
-                (lane[:, None] < 4) & (old_pos[:, None] >= 4) &
-                (h[None, :] < HIDDEN), other=0)
-            if HAS_ADMISSION:
-                admission_prediction = tl.load(
-                    AdmissionHidden +
-                    (tl.load(AdmissionIndex) * LANES + predicted_lane[:, None]) *
-                    (5 * HIDDEN) + 4 * HIDDEN + h[None, :],
-                    (lane[:, None] < 4) & (old_pos[:, None] >= 4) &
-                    (h[None, :] < HIDDEN), other=0)
-                staged_prediction = tl.where(round_id == 0, admission_prediction,
-                                             staged_prediction)
-            stale_new = tl.where(old_pos[:, None] < 4, stale_old, staged_prediction)
-            tl.store(StaleOut + lane[:, None] * HIDDEN + h[None, :], stale_new,
-                     (lane[:, None] < 4) & (h[None, :] < HIDDEN))
-            prefix_pos = length - 4 - count + lane
+            prefix_pos = length - count + lane
             clipped = tl.minimum(tl.maximum(prefix_pos, 0), CAPACITY - 1)
             old_prefix = tl.load(
                 Backing + clipped[:, None] * (5 * HIDDEN) + 4 * HIDDEN + h[None, :],
@@ -235,11 +212,7 @@ def fused_intake(buffers: dict, *, max_length: int | None) -> None:
             packet, buffers["taps"], store.backing,
             bound.taps if front else fallback,
             bound.decoder_prefix_taps if front else fallback,
-            bound.decoder_stale if front else fallback,
-            buffers["intake_stale_scratch"] if front else fallback,
             bound.staged_hidden if front else fallback,
             buffers["admission_hidden"] if admission else fallback,
             buffers["intake_selected"], store.storage.shape[0],
             hidden, lanes, front, admission, 256, num_warps=4)
-        if front:
-            bound.decoder_stale.copy_(buffers["intake_stale_slot0"])

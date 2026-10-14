@@ -167,7 +167,6 @@ class JetSpecSequence:
     )
     prepared_context: torch.Tensor | None = None
     pending_block: Block | None = None
-    decoder_hidden_tail: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         if self.taps.ndim != 3 or int(self.taps.shape[1]) != 5:
@@ -4759,7 +4758,6 @@ def bind_front_inputs(drafter, decoder, capacity):
             staged_hidden=staged_hidden, prefix_positions=positions,
             taps=taps,
             decoder_prefix_taps=torch.empty(lanes, hidden, device=device, dtype=dtype),
-            decoder_stale=torch.empty(4, hidden, device=device, dtype=dtype),
             rejected_ids=torch.empty(lanes, device=device, dtype=torch.long),
             selection_thresholds=torch.empty(2, device=device, dtype=torch.float64),
             decoder_prefix_kv={}, c1_bucket=c1_bucket,
@@ -4768,7 +4766,7 @@ def bind_front_inputs(drafter, decoder, capacity):
             hybrid_recurrent=state["recurrent"], hybrid_conv=state["conv"],
             hybrid_prefix_key=state["key"], hybrid_prefix_value=state["value"])
 
-    rows = 4 + lanes
+    rows = lanes
     decoder_bucket = next((b for b in decoder._window_buckets() if b >= capacity + rows), None)
     if decoder_bucket is None:
         raise ValueError("front chain window exceeds the decoder cache capacity")
@@ -4782,7 +4780,6 @@ def bind_front_inputs(drafter, decoder, capacity):
         prefix_positions=positions,
         taps=taps,
         decoder_prefix_taps=torch.empty(lanes, hidden, device=device, dtype=dtype),
-        decoder_stale=torch.empty(4, hidden, device=device, dtype=dtype),
         rejected_ids=torch.empty(lanes, device=device, dtype=torch.long),
         selection_thresholds=torch.empty(2, device=device, dtype=torch.float64),
         decoder_prefix_kv=state["kv"],

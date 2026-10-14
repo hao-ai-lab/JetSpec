@@ -62,7 +62,7 @@ if triton is not None:
             tl.store(REJECTED + lane, rejected, lane < LANES)
 
     @triton.jit
-    def _window(LENGTH, STALE, STAGED, COS_TABLE, SIN_TABLE,
+    def _window(LENGTH, STAGED, COS_TABLE, SIN_TABLE,
                 HIDDEN, MASK, SLOTS, COS, SIN,
                 ROWS: tl.constexpr, H: tl.constexpr, SOURCE_H: tl.constexpr,
                 BUCKET: tl.constexpr, DIM: tl.constexpr,
@@ -82,10 +82,9 @@ if triton is not None:
             flat = (program - MASK_BLOCKS) * BLOCK + x
             row = flat // H
             col = flat % H
-            stale = tl.load(STALE + flat, (flat < ROWS * H) & (row < 4), other=0)
-            current = tl.load(STAGED + (row - 4) * SOURCE_H + SOURCE_H - H + col,
-                              (flat < ROWS * H) & (row >= 4), other=0)
-            tl.store(HIDDEN + flat, tl.where(row < 4, stale, current), flat < ROWS * H)
+            current = tl.load(STAGED + row * SOURCE_H + SOURCE_H - H + col,
+                              flat < ROWS * H, other=0)
+            tl.store(HIDDEN + flat, current, flat < ROWS * H)
         elif program < MASK_BLOCKS + HIDDEN_BLOCKS + ROPE_BLOCKS:
             flat = (program - MASK_BLOCKS - HIDDEN_BLOCKS) * BLOCK + x
             row = flat // DIM
@@ -140,20 +139,20 @@ def prefix_glue(rp, pending, cos_table, sin_table, mask, positions,
                             wire, zero_miss, mb, rb, block)
 
 
-def window_glue(length, stale, staged, cos_table, sin_table,
+def window_glue(length, staged, cos_table, sin_table,
                 hidden, mask, slots, cos, sin):
     """Fill preallocated window input, mask, positions and rotary rows."""
     rows, hidden_size = hidden.shape[1:]
     bucket = mask.shape[-1]
     dim = cos.shape[-1]
-    if (stale.shape != (4, hidden_size) or staged.shape[1] != rows - 4
+    if (staged.shape[1] != rows
             or staged.shape[-1] < hidden_size or mask.shape != (1, 1, rows, bucket)
             or slots.shape != (rows,) or cos.shape != sin.shape
             or cos.shape != (1, rows, dim) or cos_table.shape != sin_table.shape
             or cos_table.shape[1] != dim):
         raise ValueError('decoder window glue shape changed')
     if not length.is_cuda:
-        hidden[0].copy_(torch.cat((stale, staged[0, :, -hidden_size:]), dim=0))
+        hidden.copy_(staged[:, :, -hidden_size:])
         lane = torch.arange(rows, device=length.device)
         slots.copy_(length + lane)
         key = torch.arange(bucket, device=length.device)[None]
@@ -168,7 +167,7 @@ def window_glue(length, stale, staged, cos_table, sin_table,
     mb = triton.cdiv(rows * bucket, block)
     hb = triton.cdiv(rows * hidden_size, block)
     rb = triton.cdiv(rows * dim, block)
-    _window[(mb + hb + rb + 1,)](length, stale, staged, cos_table, sin_table,
+    _window[(mb + hb + rb + 1,)](length, staged, cos_table, sin_table,
                                 hidden, mask, slots, cos, sin, rows, hidden_size,
                                 staged.shape[-1], bucket, dim, cos_table.shape[0],
                                 float(torch.finfo(mask.dtype).min), mb, hb, rb, block)

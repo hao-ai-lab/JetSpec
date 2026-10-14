@@ -925,14 +925,14 @@ class DraftRunner(ModelRunner):
         temperature = float(rule["temperature"]["value"])
         head = self.jetspec_drafter.adapter.head
         decoder = self.jetspec_rows.decoder
-        max_decoder = max(decoder._window_buckets()) - (4 + lanes)
+        max_decoder = max(decoder._window_buckets()) - lanes
         c1_capacity = getattr(head, "_c1_capacity", int(os.environ["W259_C1_CACHE_CAPACITY"]))
         from jetspec.engines.jetspec_plus_plus.draft.cache_capacity import chain_key_limit
         key_limit = chain_key_limit(self.config.max_model_len, lanes)
         if c1_capacity < key_limit or max_decoder < key_limit:
             raise ValueError(f"chain startup requires C1 capacity >= {key_limit} and "
-                             f"decoder bucket >= {key_limit + 4 + lanes}; "
-                             f"got C1={c1_capacity}, decoder={max_decoder + 4 + lanes}")
+                             f"decoder bucket >= {key_limit + lanes}; "
+                             f"got C1={c1_capacity}, decoder={max_decoder + lanes}")
         reachable = os.environ.get("JETSPEC_CHAIN_WARM_REACHABLE", "0") == "1"
         if reachable:
             read = json.loads(os.environ["JETSPEC_CHAIN_WARM_READ"])
@@ -960,7 +960,7 @@ class DraftRunner(ModelRunner):
 
         def chain_key(length, row_cap):
             window_bucket = (next(bucket for bucket in decoder._window_buckets()
-                                  if bucket >= length + 4 + lanes)
+                                  if bucket >= length + lanes)
                              if decoder_key_bucket else 0)
             return ChainKey(length, row_cap, 3, "after_j0_j1", lanes,
                             decoder_key_bucket=window_bucket)
@@ -1179,7 +1179,7 @@ class DraftRunner(ModelRunner):
                                               thresholds, dataset)
                 else:
                     copy_front_state(self._chain_last_front, entry.buffers["front"],
-                                     prefix_length=max(0, tracker.L_known - 4))
+                                     prefix_length=max(0, tracker.L_known))
             self._chain_last_front = entry.buffers["front"]
             self._chain_last_key = key
             choice = self._chain_preselected_choice
@@ -1287,7 +1287,6 @@ class DraftRunner(ModelRunner):
                     prompt_index=state.prompt_index,
                     initial_ids=initial_ids, initial_taps=initial_taps,
                     staged_hidden=state.staged.predicted_hidden,
-                    decoder_stale=state.decoder_hidden_tail,
                     prefix_length=prefix.length, prefix_kv=prefix.kv,
                     admission_hidden=admission_hidden, admission_tau=admission_tau,
                     fake_packet=fake_packet,

@@ -390,18 +390,9 @@ class PushedOutcomeRing:
 
 def fill_front_from_outcome(front: FrontInputs, packet: torch.Tensor,
                             taps: torch.Tensor, tap_store) -> None:
-    """Roll accepted old predictions into the decoder tail, then stage new taps."""
+    """Stage the newly verified true taps for both prefixes."""
     if taps.shape != front.taps.shape or taps.device != front.taps.device:
         raise ValueError("outcome taps do not match bound front inputs")
-    stale = front.decoder_stale
-    hidden = stale.shape[-1]
-    # The target queries the old correction as well as the accepted drafts.
-    # All tap_count predicted rows advance the decoder's four-row window.
-    accepted = packet[OutcomeOffset.TAP_COUNT].clamp(0, front.lanes)
-    old_predictions = front.staged_hidden[0, :, -hidden:]
-    combined = torch.cat((stale, old_predictions), dim=0)
-    positions = accepted + torch.arange(stale.shape[0], device=stale.device)
-    stale.copy_(combined.index_select(0, positions))
     front.taps.copy_(taps)
     front.decoder_prefix_taps.copy_(tap_store.decoder_prefix(packet))
 

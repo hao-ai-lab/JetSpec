@@ -6,15 +6,14 @@ from jetspec.engines.jetspec_plus_plus.draft.method.ops import reference_op
 
 
 @reference_op("window_mask")
-def window_mask(anchors, context_length, dtype, size=19):
-    """Byte-for-behaviour translation of the vendored private-window mask
-    (``size`` = 4 stale + 15 current slots; 20 with 16 current slots)."""
+def window_mask(anchors, context_length, dtype, size=15):
+    """Causal private blocks following every verified true prefix row."""
     anchors = torch.as_tensor(anchors).flatten()
     device = anchors.device
     query = torch.arange(len(anchors) * size, device=device)
     key = torch.arange(int(context_length) + len(query), device=device)
     block = query // size
-    prefix = key[None, :] < (anchors[block, None] - 4)
+    prefix = key[None, :] < anchors[block, None]
     local = key[None, :] - int(context_length)
     private = ((local >= 0) & (local // size == block[:, None]) &
                (local % size <= query[:, None] % size))
@@ -42,10 +41,9 @@ def chain_decoder_window_mask(length, bucket, rows, dtype, *, out=None):
 def stage_chain_window_state(state, front, length, *, glue_level, fused_mask=False):
     """Stage exact decoder-window inputs, using static destinations for glue level 1."""
     rows = state['hidden'].shape[1]
-    hidden = (front.decoder_stale,
-              front.staged_hidden[0, :, -state['hidden'].shape[-1]:])
+    hidden = front.staged_hidden[:, :, -state['hidden'].shape[-1]:]
     if glue_level:
-        torch.cat(hidden, dim=0, out=state['hidden'][0])
+        state['hidden'].copy_(hidden)
         torch.add(state['lanes'], length, out=state['slots'])
         positions = state['slots'][None]
         if not fused_mask:
@@ -53,7 +51,7 @@ def stage_chain_window_state(state, front, length, *, glue_level, fused_mask=Fal
                                       state['hidden'].dtype,
                                       out=state['masks'][front.decoder_bucket])
     else:
-        state['hidden'].copy_(torch.cat(hidden, dim=0)[None])
+        state['hidden'].copy_(hidden)
         positions = (length + torch.arange(rows, device=length.device))[None]
         state['slots'].copy_(positions[0])
         state['masks'][front.decoder_bucket].copy_(chain_decoder_window_mask(
@@ -79,16 +77,12 @@ def chain_decoder_prefix_mask(length, count, bucket, lanes, dtype):
 
 
 @reference_op("decoder_window")
-def decoder_window(stale, current):
-    """Assemble the vendored 4 stale plus 15 current private positions."""
-    stale = stale if isinstance(stale, torch.Tensor) else torch.as_tensor(stale)
+def decoder_window(current):
+    """The private current block [c, d1..d_width], starting at the anchor."""
     current = current if isinstance(current, torch.Tensor) else torch.as_tensor(current)
-    current = current.to(device=stale.device, dtype=stale.dtype)
-    if stale.ndim != 2 or current.ndim != 2 or stale.shape[0] != 4 or current.shape[0] not in (4, 8, 15, 16, 32):
-        raise ValueError('decoder window requires four stale and a supported current block')
-    if stale.shape[1] != current.shape[1]:
-        raise ValueError('decoder window hidden dimensions must match')
-    return torch.cat((stale, current), dim=0)[None]
+    if current.ndim != 2 or current.shape[0] not in (4, 8, 15, 16, 32):
+        raise ValueError('decoder window requires a supported current block')
+    return current[None]
 
 
 @dataclass(frozen=True)
@@ -243,48 +237,3 @@ class DecoderPrediction:
     rejected: torch.Tensor | None = None
     compact_q: torch.Tensor | None = None
     compact_argmax_eq: torch.Tensor | None = None
-
-
-def remember_committed_tail(sequence, *, hidden_size):
-    """Preserve accepted adapter predictions before the next stage overwrites them."""
-    staged = sequence.staged
-    if staged.start_position is None or staged.predicted_hidden is None:
-        return 0
-    accepted = int(sequence.committed_ids.shape[1]) - 1 - int(staged.start_position)
-    if accepted < 1 or accepted > int(staged.predicted_hidden.shape[1]):
-        raise RuntimeError('decoder accepted tail is outside the staged prediction')
-    current = staged.predicted_hidden[0, :accepted, -int(hidden_size):].detach()
-    previous = sequence.decoder_hidden_tail
-    combined = current if previous is None else torch.cat((previous.to(current), current), dim=0)
-    sequence.decoder_hidden_tail = combined[-4:].clone()
-    return accepted
-
-
-def remember_committed_tails_batch(sequences, *, hidden_size):
-    """Preserve C>1 accepted tails with one concatenation across sequences."""
-    parts, selected, lengths = [], [], []
-    total = 0
-    for sequence in sequences:
-        staged = sequence.staged
-        if staged.start_position is None or staged.predicted_hidden is None:
-            continue
-        accepted = int(sequence.committed_ids.shape[1]) - 1 - int(staged.start_position)
-        if accepted < 1 or accepted > int(staged.predicted_hidden.shape[1]):
-            raise RuntimeError('decoder accepted tail is outside the staged prediction')
-        current = staged.predicted_hidden[0, :accepted, -int(hidden_size):].detach()
-        previous = sequence.decoder_hidden_tail
-        previous_count = 0 if previous is None else min(previous.shape[0], max(0, 4 - accepted))
-        if previous_count:
-            parts.append(previous[-previous_count:].to(current))
-        current = current[-4:]
-        parts.append(current)
-        selected.append(sequence)
-        lengths.append(previous_count + current.shape[0])
-        total += accepted
-    if parts:
-        joined = torch.cat(parts, dim=0)
-        offset = 0
-        for sequence, length in zip(selected, lengths):
-            sequence.decoder_hidden_tail = joined[offset:offset + length]
-            offset += length
-    return total

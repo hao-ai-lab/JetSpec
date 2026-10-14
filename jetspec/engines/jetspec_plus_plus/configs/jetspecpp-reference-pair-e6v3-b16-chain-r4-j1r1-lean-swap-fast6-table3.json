@@ -24,7 +24,6 @@
     "JETSPEC_PAIR_OUTCOME_PUSH": "1",
     "SSD_EAGER_VERIFY_CAUSAL_N1": "1",
     "JETSPEC_DRAFT_DEADLINE": "1",
-    "E04_DECODER_TAIL_SEED": "admission",
     "E04_KPRED_RENORM": "1",
     "E04_KSCORE": "blend_dec",
     "E04_RECORD_PTOP1": "1",

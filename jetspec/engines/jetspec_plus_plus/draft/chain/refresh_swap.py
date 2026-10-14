@@ -288,7 +288,7 @@ class RefreshSwap:
         fill = section('after_swap_fill')
         self.fill_mode = fill['mode'] if fill['enabled'] else 'keep'
         self.fill_seed = fill['seed']
-        device = front.decoder_stale.device
+        device = front.decoder_prefix_taps.device
         self.eval_lanes = (torch.arange(lanes, device=device)[None, :]
                            if os.environ.get('JETSPEC_EVAL_MODE', 'off') != 'off' else None)
         self.pin_agreed = False
@@ -323,13 +323,13 @@ class RefreshSwap:
         self.true_lane = torch.arange(4, device=device, dtype=torch.long) - 4
         self.window = decoder.refresh_window_state(
             front.decoder_prefix_kv, front.decoder_bucket, rows=rows, lanes=lanes,
-            like=front.decoder_stale)
+            like=front.decoder_prefix_taps)
         self.check = self.lean and os.environ.get('JETSPEC_REFRESH_SWAP_LEAN_CHECK', '0') == '1'
         if self.check:
             if self.window.get('glue'):
                 self.reference_window = decoder.refresh_window_state(
                     front.decoder_prefix_kv, front.decoder_bucket, rows=rows, lanes=lanes,
-                    like=front.decoder_stale, glue=False)
+                    like=front.decoder_prefix_taps, glue=False)
             self.check_rounds = torch.zeros(1, device=device, dtype=torch.long)
             self.check_errors = torch.zeros(5, device=device, dtype=torch.long)
             self.check_records = torch.full((512, rows, 4), -1, device=device, dtype=torch.long)

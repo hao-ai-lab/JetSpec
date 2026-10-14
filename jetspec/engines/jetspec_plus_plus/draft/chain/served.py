@@ -18,17 +18,13 @@ def seed_front_from_admission(front, sequence, decoder, thresholds, dataset):
     from jetspec.engines.jetspec_plus_plus.models.heads.fast import dataset_entry
 
     staged = sequence.staged.predicted_hidden
-    stale = sequence.decoder_hidden_tail
     if staged is None or staged.shape != front.staged_hidden.shape:
         raise ValueError("admission lacks a full static C1 prediction block")
-    if stale is None or stale.shape != front.decoder_stale.shape:
-        raise ValueError("admission lacks four decoder stale rows")
     prefix = decoder._prefixes.get(id(sequence))
-    expected = sequence.taps.shape[0] - stale.shape[0]
+    expected = sequence.taps.shape[0]
     if prefix is None or prefix.length != expected:
         raise ValueError("admission decoder prefix has the wrong committed length")
     front.staged_hidden.copy_(staged)
-    front.decoder_stale.copy_(stale)
     for layer, (key, value) in front.decoder_prefix_kv.items():
         if layer not in prefix.kv:
             raise ValueError("admission decoder prefix is missing a layer")
@@ -190,7 +186,6 @@ def reseed_served_graph(graph, *, initial_ids, initial_taps, candidate, blocks,
 
 def stage_admission_rows(rows, state, blocks, candidate, *, row_cap):
     """Stage every row that prefill published before the first outcome exists."""
-    from jetspec.engines.jetspec_plus_plus.models.heads.decoder import e04_seed_admission_tail
 
     if state.pending_block is not None or state.staged.predicted_hidden is not None:
         raise ValueError("chain admission expected an unstaged prefill sequence")
@@ -205,26 +200,7 @@ def stage_admission_rows(rows, state, blocks, candidate, *, row_cap):
             return _stage_admission_rows_fast(rows, state, live, row_cap=row_cap,
                                               timing=timing)
     start = time.perf_counter() if timing else None
-    seeded = e04_seed_admission_tail(rows.drafter, state,
-                                     hidden_size=rows.decoder.hidden_size)
-    if timing:
-        if state.taps.is_cuda:
-            torch.cuda.synchronize(state.taps.device)
-        seed_ms = (time.perf_counter() - start) * 1000
-    if not seeded:
-        reasons = []
-        if state.staged.start_position is not None:
-            reasons.append("staged.start_position is already set")
-        if state.decoder_hidden_tail is not None:
-            reasons.append("decoder_hidden_tail already exists")
-        if not hasattr(state, "_jetspec_seq_id"):
-            reasons.append("_jetspec_seq_id is missing (synthetic warm-up state)")
-        raise RuntimeError("chain admission tail seed refused: " +
-                           (", ".join(reasons) if reasons else "unknown precondition"))
-    if state.decoder_hidden_tail is None:
-        raise RuntimeError("chain admission tail seed returned success without four rows")
-    start = time.perf_counter() if timing else None
-    rows.decoder._prefix(state, state.taps.shape[0] - 4)
+    rows.decoder._prefix(state, state.taps.shape[0])
     if timing:
         if state.taps.is_cuda:
             torch.cuda.synchronize(state.taps.device)
@@ -247,7 +223,7 @@ def stage_admission_rows(rows, state, blocks, candidate, *, row_cap):
         if timing:
             if bank.is_cuda:
                 torch.cuda.synchronize(bank.device)
-            print(f"A29_ADMIT2 seed_tail_ms={seed_ms:.3f} decoder_prefix_ms={prefix_ms:.3f} "
+            print(f"A29_ADMIT2 decoder_prefix_ms={prefix_ms:.3f} "
                   f"rows_stage_ms={(time.perf_counter() - start) * 1000:.3f}", flush=True)
         return bank, tau
     for index, block in live:
@@ -264,7 +240,7 @@ def stage_admission_rows(rows, state, blocks, candidate, *, row_cap):
     if timing:
         if bank.is_cuda:
             torch.cuda.synchronize(bank.device)
-        print(f"A29_ADMIT2 seed_tail_ms={seed_ms:.3f} decoder_prefix_ms={prefix_ms:.3f} "
+        print(f"A29_ADMIT2 decoder_prefix_ms={prefix_ms:.3f} "
               f"rows_stage_ms={(time.perf_counter() - start) * 1000:.3f}", flush=True)
     return bank, tau
 
@@ -274,12 +250,11 @@ def stage_admission_rows(rows, state, blocks, candidate, *, row_cap):
 def _stage_admission_rows_fast(rows, state, live, *, row_cap, timing):
     """JETSPEC_CHAIN_ADMIT_GRAPH: the batched admission (two or more live rows) without a host wait.
 
-    The same three device computations as the batched path, each on its own state:
-    the adapter tail seed, the C1 row bank, then the decoder prefix, whose host work
+    The same device computations as the batched path, each on its own state:
+    the C1 row bank and the decoder prefix, whose host work
     runs while the device replays the bank. The row keys and pass labels are read
     before the first launch; the bank index and labels upload through pinned memory.
     """
-    from jetspec.engines.jetspec_plus_plus.models.heads.decoder import e04_seed_admission_tail
     from jetspec.engines.jetspec_plus_plus.draft.rows import device_tensor
 
     tau_labels = chain_labels()
@@ -298,23 +273,18 @@ def _stage_admission_rows_fast(rows, state, live, *, row_cap, timing):
             stamps.append(time.perf_counter())
 
     stamp()
-    if not e04_seed_admission_tail(rows.drafter, state, hidden_size=rows.decoder.hidden_size):
-        _refuse_unseeded_tail(state)
-    if state.decoder_hidden_tail is None:
-        raise RuntimeError("chain admission tail seed returned success without four rows")
-    stamp()
     predicted = rows.stage_admission_batch(state, [block for _, block in live]).detach()
     stamp()
-    rows.decoder._prefix(state, state.taps.shape[0] - 4)
+    rows.decoder._prefix(state, state.taps.shape[0])
     stamp()
     bank = predicted.new_zeros(row_cap, *predicted.shape[1:])
     bank.index_copy_(0, device_tensor([index for index, _ in live], bank.device), predicted)
     tau = device_tensor(labels, device)
     if timing:
         stamp()
-        seed_ms, rows_ms, prefix_ms, bank_ms = ((after - before) * 1000 for before, after
+        rows_ms, prefix_ms, bank_ms = ((after - before) * 1000 for before, after
                                                 in zip(stamps, stamps[1:]))
-        print(f"A29_ADMIT2 seed_tail_ms={seed_ms:.3f} decoder_prefix_ms={prefix_ms:.3f} "
+        print(f"A29_ADMIT2 decoder_prefix_ms={prefix_ms:.3f} "
               f"rows_stage_ms={rows_ms + bank_ms:.3f}", flush=True)
     return bank, tau
 
@@ -324,7 +294,6 @@ def copy_front_state(source, target, *, prefix_length: int) -> None:
     if prefix_length < 0:
         raise ValueError("decoder prefix length must be nonnegative")
     target.staged_hidden.copy_(source.staged_hidden)
-    target.decoder_stale.copy_(source.decoder_stale)
     for layer, (target_key, target_value) in target.decoder_prefix_kv.items():
         if layer not in source.decoder_prefix_kv:
             raise ValueError("source decoder prefix is missing a layer")
@@ -449,10 +418,11 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
     from jetspec.engines.jetspec_plus_plus.draft.eval_profile import capture_decoder_inputs
     if capture_decoder_inputs():
         # Eval-only: the decoder window input and its prefix extent, copied inside the graph.
-        stale, staged = front.decoder_stale, front.staged_hidden
+        staged = front.staged_hidden
+        hidden = front.decoder_prefix_taps.shape[-1]
         buffers['capture_dec_window'] = torch.empty(
-            (stale.shape[0] + staged.shape[1], stale.shape[-1]), dtype=stale.dtype, device=stale.device)
-        buffers['capture_dec_lengths'] = torch.empty(2, dtype=torch.int64, device=stale.device)
+            (staged.shape[1], hidden), dtype=staged.dtype, device=staged.device)
+        buffers['capture_dec_lengths'] = torch.empty(2, dtype=torch.int64, device=staged.device)
     if hybrid_views is not None:
         buffers.update(zip(("hybrid_recurrent", "hybrid_conv",
                             "hybrid_keys", "hybrid_values"), hybrid_views))
@@ -602,8 +572,7 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
                 **({"incremental": True} if incremental else {})))
         if "capture_dec_window" in buffers:
             hidden = buffers["capture_dec_window"].shape[-1]
-            buffers["capture_dec_window"].copy_(torch.cat(
-                (front.decoder_stale, front.staged_hidden[0, :, -hidden:]), dim=0))
+            buffers["capture_dec_window"].copy_(front.staged_hidden[0, :, -hidden:])
             buffers["capture_dec_lengths"][0].copy_(buffers["rp"][Offset.DEC_LEN])
             buffers["capture_dec_lengths"][1].copy_(buffers["rp"][Offset.C1_COUNT])
         logits, ids, p64, pack = decoder.decoder_chain_body(

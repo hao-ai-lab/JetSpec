@@ -115,7 +115,6 @@ REGISTRY = _knobs(
     Knob("JETSPEC_SERVE_POLICY", "path", NO_DEFAULT,
          note="strict jetspec.serve_policy/1 JSON for default-off serving mechanisms"),
     # --- e04 opt-in policy flags (heads/, live_rows.py) ---------------------------------------
-    _only("E04_DECODER_TAIL_SEED", "admission"),
     _flag("E04_JOINT_OFFERS", NO_DEFAULT),
     _only("E04_KPRED_POSTERIOR", "1", note=_E04_UNSET_OR_1),
     _only("E04_KPRED_RENORM", "1", note=_E04_UNSET_OR_1 + "; requires JETSPEC_KPRED_FRAME=wire"),

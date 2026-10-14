@@ -135,8 +135,8 @@ def patch_round_params_from_outcome(rp: torch.Tensor, packet: torch.Tensor) -> N
     rp[Offset.L].copy_(packet[OutcomeOffset.L])
     # One recovery ID follows the exact tap prefix in committed_ids.
     rp[Offset.C1_START].copy_(packet[OutcomeOffset.L] - packet[OutcomeOffset.TAP_COUNT])
-    # The reused decoder keeps its last four predicted rows in the window.
-    rp[Offset.DEC_LEN].copy_(packet[OutcomeOffset.L] - 4)
+    # The decoder prefix covers every verified true tap.
+    rp[Offset.DEC_LEN].copy_(packet[OutcomeOffset.L])
 
 
 class BucketProtocol(Protocol):
@@ -217,7 +217,6 @@ class FrontInputs:
     prefix_positions: int64[1, lanes] (append positions)
     taps: bf16[lanes, 5, H] (accepted block, unused lanes padded)
     decoder_prefix_taps: bf16[lanes, H] (tap-4 rows starting at dec_len-count)
-    decoder_stale: bf16[4, H]
     rejected_ids: int64[lanes]
     selection_thresholds: float64[2] (drej-top1, other)
     decoder_prefix_kv: layer index -> (key, value), each bf16[1, heads, capacity, head_dim]
@@ -230,7 +229,6 @@ class FrontInputs:
     prefix_positions: torch.Tensor
     taps: torch.Tensor
     decoder_prefix_taps: torch.Tensor
-    decoder_stale: torch.Tensor
     rejected_ids: torch.Tensor
     selection_thresholds: torch.Tensor
     decoder_prefix_kv: dict[int, tuple[torch.Tensor, torch.Tensor]]
@@ -337,4 +335,3 @@ class PinnedRoundParams:
         self.events = [None, None]
         self.next_slot = 0
         self.event_factory = event_factory or (lambda: torch.cuda.Event())
-
