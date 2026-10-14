@@ -13,6 +13,35 @@ def thresholds():
                 anchor_q_hat=1.0, row_tau={'pooled': {'value': 0.0}}, row_temperature=1.0)
 
 
+@pytest.mark.parametrize('paper', [False, True])
+@pytest.mark.parametrize('length', [2, 7])
+@pytest.mark.parametrize('accepted', [1, 4, 16])
+def test_verified_prefix_uses_true_taps(paper, length, accepted):
+    from jetspec.methods.jetspec_plus_plus.round import JetSpecPPConfig
+    target, driver, _ = components(0)
+    config = JetSpecPPConfig.paper_eval() if paper else driver.config
+    drafter = JetSpecPPDrafter(target=target, head=driver.head, adapter=driver.adapter,
+                             decoder=driver.decoder, config=config, thresholds=thresholds())
+    drafter.capture_rounds = True
+    context = torch.randint(0, 41, (1, length + 1))
+    exact = torch.randn(1, length, 80)
+    for round_index in range(2):
+        drafter.propose_logits(context, 15, target_hidden=exact)
+        result = drafter.current
+        logits, _, _ = refresh_decoder_logits(driver.decoder,
+            SimpleNamespace(taps=exact[0].reshape(-1, 5, 16)), length=exact.shape[1],
+            tail_hidden=None, tail_counts=[0], block_hidden=result.predicted, slot_counts=[16])
+        observed = torch.tensor(drafter.candidate_records[-1]['offers']['pre_exclusion_logsumexp'])
+        assert torch.equal(observed, logits.float().logsumexp(-1))
+        if round_index == 0:
+            correction = next(anchor for anchor in range(41)
+                              if (accepted - 1, anchor) not in drafter.row_cache)
+            drafter.observe(accepted - 1, correction)
+            context = torch.cat((context[:, :-1], result.ids[:, :accepted],
+                                 context.new_tensor([[correction]])), dim=1)
+            exact = torch.cat((exact, torch.randn(1, accepted, 80)), dim=1)
+
+
 @pytest.mark.parametrize('seed', [0, 1, 2])
 def test_lac_offers_equal_golden(seed):
     torch.manual_seed(seed)
@@ -31,10 +60,10 @@ def test_ordinary_window_equal_golden(seed):
     _, driver, _ = components(seed)
     decoder = driver.decoder
     sequence = SimpleNamespace(taps=torch.randn(9, 5, 16))
-    tail, block = torch.randn(4, 16), torch.randn(1, 16, 80)
-    prefix = decoder._prefix(sequence, 5)
-    actual, _, _ = refresh_decoder_logits(decoder, sequence, length=5, tail_hidden=tail,
-                                          tail_counts=[4], block_hidden=block, slot_counts=[16])
+    block = torch.randn(1, 16, 80)
+    prefix = decoder._prefix(sequence, 9)
+    actual, _, _ = refresh_decoder_logits(decoder, sequence, length=9, tail_hidden=None,
+                                          tail_counts=[0], block_hidden=block, slot_counts=[16])
     assert torch.equal(actual, golden('value_2'))
 
 
