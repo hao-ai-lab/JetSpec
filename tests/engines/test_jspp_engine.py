@@ -10,6 +10,55 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / 'jetspec/engines/jetspec_plus_plus'
 
+
+@pytest.mark.parametrize('is_draft', [False, True])
+def test_long_decode_allocates_and_releases_additional_blocks(monkeypatch, is_draft):
+    from jetspec.engines.jetspec_plus_plus.serving.block_manager import BlockManager
+    from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
+
+    monkeypatch.setattr(Sequence, 'block_size', 256, raising=False)
+    manager = BlockManager(num_blocks=16, block_size=256, is_draft=is_draft,
+                           max_model_len=4096)
+    sequence = Sequence([1] * 255)
+    manager.allocate(sequence)
+    for _ in range(2048):
+        assert manager.can_append(sequence)
+        manager.may_append(sequence)
+        sequence.append_token(2)
+    table = sequence.draft_block_table if is_draft else sequence.block_table
+    assert len(table) == 9
+    assert len(manager.free_block_ids) == 7
+    manager.deallocate(sequence)
+    assert table == []
+    assert len(manager.free_block_ids) == 16
+    assert manager.used_block_ids == set()
+
+
+def test_speculative_decode_finalizes_completed_target_and_draft_blocks(monkeypatch, tmp_path):
+    monkeypatch.setenv('SSD_HF_CACHE', str(tmp_path))
+    monkeypatch.setenv('SSD_DATASET_DIR', str(tmp_path))
+    from jetspec.engines.jetspec_plus_plus.serving.block_manager import BlockManager
+    from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
+    from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
+
+    monkeypatch.setattr(Sequence, 'block_size', 256, raising=False)
+    scheduler = Scheduler.__new__(Scheduler)
+    scheduler.block_size = 256
+    scheduler.max_model_len = 4096
+    scheduler.eos = -1
+    scheduler.jetspec = True
+    scheduler.block_manager = BlockManager(16, 256, max_model_len=4096)
+    scheduler.draft_block_manager = BlockManager(16, 256, is_draft=True, max_model_len=4096)
+    sequence = Sequence([1] * 254)
+    for manager in (scheduler.block_manager, scheduler.draft_block_manager):
+        manager.allocate(sequence)
+    sequence.num_cached_tokens = sequence.num_draft_cached_tokens = 254
+    scheduler.postprocess_speculate([sequence], [[2, 3]], [4])
+    for manager in (scheduler.block_manager, scheduler.draft_block_manager):
+        block = manager.blocks[0]
+        assert block.token_ids == sequence.token_ids
+        assert manager.hash_to_block_id[block.hash] == block.block_id
+
 IMPORT_CHECK = '''
 import importlib, os, sys
 from pathlib import Path

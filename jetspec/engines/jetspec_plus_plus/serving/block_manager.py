@@ -62,6 +62,23 @@ class BlockManager:
         self.used_block_ids.add(block_id)
         return self.blocks[block_id]
 
+    def _allocate_n_blocks(self, n: int) -> list[Block]:
+        if len(self.free_block_ids) < n:
+            raise RuntimeError(f"Insufficient free blocks: need {n}, have {len(self.free_block_ids)}")
+        
+        # Extract n block IDs in one operation
+        block_ids = [self.free_block_ids.popleft() for _ in range(n)]
+
+        # Reset all blocks and update tracking sets
+        blocks = []
+        for block_id in block_ids:
+            block = self.blocks[block_id]
+            assert block.ref_count == 0
+            block.reset()
+            self.used_block_ids.add(block_id)
+            blocks.append(block)
+        
+        return blocks
 
 
 
