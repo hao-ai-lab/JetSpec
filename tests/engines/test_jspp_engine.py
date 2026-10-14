@@ -180,6 +180,7 @@ def test_speedup_runs_ar_then_jetspec_plus_plus_and_divides_decode_rates(tmp_pat
     ar, method = calls
     assert '--drafter' not in ar and ar[ar.index('--config') + 1] == 'ar'
     assert method[method.index('--config') + 1] == 'a100-j1-r0' and '--drafter' in method
+    assert ar[ar.index('--stop-at-eos') + 1] == method[method.index('--stop-at-eos') + 1] == 'on'
     assert '--knob' not in ar
     assert method[method.index('--knob') + 1] == 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'
     result = json.loads((tmp_path / 'speedup.json').read_text())

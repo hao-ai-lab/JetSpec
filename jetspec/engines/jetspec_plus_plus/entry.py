@@ -36,6 +36,8 @@ def parser():
     result.add_argument('--cpu-pin', default='auto')
     result.add_argument('--knob', action='append', default=[], metavar='NAME=VALUE',
                         help='set a registered serving knob for this read (repeatable)')
+    result.add_argument('--stop-at-eos', choices=('on', 'off'), default='off',
+                        help='end each prompt at EOS; off runs every prompt to --tokens')
     result.add_argument('--resolve-only', action='store_true')
     return result
 
@@ -88,7 +90,8 @@ def resolve(args):
             '--dataset', args.dataset, '--prompts-json', args.prompts_json,
             '--count', str(args.count), '--tokens', str(args.tokens), '--temperature', '0',
             '--sequential-prompts', '--output-json', args.output_json,
-            '--cpu-pin', args.cpu_pin, '--anatomy', 'off', '--wire-records', 'off']
+            '--cpu-pin', args.cpu_pin, '--anatomy', 'off', '--wire-records', 'off',
+            '--stop-at-eos', args.stop_at_eos]
     if args.cache_root:
         argv += ['--cache-root', args.cache_root]
     for knob in args.knob:
