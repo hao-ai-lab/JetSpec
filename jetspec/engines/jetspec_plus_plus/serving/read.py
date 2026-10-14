@@ -964,6 +964,9 @@ def source_revision(root=ROOT):
         return sha, dirty
     except (OSError, subprocess.SubprocessError):
         receipt = os.environ.get("RX_SOURCE_PROVENANCE") or str(Path(root).parent / "prov.json")
+        if not Path(receipt).is_file():
+            # An installed package has neither .git nor a sync receipt: record no revision.
+            return None, None
         provenance = json.loads(Path(receipt).read_text(encoding="utf-8"))
         sha, diff = provenance.get("head"), provenance.get("dirty")
         if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha) or not (

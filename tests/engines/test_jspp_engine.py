@@ -133,3 +133,62 @@ def test_manifest_lists_only_the_supported_artifacts():
     names = {row['name'] for row in manifest['artifacts']}
     assert names == {'jetspecpp_e6_drafter', 'jetspecpp_e6_adapter', 'mask_original_drafter',
                      'served_heads_reused_e6v2_b16', 'served_heads_reused_e6v3_b16'}
+
+
+def test_entry_passes_explicit_memory_and_capture_knobs_to_the_reader():
+    from jetspec.engines.jetspec_plus_plus import entry
+    knobs = ['SSD_SHARED_GPU_KV_UTILIZATION=0.1', 'JETSPEC_CHAIN_WARM_REACHABLE=1',
+             'JETSPEC_CHAIN_WARM_SINGLE_KEY=1']
+    args = entry.parser().parse_args([
+        '--config', 'a100-j1-r0', '--prompts-json', '/prompts.json',
+        '--output-json', '/read.json', *[item for knob in knobs for item in ('--knob', knob)]])
+    _, argv, _ = entry.resolve(args)
+    assert [argv[i + 1] for i, value in enumerate(argv) if value == '--knob'] == knobs
+
+
+def test_entry_ar_baseline_runs_one_gpu_without_draft_artifacts():
+    from jetspec.engines.jetspec_plus_plus import entry
+    args = entry.parser().parse_args([
+        '--config', 'ar', '--target', '/target', '--prompts-json', '/prompts.json',
+        '--devices', '2,3', '--output-json', '/ar.json'])
+    recipe, argv, host = entry.resolve(args)
+    assert recipe['method'] == 'ar'
+    assert argv[argv.index('--placement') + 1] == 'one_gpu'
+    assert argv[argv.index('--devices') + 1] == '2'
+    assert host['artifacts'] == {}
+    assert host['environment']['JETSPEC_TARGET_MODEL_PATH'] == '/target'
+
+
+def test_speedup_runs_ar_then_jetspec_plus_plus_and_divides_decode_rates(tmp_path):
+    import json
+    sys.path.insert(0, str(ROOT))
+    from bench.jetspec_plus_plus import speedup
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        output = Path(command[command.index('--output-json') + 1])
+        rate = 50.0 if '--config' in command and command[command.index('--config') + 1] == 'ar' else 200.0
+        output.write_text(json.dumps({
+            'outputs': [{'token_ids': [1, 2]}] * 2,
+            'metrics': {'serve_read': {'measured': {'decode_tok_s': rate}}}}))
+
+    assert speedup.main(['--config', 'a100-j1-r0', '--target', '/t', '--drafter', '/d',
+                         '--adapter', '/a', '--heads-bundle', '/h',
+                         '--prompts-json', '/p.json', '--output-dir', str(tmp_path),
+                         '--knob', 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'], run=run) == 0
+    ar, method = calls
+    assert '--drafter' not in ar and ar[ar.index('--config') + 1] == 'ar'
+    assert method[method.index('--config') + 1] == 'a100-j1-r0' and '--drafter' in method
+    assert '--knob' not in ar
+    assert method[method.index('--knob') + 1] == 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'
+    result = json.loads((tmp_path / 'speedup.json').read_text())
+    assert result['speedup'] == 4.0 and result['prompts'] == 2
+
+
+def test_source_revision_is_null_outside_git_without_a_receipt(tmp_path, monkeypatch):
+    from jetspec.engines.jetspec_plus_plus.serving import read
+    monkeypatch.delenv('RX_SOURCE_PROVENANCE', raising=False)
+    package = tmp_path / 'site/jetspec_plus_plus'
+    package.mkdir(parents=True)
+    assert read.source_revision(package) == (None, None)
