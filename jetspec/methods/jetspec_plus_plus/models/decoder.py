@@ -281,7 +281,7 @@ def refresh_decoder_logits(decoder, sequence, *, length, tail_hidden, tail_count
     """Read true committed taps, staged tail and isolated refreshed block rows.
 
     Returns packed (logits, row_of, slot_of); output at slot j predicts slot j+1.
-    The last four committed rows extend a private cache, leaving the round's
+    Any uncached committed rows extend a private cache, leaving the round's
     cached prefix unchanged. No block row attends to another block row.
     """
     if getattr(decoder, 'hybrid', False):

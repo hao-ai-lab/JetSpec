@@ -54,7 +54,6 @@ class JetSpecPPDrafter(Drafter):
     def reset_cache(self):
         self.row_cache, self.selected = {}, None
         self.staged = OneRoundAdaptedContext()
-        self.decoder_tail = None
         self.records, self.round_results, self.counts = [], [], Counter()
         self.candidate_records, self.capture_prediction = [], None
         self.sequence = SimpleNamespace(taps=None)
@@ -66,24 +65,10 @@ class JetSpecPPDrafter(Drafter):
         if exact is None or exact.shape[1] != context_ids.shape[1] - 1:
             raise ValueError('target taps must end immediately before the correction')
         self.sequence.taps = exact[0].reshape(-1, 5, self.driver.decoder.hidden_size)
-        hybrid = getattr(self.driver.decoder, 'hybrid', False)
-        # The reference casts before marker/tail assembly.
+        # The reference casts before marker assembly.
         exact = exact.to(next(self.driver.head.parameters()))
         if self.staged.start_position is not None:
-            _, _, accepted = self.staged.consume(exact, context_ids)
-            tail = self.staged.predicted_hidden[0, :accepted, -self.driver.decoder.hidden_size:]
-            if not hybrid:
-                self.decoder_tail = torch.cat((self.decoder_tail.to(tail), tail))[-4:].clone()
-        elif hybrid:
-            self.decoder_tail = None
-        elif exact.shape[1] >= 5:
-            boundary = exact.shape[1] - 4
-            tokens = torch.cat((context_ids[:, boundary:exact.shape[1]],
-                                context_ids[:, -1:].expand(1, 11)), 1)
-            # The public D1 seed uses the trainer mask, as required by the scope.
-            self.decoder_tail = self.driver.predict(exact[:, :boundary], tokens)[0, :4, -self.driver.decoder.hidden_size:]
-        else:
-            raise ValueError('admission requires at least five prompt tokens')
+            self.staged.consume(exact, context_ids)
         after_miss = bool(self.records) and self.selected is None
         if self.selected is None:
             result = self.driver.run(context_ids, exact, prompt_index=prompt_index, admission=True,
@@ -110,11 +95,11 @@ class JetSpecPPDrafter(Drafter):
                 record.update(k_true=keys[0][0], anchor_true=keys[0][1],
                               true_anchor=keys[0][1], correction=keys[0][1])
             self.candidate_records.append(record)
-        length = exact.shape[1] if hybrid else exact.shape[1] - 4
+        length = exact.shape[1]
         self.driver.decoder._prefix(self.sequence, length)
         logits, _, _ = refresh_decoder_logits(
-            self.driver.decoder, self.sequence, length=length, tail_hidden=self.decoder_tail,
-            tail_counts=[0 if hybrid else 4], block_hidden=result.predicted, slot_counts=[16])
+            self.driver.decoder, self.sequence, length=length, tail_hidden=None,
+            tail_counts=[0], block_hidden=result.predicted, slot_counts=[16])
         # The reference joint rule scores the whole top-32 pool, independently of LAC coverage.
         offers = anchor_offers(logits, result.ids[0, 1:],
                                q_hat=1.0 if self.config.score_all_anchors else self.thresholds['anchor_q_hat'],
