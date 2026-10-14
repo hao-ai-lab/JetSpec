@@ -154,7 +154,7 @@ class RoundDriver:
             target_context = exact + self.head.adapted_position_embedding(indicator).to(exact.dtype)
         tail_tokens = context_ids[:, :0] if tail_tokens is None else tail_tokens
         tail_count = tail_tokens.shape[1]
-        self.decoder._prefix(sequence, max(0, exact.shape[1] - 4))
+        self.decoder._prefix(sequence, exact.shape[1])
         swap = RefreshSwap(rows=1, lanes=16, device=device, pin_agreed=config.pin_agreed)
         swap.configure_pins([op for op in config.operations if op.startswith('R')], rows=1, lanes=16)
         swap.reset()

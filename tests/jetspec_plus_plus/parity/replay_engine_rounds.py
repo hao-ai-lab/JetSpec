@@ -51,7 +51,7 @@ def read_tensor(stream, offset, shape):
 
 @torch.inference_mode()
 def decoder_logits(decoder, window, taps, length):
-    """True deepest-tap prefix followed by the captured stale+staged causal window."""
+    """True deepest-tap prefix followed by the captured current causal block."""
     parameter = next(decoder.parameters())
     # _prefix reads only tap 4; the four unrecorded taps are never consumed here.
     sequence = SimpleNamespace(taps=taps[:, None, :].expand(-1, 5, -1))
@@ -59,12 +59,12 @@ def decoder_logits(decoder, window, taps, length):
     try:
         hidden = window.to(parameter)[None]
         positions = torch.arange(length, length + window.shape[0], device=parameter.device)[None]
-    # Reference chain-window staging: positions length+lane, all true prefix
+        # Reference chain-window staging: positions length+lane, all true prefix
         # keys followed by the causal window. No refresh-row geometry is used.
-        mask = window_mask([length + 4], length, parameter.dtype, size=window.shape[0]).to(parameter.device)
+        mask = window_mask([length], length, parameter.dtype, size=window.shape[0]).to(parameter.device)
         _, logits = decoder(hidden, mask=mask, positions=positions,
                             prefix=_WindowCache(prefix.kv, append=False))
-        return logits[0, 4:].float()
+        return logits[0].float()
     finally:
         decoder.drop_sequence(sequence)
 
@@ -170,7 +170,7 @@ def replay(candidates, index, data, *, decoder, thresholds, dataset):
             seq = row['seq_id']
             previous = prefixes.get(seq, taps[:0])
             if (row['taps_from'] != len(previous) or row['taps_to'] != len(previous) + len(taps)
-                    or taps.ndim != 2 or window.shape != (20, decoder.hidden_size)
+                    or taps.ndim != 2 or window.shape != (16, decoder.hidden_size)
                     or taps.shape[1] != decoder.hidden_size):
                 raise ValueError('decoder inputs have invalid window geometry or noncontiguous taps')
             prefixes[seq] = torch.cat((previous, taps))
