@@ -98,17 +98,20 @@ export JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b
 | JetSpec | Hugging Face reference core (`jetspec/core/`) | shipped |
 | JetSpec | Optimized inference engine (`jetspec/engines/jetspec/`) | shipped |
 | JetSpec++ | Torch reference method (`jetspec/methods/jetspec_plus_plus/`) | preview |
+| JetSpec++ | Serving engine (`jetspec/engines/jetspec_plus_plus/`) | preview |
 
-The project has two execution paths:
+The project has three execution paths:
 
 - `jetspec/core/`: a lightweight HuggingFace-based reference implementation.
 - `jetspec/engines/jetspec/`: an optimized serving engine with paged KV, custom Triton tree attention, and CUDA graphs for better wall-clock latency and throughput.
+- `jetspec/engines/jetspec_plus_plus/`: the JetSpec++ serving engine for dense 8B targets and a hybrid 27B preview.
 
 ```text
 jetspec/
   core/                 # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
   engines/
     jetspec/            # optimized JetSpec engine: serving, kernels, verify, draft, models, wire
+    jetspec_plus_plus/  # JetSpec++ serving engine: model, draft, verification, scheduling, transport
   inference_engine/     # compatibility shim to engines/jetspec
   models/               # target/draft-head loading and model utilities
   methods/
@@ -123,8 +126,9 @@ jetspec/
 
 ## Usage
 
-The methods share the reference core and target loaders. JetSpec++ runs through
-that reference core; the optimized inference engine serves JetSpec.
+The methods share the reference core and target loaders. JetSpec++ provides both
+a torch reference method and its own serving engine; JetSpec also has an
+optimized inference engine.
 
 ### JetSpec
 
@@ -341,6 +345,32 @@ python examples/jetspec_plus_plus/simple_generate.py \
   --dataset gsm8k \
   --max-tokens 64
 ```
+
+#### Serving engine
+
+The JetSpec++ serving engine supports dense 8B targets and hybrid 27B serving
+as a preview. Install `.[jetspec-plus-plus-engine]` with a CUDA 12.8 PyTorch
+package index, then pass local model and artifact paths:
+
+```bash
+python -m jetspec.engines.jetspec_plus_plus \
+  --config reference-j1-r1 \
+  --target /path/to/target --drafter /path/to/drafter \
+  --adapter /path/to/adapter --heads-bundle /path/to/heads \
+  --target-release /path/to/release \
+  --prompts-json /path/to/prompts.json --count 8 --tokens 2048 \
+  --devices 0,1 --output-json /path/to/read.json \
+  --cache-root /path/to/compiler-cache \
+  --knob SSD_SHARED_GPU_KV_UTILIZATION=0.1 \
+  --knob JETSPEC_CHAIN_WARM_REACHABLE=1 \
+  --knob JETSPEC_CHAIN_WARM_SINGLE_KEY=1
+```
+
+Serving prompts are exported JSON rows with `index` and `token_ids`. Measure
+speedup with `python bench/jetspec_plus_plus/speedup.py` and the same artifact
+flags; the benchmark stops each prompt at EOS by default. See the
+[serving engine README](jetspec/engines/jetspec_plus_plus/README.md) for
+configurations, artifact pins and shared compiler-cache requirements.
 
 
 
