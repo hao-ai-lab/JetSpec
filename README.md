@@ -31,6 +31,7 @@ JetSpec is an implementation of **causal parallel tree drafting** for fast LLM s
 - [Results](#results)
   - [Engine Results](#engine-results)
   - [Tree Algorithms](#tree-algorithms)
+- [Acknowledgements](#acknowledgements)
 - [Citation](#citation)
 
 ## Introduction
@@ -282,6 +283,12 @@ Common algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 | `class_histogram` | class-conditioned profile-guided tree shaping |
 | `depth_rank_histogram` | offline profile table over `(depth, rank)` acceptance |
 
+
+## Acknowledgements
+
+JetSpec builds on code from causal_parallel_drafting (MIT), vLLM (Apache 2.0)
+and SSD (MIT). The attributions are in
+[`jetspec/THIRD_PARTY_NOTICES`](jetspec/THIRD_PARTY_NOTICES).
 
 ## Citation
 
