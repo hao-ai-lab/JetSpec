@@ -24,11 +24,10 @@ JetSpec is an implementation of **causal parallel tree drafting** for fast LLM s
 - [Model Weights](#model-weights)
 - [Repo Overview](#repo-overview)
 - [Usage](#usage)
-  - [JetSpec](#jetspec)
-  - [JetSpec++](#jetspec-1)
   - [HF References](#hf-references)
   - [JetSpec Inference Engine](#jetspec-inference-engine)
   - [Benchmarking Scripts](#benchmarking-scripts)
+- [JetSpec++ (new)](#jetspec-new)
 - [Results](#results)
   - [Engine Results](#engine-results)
   - [Tree Algorithms](#tree-algorithms)
@@ -65,12 +64,6 @@ pip install -e '.[bench,flash-attn]'
 
 If you use `uv`, the project includes extra build dependency metadata for `flash-attn`.
 
-For the JetSpec++ torch method and local artifact loaders:
-
-```bash
-pip install -e '.[jetspec-plus-plus]'
-```
-
 ## Model Weights
 
 JetSpec draft heads are published under the [`JetSpec`](https://huggingface.co/JetSpec) Hugging Face organization.
@@ -93,46 +86,26 @@ export JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b
 
 ## Repo Overview
 
-| Method | Execution path | Status |
-|---|---|---|
-| JetSpec | Hugging Face reference core (`jetspec/core/`) | shipped |
-| JetSpec | Optimized inference engine (`jetspec/engines/jetspec/`) | shipped |
-| JetSpec++ | Torch reference method (`jetspec/methods/jetspec_plus_plus/`) | preview |
-| JetSpec++ | Serving engine (`jetspec/engines/jetspec_plus_plus/`) | preview |
-
-The project has three execution paths:
+The project has two execution paths:
 
 - `jetspec/core/`: a lightweight HuggingFace-based reference implementation.
 - `jetspec/engines/jetspec/`: an optimized serving engine with paged KV, custom Triton tree attention, and CUDA graphs for better wall-clock latency and throughput.
-- `jetspec/engines/jetspec_plus_plus/`: the JetSpec++ serving engine for dense 8B targets and a hybrid 27B preview.
 
 ```text
 jetspec/
-  core/                 # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
-  engines/
-    jetspec/            # optimized JetSpec engine: serving, kernels, verify, draft, models, wire
-    jetspec_plus_plus/  # JetSpec++ serving engine: model, draft, verification, scheduling, transport
-  inference_engine/     # compatibility shim to engines/jetspec
-  models/               # target/draft-head loading and model utilities
-  methods/
-    jetspec/            # causal parallel tree drafting: tree, drafters, draft head
-    jetspec_plus_plus/  # torch method: adapter, anchor decoder, J/R rounds, reader
-  tree/                 # compatibility shim to methods/jetspec/tree
-  draft.py              # compatibility shim to methods/jetspec/draft.py
-  draft_head_adapter.py # compatibility shim to methods/jetspec/draft_head_adapter.py
+  core/                    # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
+  methods/jetspec/         # causal parallel tree drafting: tree, drafters, draft head
+  engines/jetspec/         # optimized JetSpec engine: paged KV, scheduler, kernels, CUDA graphs
+  models/                  # target/draft-head loading and model utilities
+  methods/jetspec_plus_plus/  # new: JetSpec++ torch reference method
+  engines/jetspec_plus_plus/  # new: JetSpec++ serving engine
 ```
 
-
+The old import paths (`jetspec.inference_engine`, `jetspec.tree`, `jetspec.draft`, `jetspec.draft_head_adapter`) remain as compatibility shims.
 
 ## Usage
 
-The methods share the reference core and target loaders. JetSpec++ provides both
-a torch reference method and its own serving engine; JetSpec also has an
-optimized inference engine.
-
-### JetSpec
-
-#### HF References
+### HF References
 
 ```python
 from jetspec import LLM, SamplingParams
@@ -147,7 +120,7 @@ print(out["text"])
 
 
 
-#### JetSpec Inference Engine
+### JetSpec Inference Engine
 
 The optimized engine uses paged KV, a Triton tree-attention backend, compiled verification, CUDA graphs, and optional session reuse.
 
@@ -180,7 +153,7 @@ print(out["text"])
 print("tokens per forward:", out["tpf"])
 ```
 
-#### Benchmarking Scripts
+### Benchmarking Scripts
 
 The benchmark examples below use `Qwen/Qwen3-8B` with drafter `JetSpec/jetspec-qwen3-8b`.
 
@@ -267,112 +240,16 @@ bash "${VLLM_FORK_DIR}/examples/offline_inference/jetspec_profiling_math500_tree
 
 These scripts belong to the external vLLM integration checkout. The [`vLLM integration`](https://github.com/JetSpec-project/vllm-jetspec) supports MATH-500 testing through the command above and HumanEval testing through `${VLLM_FORK_DIR}/examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
 
-### JetSpec++
+## JetSpec++ (new)
 
-JetSpec++ refines a block of draft tokens with J passes and R refresh passes.
-An adapter stages predicted target hidden states for the next round, while an
-anchor decoder and refresh swap update the block; pins preserve agreed tokens
-and keyed rows select proposals using BLEND k mass. The shared torch core
-verifies each proposal against the target and emits the accepted tokens plus
-the target correction, preserving greedy autoregressive output.
+JetSpec++ is a preview of the next method. It refines a block of draft tokens
+with J passes and R refresh passes, and verifies every proposal against the
+target, so the output is identical to greedy autoregressive decoding.
 
-The preview provides the readable torch method, local artifact loaders and an
-acceptance-length reader for greedy decoding.
-
-Pass local paths for the target, drafter checkpoint, adapter artifact and heads
-bundle. The adapter and heads must match the target and drafter provenance;
-loaders validate checkpoint keys and target-file hashes. Use compatible local
-artifacts:
-
-```bash
-export JETSPEC_MODEL=/path/to/Qwen3-8B
-export JETSPEC_DRAFTER=/path/to/drafter
-export JETSPEC_ADAPTER=/path/to/adapter
-export JETSPEC_HEADS_BUNDLE=/path/to/heads-bundle
-export JETSPEC_PROMPTS_FILE=/path/to/prompts.json
-```
-
-Prompt JSON is a list of strings or objects with `prompt` or `token_ids`, or
-an object containing that list under `prompts`. For a short lossless check:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 \
-python bench/jetspec_plus_plus/verify.py \
-  --model "$JETSPEC_MODEL" \
-  --drafter "$JETSPEC_DRAFTER" \
-  --adapter "$JETSPEC_ADAPTER" \
-  --heads-bundle "$JETSPEC_HEADS_BUNDLE" \
-  --prompts-file "$JETSPEC_PROMPTS_FILE" \
-  --dataset gsm8k \
-  --samples 4 \
-  --max-tokens 256 \
-  --schedule J1-R1 \
-  --device cuda \
-  --dtype fp32 \
-  --output /path/to/verify.json
-```
-
-The command compares every output token with plain AR greedy generation and
-exits nonzero on a mismatch. Its timing covers eager torch generation only.
-To read pooled accepted length over a larger prompt set:
-
-```bash
-CUDA_VISIBLE_DEVICES=0 \
-python bench/jetspec_plus_plus/tau.py \
-  --prompts-file "$JETSPEC_PROMPTS_FILE" \
-  --dataset gsm8k \
-  --samples 64 \
-  --max-tokens 2048 \
-  --schedule J3-R3 \
-  --device cuda \
-  --dtype fp32 \
-  --output /path/to/tau.json
-```
-
-Both commands accept the model and artifact flags shown above, or their
-`JETSPEC_*` defaults. `--target` aliases `--model`; `--seed` controls draft
-initialization. Precision options are documented by `--help`. Without a prompts
-file, `--prompt-set` loads benchmark prompts (install the `bench` extra);
-`--dataset` chooses the heads calibration entry and defaults to the prompt
-set. Use `--device cpu` with full precision for local CPU checks.
-
-For a prompt, `examples/jetspec_plus_plus/simple_generate.py` prints the
-generated text, accepted-length mean and AR equality check:
-
-```bash
-python examples/jetspec_plus_plus/simple_generate.py \
-  --prompt "The three primary colors are" \
-  --dataset gsm8k \
-  --max-tokens 64
-```
-
-#### Serving engine
-
-The JetSpec++ serving engine supports dense 8B targets and hybrid 27B serving
-as a preview. Install `.[jetspec-plus-plus-engine]` with a CUDA 12.8 PyTorch
-package index, then pass local model and artifact paths:
-
-```bash
-python -m jetspec.engines.jetspec_plus_plus \
-  --config reference-j1-r1 \
-  --target /path/to/target --drafter /path/to/drafter \
-  --adapter /path/to/adapter --heads-bundle /path/to/heads \
-  --target-release /path/to/release \
-  --prompts-json /path/to/prompts.json --count 8 --tokens 2048 \
-  --devices 0,1 --output-json /path/to/read.json \
-  --cache-root /path/to/compiler-cache \
-  --knob SSD_SHARED_GPU_KV_UTILIZATION=0.1 \
-  --knob JETSPEC_CHAIN_WARM_REACHABLE=1 \
-  --knob JETSPEC_CHAIN_WARM_SINGLE_KEY=1
-```
-
-Serving prompts are exported JSON rows with `index` and `token_ids`. Measure
-speedup with `python bench/jetspec_plus_plus/speedup.py` and the same artifact
-flags; the benchmark stops each prompt at EOS by default. See the
-[serving engine README](jetspec/engines/jetspec_plus_plus/README.md) for
-configurations, artifact pins and shared compiler-cache requirements.
-
-
+| Path | Code | Install extra | Guide |
+|---|---|---|---|
+| Torch reference method | `jetspec/methods/jetspec_plus_plus/` | `jetspec-plus-plus` | [method README](jetspec/methods/jetspec_plus_plus/README.md) |
+| Serving engine (Qwen3-8B, Qwen3.8-27B preview) | `jetspec/engines/jetspec_plus_plus/` | `jetspec-plus-plus-engine` | [engine README](jetspec/engines/jetspec_plus_plus/README.md) |
 
 ## Results
 
