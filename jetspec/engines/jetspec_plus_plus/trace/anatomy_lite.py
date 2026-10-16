@@ -33,6 +33,15 @@ def pack(rows):
                 rounds=len(rows), rows_zlib=base64.b64encode(zlib.compress(raw)).decode())
 
 
+def unpack(payload, width=None):
+    if payload['schema'] not in ('jetspec.anatomy_lite/1', 'jetspec.anatomy_lite/2') or payload['clock'] != 'CLOCK_MONOTONIC':
+        raise ValueError('ANATOMY_LITE_SCHEMA')
+    if width is None:
+        width = 12 if payload['schema'].endswith('/2') else 11
+    rows = json.loads(zlib.decompress(base64.b64decode(payload['rows_zlib'])))
+    if len(rows) != payload['rounds'] or any(len(row) != width for row in rows):
+        raise ValueError('ANATOMY_LITE_ALIGNMENT')
+    return rows
 
 
 class _DeviceVerifyTimes(list):
@@ -115,6 +124,11 @@ class RoundTiming:
         if self.host_stamps and self.previous is not None:
             self.previous[11]['step_return'] = self.clock()
 
+    def close_native_step(self, started, duration):
+        if (self.host_stamps and self.previous is not None
+                and 'device_verify_end' in self.previous[11]):
+            self.previous[11].update(native_step_start=round(started*1e9),
+                                     native_step_end=round((started+duration)*1e9))
 
     def gpu_begin(self):
         self.stamp('replay_start')
@@ -134,3 +148,9 @@ class RoundTiming:
             self.pending.append((self.active, self.events))
         self.active = self.events = None
 
+    def export(self):
+        self.drain()
+        payload = pack(self.rows)
+        self.rows = []
+        self.previous = None
+        return payload

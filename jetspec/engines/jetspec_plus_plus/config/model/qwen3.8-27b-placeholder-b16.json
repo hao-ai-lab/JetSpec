@@ -8,6 +8,7 @@
     {
       "destination_root": {
         "namespace": "fetch_destination_relative_path",
+        "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
         "resolves": true,
         "value": "qwen3p8_27b_adapter_base_800k"
       },
@@ -15,11 +16,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
             "resolves": true,
             "value": "config.json"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+              "resolves": true
+            },
+            "uploaded_bytes": 2760
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
             "resolves": true,
             "value": "config.json"
           },
@@ -28,11 +39,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
             "resolves": true,
             "value": "head.safetensors"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+              "resolves": true
+            },
+            "uploaded_bytes": 8934264728
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
             "resolves": true,
             "value": "head.safetensors"
           },
@@ -41,11 +62,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
             "resolves": true,
             "value": "converter.safetensors"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+              "resolves": true
+            },
+            "uploaded_bytes": 262154472
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
             "resolves": true,
             "value": "converter.safetensors"
           },
@@ -54,6 +85,48 @@
       ],
       "kind": "published",
       "name": "qwen3p8_27b_adapter_base_800k",
+      "provenance": {
+        "attributes": {
+          "description": "Final base-800k 27B C1 adapter, checkpoint-194006: CTXKV_DRIVER_DONE reported by serving5 at 2026-10-03T23:50Z, byte-preserving CPU export serving run 1003-165310-4edc. Reported held-out cosine tap61: math 0.9501, mixed 0.9252, heldout_cosine 0.9569.",
+          "environment_variables": [
+            "JETSPEC_ADAPTER_HEAD",
+            "JETSPEC_ADAPTER_CONFIG"
+          ],
+          "omitted_files": {
+            "names": [
+              ".gitattributes",
+              "MANIFEST.json",
+              "README.md",
+              "metadata.json",
+              "metrics.json",
+              "run_config.json",
+              "run_heldout_taps.jsonl",
+              "run_metadata.json"
+            ],
+            "reason": "Not consumed by the serving loader."
+          },
+          "recipe": "python3 tools/export_c1_adapter.py --checkpoint <checkpoint> --config <arm-config.json> --output <adapter-directory>",
+          "serving_layout": "trained_c1",
+          "source_path": {
+            "namespace": "b200_pod_filesystem",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving final export, serving CPU run 1003-165310-4edc",
+            "resolves": true,
+            "value": "local-provenance"
+          }
+        },
+        "has_files": true,
+        "order": 36,
+        "repository": {
+          "namespace": "huggingface_repo_id",
+          "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+          "resolves": true
+        },
+        "revision": {
+          "namespace": "huggingface_revision",
+          "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+          "resolves": true
+        }
+      },
       "registration_commit": "304bed7ac161783e32237425e3675854cb4fd7ee",
       "repository": "JetSpec/jetspec-plus-plus-qwen3p8-27b-adapter",
       "revision": "304bed7ac161783e32237425e3675854cb4fd7ee",
@@ -62,6 +135,7 @@
     {
       "destination_root": {
         "namespace": "fetch_destination_relative_path",
+        "resolved_by": "tools/fetch_artifacts.py --dry-run",
         "resolves": true,
         "value": "qwen3p8-27b-drafter-main6ep-ep6"
       },
@@ -69,11 +143,27 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
             "resolves": true,
             "value": "config.json"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "nvl72_filesystem",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 1610
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
             "resolves": true,
             "value": "config.json"
           },
@@ -82,11 +172,27 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
             "resolves": true,
             "value": "dflash.py"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "nvl72_filesystem",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 19174
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
             "resolves": true,
             "value": "dflash.py"
           },
@@ -95,11 +201,27 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
             "resolves": true,
             "value": "model.safetensors"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "nvl72_filesystem",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 3460432504
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
             "resolves": true,
             "value": "model.safetensors"
           },
@@ -108,11 +230,27 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
             "resolves": true,
             "value": "target_release_weights.safetensors"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "nvl72_filesystem",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 5085593832
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
             "resolves": true,
             "value": "target_release_weights.safetensors"
           },
@@ -121,6 +259,38 @@
       ],
       "kind": "published",
       "name": "qwen3p8_27b_drafter_main6ep_ep6",
+      "provenance": {
+        "attributes": {
+          "description": "Private trained Qwen3.8-27B main6ep epoch-6 drafter at its commit-pinned JetSpec HF home, with config, dflash source, model and target release weights at the repository root. Not a release.",
+          "environment_variables": [
+            "JETSPEC_SYNC_DRAFTER"
+          ],
+          "omitted_files": {
+            "names": [
+              ".gitattributes"
+            ],
+            "reason": "Not consumed by the serving loader."
+          },
+          "source_path": {
+            "namespace": "nvl72_filesystem",
+            "resolved_by": "serving brief; a91 copy read-only sha256sum receipt",
+            "resolves": true,
+            "value": "local-provenance"
+          }
+        },
+        "has_files": true,
+        "order": 27,
+        "repository": {
+          "namespace": "huggingface_repo_id",
+          "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+          "resolves": true
+        },
+        "revision": {
+          "namespace": "huggingface_revision",
+          "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+          "resolves": true
+        }
+      },
       "registration_commit": "79ad9d418e8ab18b69d7a61c62b6f0301491b2ad",
       "repository": "JetSpec/jetspec-plus-plus-qwen3p8-27b",
       "revision": "79ad9d418e8ab18b69d7a61c62b6f0301491b2ad",
@@ -131,8 +301,16 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving generated placeholder bundle on serving",
             "resolves": true,
             "value": "thresholds.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving remote sha256 receipt",
+              "resolves": true
+            }
           },
           "remote": null,
           "sha256": "58157c61e212d2785efc927f8461570d0e84f448720b6a6d616fc70911f8b66f"
@@ -140,8 +318,16 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving generated placeholder bundle on serving",
             "resolves": true,
             "value": "decoder/manifest.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving remote sha256 receipt",
+              "resolves": true
+            }
           },
           "remote": null,
           "sha256": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b"
@@ -149,6 +335,13 @@
       ],
       "kind": "generated",
       "name": "jetspecpp_27b_placeholder_heads",
+      "provenance": {
+        "attributes": {
+          "recipe": "tools/make_synthetic_bundle.py --hybrid-target --draft-layers 5 --draft-intermediate 17408"
+        },
+        "has_files": true,
+        "order": 32
+      },
       "registration_commit": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
       "repository": "local-artifact",
       "revision": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
@@ -159,8 +352,16 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving generated placeholder bundle on serving",
             "resolves": true,
             "value": "model.safetensors"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving remote sha256 receipt",
+              "resolves": true
+            }
           },
           "remote": null,
           "sha256": "45021996ba2c5ced6b60e3eea4646ad938f6c96935457b3a70e2fd10cd6b4635"
@@ -168,6 +369,13 @@
       ],
       "kind": "generated",
       "name": "jetspecpp_27b_placeholder_release",
+      "provenance": {
+        "attributes": {
+          "recipe": "tools/make_synthetic_bundle.py --hybrid-target --draft-layers 5 --draft-intermediate 17408"
+        },
+        "has_files": true,
+        "order": 31
+      },
       "registration_commit": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
       "repository": "local-artifact",
       "revision": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",

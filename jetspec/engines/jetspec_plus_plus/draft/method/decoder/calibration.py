@@ -108,29 +108,289 @@ class GateError(SystemExit):
         super().__init__(code)
 
 
+def check_spec(spec):
+    problems = []
+    if spec.get("schema") != SPEC_SCHEMA:
+        problems.append("schema")
+    if spec.get("dataset") not in DATASETS:
+        problems.append("dataset")
+    if spec.get("s_variant") not in ("raw", "renorm"):
+        problems.append("s_variant")
+    qhats = spec.get("k_qhat") or {}
+    if set(qhats) != set(PASS_LABELS_ALL) or not all(0.0 <= float(v) <= 1.0 for v in qhats.values()):
+        problems.append("k_qhat")
+    for key, low in (("k_cap", 1), ("anchor_cap", 1), ("rows_cap", 1)):
+        if type(spec.get(key)) is not int or spec[key] < low:  # type-strict: True is not a cap of 1
+            problems.append(key)
+    if spec.get("m") is not None and (type(spec["m"]) is not int or spec["m"] not in POLICY_MS):
+        problems.append(f"m {spec['m']!r} is not an integer in {POLICY_MS}")
+    if "row_budget" in spec and (type(spec["row_budget"]) is not int or spec["row_budget"] not in ROW_BUDGETS
+                                 or spec["row_budget"] != spec.get("rows_cap")):  # type-strict: True is not a budget of 1
+        problems.append(f"row_budget {spec['row_budget']!r} is not an integer in {ROW_BUDGETS} equal to rows_cap {spec.get('rows_cap')!r}")
+    if not 0.0 <= float(spec.get("anchor_qhat", -1)) <= 1.0:
+        problems.append("anchor_qhat")
+    if spec.get("tail_seed") not in (None, "admission"):
+        problems.append("tail_seed")
+    slots = spec.get("slots") or {}
+    if slots.get("k") not in ("0.95", "0.99") or slots.get("anchor") not in ("0.94", "0.99"):
+        problems.append("slots")
+    if spec.get("s_source", "fr") not in S_SOURCES:
+        problems.append("s_source")
+    if type(spec.get("record_p_top1", False)) is not bool:
+        problems.append("record_p_top1")
+    if type(spec.get("record_q_shadow", False)) is not bool:
+        problems.append("record_q_shadow")
+    if spec.get("s_source") == "posterior":
+        # the served score is the published-slot product posterior, which is the renorm of the recorded
+        # 16-slot mass; and every gate on it recomputes that mass from the round's own p_top1
+        if spec.get("s_variant") != "renorm":
+            problems.append("a posterior spec must be s_variant renorm")
+        if spec.get("record_p_top1") is not True:
+            problems.append("a posterior spec must record p_top1")
+    if spec.get("s_source") == KSCORE_BLEND:
+        # the served score is rebuilt on every round from the recorded p_top1 and q_shadow, which only exist when the
+        # decoder ran (the admission tail seed); renorm is kept so the FR set the BLEND set replaces is a01q-FR's
+        if spec.get("s_variant") != "renorm":
+            problems.append("a blend spec must be s_variant renorm")
+        if spec.get("record_p_top1") is not True or spec.get("record_q_shadow") is not True:
+            problems.append("a blend spec must record p_top1 and q_shadow")
+        if spec.get("tail_seed") != "admission":
+            problems.append("a blend spec must seed the decoder tail at admission")
+        problems.extend(blend_coefficient_problems(spec.get("blend")))
+        if isinstance(spec.get("blend"), dict) and set(spec["blend"]) == set(BLEND_DEC_COEFFICIENTS) \
+                and "row_rule" not in spec:
+            problems.append("the decoder-feature BLEND score (blend_dec) is served only under the joint row rule")
+    elif "blend" in spec:
+        problems.append("blend coefficients on a spec that does not serve the blend score")
+    if "row_rule" in spec:
+        problems.extend(row_rule_problems(spec))
+    if problems:
+        raise GateError(f"E04_SPEC_INVALID {problems}")
+    return spec
 
 
+def row_rule_problems(spec):
+    """Why a spec's row_rule is malformed ([] for the joint rule over the BLEND score with its caps)."""
+    rule, problems = spec.get("row_rule"), []
+    if not isinstance(rule, dict) or set(rule) != {"kind", "level", "pool", "temperature", "tau"}:
+        return [f"row_rule {rule!r} is not {{kind, level, pool, temperature, tau}}"]
+    if rule["kind"] != ROWRULE_JOINT:
+        problems.append(f"row_rule kind {rule['kind']!r} is not {ROWRULE_JOINT!r}")
+    number = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool) and finite(float(value))  # noqa: E731
+    if not number(rule["level"]) or not 0.0 < float(rule["level"]) < 1.0:
+        problems.append(f"row_rule level {rule['level']!r} is not in (0, 1)")
+    if type(rule["pool"]) is not int or rule["pool"] != JOINT_POOL:
+        problems.append(f"row_rule pool {rule['pool']!r} != {JOINT_POOL}")
+    if not number(rule["temperature"]) or not float(rule["temperature"]) > 0.0:
+        problems.append(f"row_rule temperature {rule['temperature']!r} is not a finite positive number")
+    tau = rule["tau"]
+    if not isinstance(tau, dict) or set(tau) != set(PASS_LABELS_ALL) or \
+            not all(number(value) and 0.0 <= float(value) <= 1.0 for value in tau.values()):
+        problems.append(f"row_rule tau {tau!r} is not a value in [0, 1] per pass label {list(PASS_LABELS_ALL)}")
+    if spec.get("s_source") != KSCORE_BLEND:
+        problems.append("a joint row rule serves the BLEND k score (s_source blend)")
+    if "row_budget" in spec:
+        problems.append("a joint row rule and a row budget are exclusive")
+    return problems
 
 
+def blend_coefficient_problems(value):
+    """Why a spec's blend coefficients are malformed ([] when they are {a, b, c} or, the decoder-feature score,
+    {a, b, c, argmax, top, pos}, each a finite JSON number)."""
+    if not isinstance(value, dict) or set(value) not in (set(BLEND_COEFFICIENTS), set(BLEND_DEC_COEFFICIENTS)):
+        return [f"blend {value!r} is not the coefficients {list(BLEND_COEFFICIENTS)} or {list(BLEND_DEC_COEFFICIENTS)}"]
+    return [f"blend {name} {value[name]!r} is not a finite number" for name in sorted(value)
+            if not isinstance(value[name], (int, float)) or isinstance(value[name], bool) or not finite(float(value[name]))]
 
 
+def blend_kind(coefficients):
+    """"blend" for {a, b, c}, "blend_dec" for {a, b, c, argmax, top, pos} (the E04_KSCORE value that serves them)."""
+    names = set(coefficients) if isinstance(coefficients, dict) else None
+    for kind, wanted in KSCORE_COEFFICIENTS.items():
+        if names == set(wanted):
+            return kind
+    raise GateError(f"E04_BLEND_INPUT coefficients {sorted(names or [])} are neither BLEND nor BLEND_dec")
 
 
+def spec_kscore(spec):
+    """The E04_KSCORE value a spec serves: None (no blend score), "blend" or "blend_dec" (by its coefficient set)."""
+    return blend_kind(spec["blend"]) if spec_s_source(spec) == KSCORE_BLEND else None
 
 
+def spec_s_source(spec):
+    """The k score a spec serves: "fr" (the head), "posterior" (the drafter's product posterior) or "blend" (the
+    unified reader, patch 0007; its decoder-feature form, patch 0009, is the same source with six coefficients)."""
+    return spec.get("s_source", "fr")
 
 
+def spec_family(spec, k_cap=K_CAP_PINNED):
+    """Classify a spec as 'i' / 'p' / 'u' (the calibration-selected cap-k / top-m families), 'b' (the row budget) or
+    'bank' (the serving caps).
+
+    j-family: row_rule present (the joint rule, per check_spec, over the BLEND score), m null, c in (0, 1) (the carried
+    BLEND k side), k_cap == policy_lib.K_CAP, anchor_qhat == 1.0, anchor_cap == JOINT_POOL, rows_cap == JOINT_ROWS_CAP,
+    slots == ROW_BUDGET_SLOTS (.99 / .99).
+    i-family: m in POLICY_MS (1, 2, 3, 4, 6, 8; an int, never a bool), c set, k_cap == policy_lib.K_CAP,
+    anchor_qhat == 1.0, anchor_cap == m, rows_cap 128, slots == SLOTS_BY_M[m]. p-family: the same budget with
+    s_source "posterior" (so s_variant renorm and record_p_top1, per check_spec) and m in FAMILY_MS["p"] (1, 2).
+    u-family: the same budget with s_source "blend" (s_variant renorm, p_top1 and q_shadow recorded, the admission seed
+    and the blend coefficients, per check_spec) and m in FAMILY_MS["u"] (2, 3, 4).
+    b-family: row_budget present (an int in ROW_BUDGETS equal to rows_cap, per check_spec), m null, c set, the FR
+    score, k_cap == policy_lib.K_CAP, anchor_qhat == 1.0, anchor_cap == ROW_BUDGET_POOL, slots == ROW_BUDGET_SLOTS.
+    bank: m and c null, raw, caps 16/16/128 (an admission tail seed is allowed:
+    that is the seed-only cell), and never a posterior score. Any other shape is refused with exit 2.
+    """
+    check_spec(spec)
+    problems = []
+    if spec.get("family") != "threshold":
+        problems.append(f"family {spec.get('family')!r}")
+    m, c = spec.get("m"), spec.get("c")
+    if "row_budget" in spec:
+        family = "b"
+        if m is not None:
+            problems.append(f"m {m!r} on a row-budget spec (the b-family names no anchor budget)")
+        if not isinstance(c, (int, float)) or isinstance(c, bool) or not 0.0 < float(c) <= 1.0:
+            problems.append(f"c {c!r} is not in (0, 1]")
+        elif float(c) == PERMISSIVE_LEVEL and set(map(float, spec["k_qhat"].values())) != {1.0}:
+            problems.append(f"c {PERMISSIVE_LEVEL} is the permissive level: every k q-hat must be 1.0")
+        if spec_s_source(spec) != "fr":
+            problems.append("a row-budget spec serves the FR score")
+        if spec["k_cap"] != k_cap:
+            problems.append(f"k_cap {spec['k_cap']} != policy_lib K_CAP {k_cap}")
+        if float(spec["anchor_qhat"]) != 1.0:
+            problems.append(f"anchor_qhat {spec['anchor_qhat']} != 1.0")
+        if type(spec["anchor_cap"]) is not int or spec["anchor_cap"] != ROW_BUDGET_POOL:
+            problems.append(f"anchor_cap {spec['anchor_cap']!r} != the anchor pool {ROW_BUDGET_POOL}")
+        if spec["slots"] != ROW_BUDGET_SLOTS:
+            problems.append(f"slots {spec['slots']} != {ROW_BUDGET_SLOTS}")
+    elif "row_rule" in spec:
+        family = "j"
+        if m is not None:
+            problems.append(f"m {m!r} on a joint row-rule spec (the j-family names no anchor budget)")
+        if not isinstance(c, (int, float)) or isinstance(c, bool) or not 0.0 < float(c) < 1.0:
+            problems.append(f"c {c!r} is not in (0, 1)")
+        if spec["k_cap"] != k_cap:
+            problems.append(f"k_cap {spec['k_cap']} != policy_lib K_CAP {k_cap}")
+        if float(spec["anchor_qhat"]) != 1.0:
+            problems.append(f"anchor_qhat {spec['anchor_qhat']} != 1.0")
+        if type(spec["anchor_cap"]) is not int or spec["anchor_cap"] != JOINT_POOL:
+            problems.append(f"anchor_cap {spec['anchor_cap']!r} != the joint pool {JOINT_POOL}")
+        if type(spec["rows_cap"]) is not int or spec["rows_cap"] != JOINT_ROWS_CAP:
+            problems.append(f"rows_cap {spec['rows_cap']!r} != {JOINT_ROWS_CAP}")
+        if spec["slots"] != ROW_BUDGET_SLOTS:
+            problems.append(f"slots {spec['slots']} != {ROW_BUDGET_SLOTS}")
+    elif m is None and c is None:
+        family = "bank"
+        if spec["s_variant"] != "raw":
+            problems.append("bank spec must be raw")
+        if spec_s_source(spec) != "fr" or spec.get("record_p_top1"):
+            problems.append("bank spec must serve the FR score without p_top1 recording")
+        if spec.get("record_q_shadow"):
+            problems.append("bank spec must not record q_shadow")
+        if (spec["k_cap"], spec["anchor_cap"], spec["rows_cap"]) != BANK_CAPS:
+            problems.append(f"bank caps {(spec['k_cap'], spec['anchor_cap'], spec['rows_cap'])} != {BANK_CAPS}")
+    elif type(m) is int and m in POLICY_MS and isinstance(c, (int, float)) and not isinstance(c, bool):
+        family = {"posterior": "p", KSCORE_BLEND: "u"}.get(spec_s_source(spec), "i")
+        if m not in FAMILY_MS[family]:
+            problems.append(f"m {m} is not a {family}-family anchor budget {FAMILY_MS[family]}")
+        if not 0.0 < float(c) <= 1.0:
+            problems.append(f"c {c} is not in (0, 1]")
+        if float(c) == PERMISSIVE_LEVEL and set(map(float, spec["k_qhat"].values())) != {1.0}:
+            problems.append(f"c {PERMISSIVE_LEVEL} is the permissive level: every k q-hat must be 1.0")
+        if spec["k_cap"] != k_cap:
+            problems.append(f"k_cap {spec['k_cap']} != policy_lib K_CAP {k_cap}")
+        if float(spec["anchor_qhat"]) != 1.0:
+            problems.append(f"anchor_qhat {spec['anchor_qhat']} != 1.0")
+        if type(spec["anchor_cap"]) is not int or spec["anchor_cap"] != m:
+            problems.append(f"anchor_cap {spec['anchor_cap']!r} != m {m}")
+        if spec["rows_cap"] != 128:
+            problems.append(f"rows_cap {spec['rows_cap']} != 128")
+        if spec["slots"] != SLOTS_BY_M[m]:
+            problems.append(f"slots {spec['slots']} != {SLOTS_BY_M[m]}")
+    else:
+        family = None
+        problems.append(f"m {m!r} / c {c!r} is neither a policy family ({'/'.join(POLICY_FAMILIES)}) nor the bank family")
+    if problems:
+        raise GateError(f"E04_SPEC_FAMILY_REFUSED {spec.get('name')}: {problems}", code=2)
+    return family
 
 
+def threshold_mismatches(spec, thresholds):
+    """Slots where the served thresholds.json value differs from the spec's q-hat (exact float equality)."""
+    dataset, slots, problems = spec["dataset"], spec["slots"], []
+    for label in PASS_LABELS_ALL:
+        try:
+            value = float(thresholds["k_predictor"][label][dataset][slots["k"]]["value"])
+        except (KeyError, TypeError, ValueError):
+            value = None
+        if value != float(spec["k_qhat"][label]):
+            problems.append(["k", label, dataset, slots["k"], value, spec["k_qhat"][label]])
+    try:
+        value = float(thresholds["anchor_predictor"]["pooled"][dataset][slots["anchor"]]["value"])
+    except (KeyError, TypeError, ValueError):
+        value = None
+    if value != float(spec["anchor_qhat"]):
+        problems.append(["anchor", dataset, slots["anchor"], value, spec["anchor_qhat"]])
+    if spec_s_source(spec) == KSCORE_BLEND:
+        names = KSCORE_COEFFICIENTS[spec_kscore(spec)]
+        for name in names:
+            try:
+                value = float(thresholds[BLEND_THRESHOLDS_KEY][dataset][name]["value"])
+            except (KeyError, TypeError, ValueError):
+                value = None
+            if value != float(spec["blend"][name]):
+                problems.append([KSCORE_SLOT, dataset, name, value, spec["blend"][name]])
+        try:  # the bundle serves exactly the spec's coefficient set (the patch reads the set E04_KSCORE names)
+            served_names = set(thresholds[BLEND_THRESHOLDS_KEY][dataset])
+        except (KeyError, TypeError):
+            served_names = None
+        if served_names is not None and served_names != set(names):
+            problems.append([KSCORE_SLOT, dataset, "coefficient_set", sorted(served_names), list(names)])
+    if "row_rule" in spec:
+        for name, want in joint_slot_values(spec):
+            try:
+                value = float(joint_threshold_value(thresholds, dataset, name))
+            except (KeyError, TypeError, ValueError):
+                value = None
+            if value != float(want):
+                problems.append([JOINT_SLOT, dataset, name, value, want])
+    return problems
 
 
+def joint_slot_values(spec):
+    """[(slot name, value)] of a j-family spec's served thresholds: tau per pass label, then T."""
+    rule = spec["row_rule"]
+    return [(f"tau_{label}", float(rule["tau"][label])) for label in PASS_LABELS_ALL] + \
+        [("temperature", float(rule["temperature"]))]
 
 
+def joint_threshold_value(thresholds, dataset, name):
+    """The served thresholds value of one joint slot (tau_<label> or temperature) of a dataset."""
+    entry = thresholds[JOINT_THRESHOLDS_KEY][dataset]
+    if name == "temperature":
+        return entry["temperature"]["value"]
+    if not name.startswith("tau_") or name[4:] not in PASS_LABELS_ALL:
+        raise KeyError(name)
+    return entry["tau"][name[4:]]["value"]
 
 
 KSCORE_SLOT = "kscore_blend"
 
 
+def spec_threshold_slots(spec):
+    """thresholds.json writes: k_predictor/<label>/<dataset>/<slot>/value, anchor_predictor/pooled/..., and for a blend
+    spec BLEND_THRESHOLDS_KEY/<dataset>/<a|b|c>/value (slot kind KSCORE_SLOT), and for a j-family spec
+    JOINT_THRESHOLDS_KEY/<dataset>/tau/<label>/value and .../temperature/value (slot kind JOINT_SLOT, names
+    JOINT_SLOT_NAMES)."""
+    dataset, slots = spec["dataset"], spec["slots"]
+    values = [["k", label, dataset, slots["k"], float(spec["k_qhat"][label])] for label in PASS_LABELS_ALL]
+    values.append(["anchor", dataset, slots["anchor"], float(spec["anchor_qhat"])])
+    if spec_s_source(spec) == KSCORE_BLEND:
+        values.extend([KSCORE_SLOT, dataset, name, float(spec["blend"][name])]
+                      for name in KSCORE_COEFFICIENTS[spec_kscore(spec)])
+    if "row_rule" in spec:
+        values.extend([JOINT_SLOT, dataset, name, value] for name, value in joint_slot_values(spec))
+    return values
 
 
 def blend_fit(x, y, weights=None, start=None, tolerance=1e-12):
@@ -219,6 +479,8 @@ def joint_temperature(rows, temperatures=JOINT_T_GRID):
     return float(temperatures[best]), values[best], nll(1.0), nll(1.0, renormalize=False), len(pools)
 
 
+def finite(value):
+    return value is not None and not (isinstance(value, float) and (math.isnan(value) or math.isinf(value)))
 
 
 @reference_op("conformal_qhat")
@@ -304,6 +566,8 @@ def _features(rows, k_max):
     return result
 
 
+def _reader_features(rows):
+    return _features(rows, 15)
 
 
 def _masses(features, weights):
@@ -431,6 +695,12 @@ def fit_served_population(populations, *, arm, decoder_pin, decoder_checkpoint, 
     return result
 
 
+def fit_reader_served_population(populations, *, arm, decoder_pin, decoder_checkpoint,
+                                level=0.93, mode='generic-v1'):
+    """Keep the reader CLI's fixed-width input contract over the shared fitter."""
+    return fit_served_population(populations, arm=arm, decoder_pin=decoder_pin,
+                                 decoder_checkpoint=decoder_checkpoint, level=level,
+                                 mode=mode, _reader_compat=True)
 
 
 PASSES = PASS_LABELS_ALL
@@ -439,6 +709,8 @@ SERVED_G = {"gsm8k": {"0.94": 0.9618559069931507, "0.99": 0.999704080139054},
             "math500": {"0.94": 0.9029182195663452, "0.99": 0.9933349778875709}}
 
 
+class ComposeError(Exception):
+    pass
 
 
 def _require(condition, message):
@@ -449,6 +721,62 @@ def _require(condition, message):
 require = _require
 
 
+def compose_thresholds(source, decoder, rev1_thresholds, knobs_points):
+    for point in knobs_points:  # a knobs point outside the policy families (e.g. k_cap 16) is never composed
+        try:
+            family = spec_family(point["spec"], K_CAP_PINNED)
+        except SystemExit as error:
+            raise ComposeError(f"{point.get('name')}: {getattr(error, 'message', error)}")
+        require(family in POLICY_FAMILIES, f"{point.get('name')}: a {family}-family spec is not a knobs point")
+    out = json.loads(json.dumps(source))
+    if decoder == "v1":
+        served_g = source["anchor_predictor_v1"]["served_g"]["pooled"]
+        out["anchor_predictor"] = {"pooled": {d: {s: dict(served_g[d][s]) for s in A_SLOTS} for d in DATASETS}}
+        for d in DATASETS:
+            for s in A_SLOTS:
+                require(float(out["anchor_predictor"]["pooled"][d][s]["value"]) == SERVED_G[d][s],
+                        f"served_g {d} {s} differs from the eng04_h08 table")
+    else:
+        stripped = {k: v for k, v in source.items() if k != "anchor_predictor_v1"}
+        require(stripped == rev1_thresholds, "revision-3 thresholds minus anchor_predictor_v1 differ from revision 1")
+    overrides = []
+    for point in knobs_points:
+        for slot in point["threshold_slots"]:
+            if slot[0] == "k":
+                _, label, dataset, name, value = slot
+                require(label in PASSES and dataset in DATASETS and name in K_SLOTS, f"bad k slot {slot}")
+                require(0.0 <= float(value) <= 1.0, f"slot value outside [0,1] {slot}")
+                out["k_predictor"][label][dataset][name]["value"] = float(value)
+            elif slot[0] == "anchor":
+                _, dataset, name, value = slot
+                require(dataset in DATASETS and name in A_SLOTS, f"bad anchor slot {slot}")
+                require(0.0 <= float(value) <= 1.0, f"slot value outside [0,1] {slot}")
+                out["anchor_predictor"]["pooled"][dataset][name]["value"] = float(value)
+            elif slot[0] == KSCORE_SLOT:
+                _, dataset, name, value = slot
+                require(dataset in DATASETS and name in BLEND_DEC_COEFFICIENTS, f"bad blend coefficient slot {slot}")
+                require(isinstance(value, (int, float)) and not isinstance(value, bool) and finite(float(value)),
+                        f"blend coefficient is not a finite number {slot}")
+                out.setdefault(BLEND_THRESHOLDS_KEY, {}).setdefault(dataset, {})[name] = {"value": float(value)}
+            elif slot[0] == JOINT_SLOT:
+                _, dataset, name, value = slot
+                require(dataset in DATASETS and name in JOINT_SLOT_NAMES, f"bad joint row-rule slot {slot}")
+                require(isinstance(value, (int, float)) and not isinstance(value, bool) and finite(float(value)),
+                        f"joint row-rule value is not a finite number {slot}")
+                if name == "temperature":
+                    require(float(value) > 0.0, f"temperature is not positive {slot}")
+                    out.setdefault(JOINT_THRESHOLDS_KEY, {}).setdefault(dataset, {})["temperature"] = {"value": float(value)}
+                else:
+                    require(0.0 <= float(value) <= 1.0, f"tau outside [0,1] {slot}")
+                    out.setdefault(JOINT_THRESHOLDS_KEY, {}).setdefault(dataset, {}).setdefault("tau", {})[
+                        name[len("tau_"):]] = {"value": float(value)}
+            else:
+                raise ComposeError(f"unknown slot {slot}")
+            overrides.append(slot)
+    for point in knobs_points:  # deterministic: every point's own spec q-hats are the served slot values
+        mismatches = threshold_mismatches(point["spec"], out)
+        require(not mismatches, f"{point.get('name')}: threshold slots disagree with the point's spec: {mismatches}")
+    return out, overrides
 
 
 CAL28_SHA = 'f9f77088ac74b91634f451adc1aff1a31d3946fd54915255d9a9008d15de7b0f'
@@ -566,6 +894,21 @@ def double_fit(fit, output):
     return left
 
 
+def make_bundle(base, fit, decoder_manifest, output):
+    thresholds = dict(base)
+    thresholds['e04_kscore_blend'] = {'pooled': {
+        key: {'value': float(value)} for key, value in fit['coefficients'].items()}}
+    v = fit['pooled']
+    thresholds['e04_rowrule_joint'] = {'pooled': {
+        'temperature': {'value': float(v['T'])},
+        'tau': {key: {'value': float(value)} for key, value in v['tau'].items()}}}
+    (output / 'decoder').mkdir(parents=True)
+    shutil.copyfile(decoder_manifest, output / 'decoder/manifest.json')
+    (output / 'thresholds.json').write_bytes(encoded(thresholds))
+    (output / 'pin.json').write_bytes(encoded({
+        'schema': 'jetspec.hybrid_thresholds_pin/1',
+        'thresholds_sha256': sha(output / 'thresholds.json')}))
+    return thresholds
 
 
 def load_capture(capture):
@@ -637,7 +980,7 @@ def cal28_gate(capture, base, manifest, reference, output, *, served_source):
         result['calibration_cells'] = [dict(audit, cell='cal28-p2-capture-56x512',
                                            prompts_sha256=PROMPTS_SHA['27B'])]
         result['fit_tool'] = {
-            'source': '9732388a predictor/reader/refit_served_e04.py',
+            'source': '9732388a eval/jetspec_eval/offline/decoder/refit_served_e04.py',
             'refit_served_e04_blob': '52d18cf05393cc336f665f6aec01d47cb4f01c85',
             'e04lib_blob': 'd1a6083c3eb95559da5bcdc538368b49e59c7109',
             'served_py_sha256': sha(served_source)}
@@ -687,6 +1030,28 @@ def select_replay_rows(scores, keys, *, tau, floor, cap, fallback):
 select_rows = select_replay_rows
 
 
+def pair_scores(row, fit):
+    """Same float64 arithmetic and grid as chain.wire_records.replay_record."""
+    import torch
+    from jetspec.engines.jetspec_plus_plus.draft.method.cache_rows import blend_features, blend_mass, joint_scores
+    p = torch.tensor(row['p_top1'][1:], dtype=torch.float64).clamp(1e-6, 1 - 1e-6)
+    q = torch.tensor([value or 0.0 for value in row['q_shadow'][:-1]],
+                     dtype=torch.float64).clamp(1e-6, 1 - 1e-6)
+    c = fit['coefficients']
+    eq = torch.tensor([x == y for x, y in zip(row['shadow_argmax'][:-1],
+                                            row['offers']['d_rej'][:-1])], dtype=torch.float64)
+    top = torch.tensor([max(values) for values in row['offers']['top_probabilities'][:-1]],
+                       dtype=torch.float64).clamp(1e-6, 1 - 1e-6)
+    values = tuple(c[name] for name in ('a', 'b', 'c', 'argmax', 'top', 'pos'))
+    z = blend_features(p, q, values, argmax_eq=eq, top=top, multiply_position_first=True)
+    mass = blend_mass(z, sigmoid=True)
+    if row['after_miss']:
+        mass.zero_()
+        mass[0] = 1
+    probabilities = torch.tensor(row['offers']['top_probabilities'], dtype=torch.float64)
+    scores = joint_scores(mass, probabilities, fit['pooled']['T']).flatten().tolist()
+    keys = [[k, token] for k, tokens in enumerate(row['offers']['top_ids']) for token in tokens]
+    return scores, keys
 
 
 def replay_capture(rows, fit, *, served_floor=0):
@@ -759,6 +1124,21 @@ def replay_capture(rows, fit, *, served_floor=0):
 replay = replay_capture
 
 
+def pinned_capture_thresholds(capture, path=None):
+    manifest = json.loads((capture / 'output.json.manifest.json').read_text())
+    pin = next((item for item in manifest['files'] if item['role'] == 'heads/thresholds'), None)
+    if pin is None:
+        raise ValueError('CAPTURE_THRESHOLDS_PIN_MISSING')
+    path = path or Path(pin['path'])
+    if sha(path) != pin['sha256']:
+        raise ValueError('CAPTURE_THRESHOLDS_PIN_MISMATCH')
+    thresholds = json.loads(path.read_text())
+    coefficients = dataset_entry(thresholds['e04_kscore_blend'], 'gsm8k')
+    rule = dataset_entry(thresholds['e04_rowrule_joint'], 'gsm8k')
+    fit = {'coefficients': {key: value['value'] for key, value in coefficients.items()},
+           'pooled': {'T': rule['temperature']['value'],
+                      'tau': {key: value['value'] for key, value in rule['tau'].items()}}}
+    return path, fit
 
 
 def published_keys_gate(report, name):
@@ -770,8 +1150,48 @@ def published_keys_gate(report, name):
             tolerated_mismatch_count=tolerated, published_keys_total=report['published_keys_total'])))
 
 
+def sources_for(capture, paths):
+    files = [capture / 'output.json', capture / 'output.json.manifest.json',
+             *sorted((capture / 'output.json.rows').glob('*.jsonl')), *paths]
+    return {str(path): sha(path) for path in files}
 
 
+def validate_capture(capture, recipe, policy_path, model, deadline):
+    manifest = json.loads((capture / 'output.json.manifest.json').read_text())
+    environment = manifest['env']
+    # Manifests store either strings or provenance records depending on the version.
+    environment = {key: value.get('value') if isinstance(value, dict) else value
+                   for key, value in environment.items()}
+    required = {environment_name('engine', 'engine_settings.record_ptop1'): '1', environment_name('engine', 'engine_settings.record_qshadow'): '1',
+                environment_name('engine', 'engine_settings.draft_deadline'): str(int(deadline == 'on'))}
+    if recipe['environment'].get(environment_name('engine', 'engine_settings.chain_graph')) == 'seg':
+        required[environment_name('engine', 'engine_settings.chain_wire_record')] = '1'
+    for key in (environment_name('method', 'method_settings.chain_fixed_config'), environment_name('engine', 'engine_settings.chain_graph'), environment_name('method', 'method_settings.adapter_refresh'),
+                environment_name('engine', 'engine_settings.refresh_swap'), environment_name('method', 'method_settings.rows_rule_cap'), environment_name('engine', 'engine_settings.rows_cap')):
+        if key in recipe['environment']:
+            required[key] = recipe['environment'][key]
+    required.update({key: value for key, value in recipe['environment'].items()
+                     if key.startswith(('E04_', 'JETSPEC_REFRESH_SWAP_'))})
+    for key, value in required.items():
+        if environment.get(key) != value:
+            raise ValueError(f'CAPTURE_CONDITION_MISMATCH {key}: {environment.get(key)!r} != {value!r}')
+    args = manifest['values']['args']
+    if args.get('temp') != 0 or args.get('output_len') != 512:
+        raise ValueError('CAPTURE_REQUIRES_T0_512')
+    prompts_pin = next((item['sha256'] for item in manifest['files'] if item['role'] == 'prompts'), None)
+    if prompts_pin != PROMPTS_SHA[model]:
+        raise ValueError('CAPTURE_PROMPTS_PIN_MISMATCH')
+    device = manifest['values'].get('device_name', '')
+    pin = next((item['sha256'] for item in manifest['files']
+                if item['role'] == 'heads/decoder_manifest'), None)
+    if pin is None:
+        raise ValueError('CAPTURE_DECODER_MANIFEST_PIN_MISSING')
+    recorded_policy = next((item['sha256'] for item in manifest['files']
+                            if item['role'] == 'serve_policy'), None)
+    requested = json.loads(policy_path.read_text())
+    if recorded_policy != sha(policy_path) and any(v.get('enabled') for k, v in requested.items() if k != 'schema'):
+        raise ValueError('CAPTURE_SERVE_POLICY_MISMATCH')
+    return pin, device
 
 
 def main(argv=None):

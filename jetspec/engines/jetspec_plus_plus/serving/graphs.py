@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 import os
 from jetspec.engines.jetspec_plus_plus._optional import version
 import torch

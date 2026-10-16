@@ -177,7 +177,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, module) {
 @lru_cache(None)
 def _extension():
     from torch.utils.cpp_extension import load_inline
-    from .c1_fused import _torch_cublas_ldflags
+    from jetspec.engines.jetspec_plus_plus.jetspec.c1_fused import _torch_cublas_ldflags
 
     return load_inline(name="jetspec_adapter_gemm_w602", cpp_sources=_CPP,
                        with_cuda=True, extra_cflags=["-O3"],

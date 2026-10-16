@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 
 # Locate the component from either its category or its stable forwarding path.
 from pathlib import Path as _ToolPath
@@ -31,7 +32,7 @@ from jetspec.engines.jetspec_plus_plus.read import bench_helpers
 from jetspec.engines.jetspec_plus_plus.read.bench_helpers import get_model_paths
 from jetspec.engines.jetspec_plus_plus.read.measure.bench_guards import exported_prompt_ids, generate_inputs_fail_closed
 from jetspec.engines.jetspec_plus_plus.comparisons import eagle3
-from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.jetspec.env import validate_environment
 from jetspec.engines.jetspec_plus_plus.legacy_env import environment_name
 from jetspec.engines.jetspec_plus_plus.run_config import config_environment

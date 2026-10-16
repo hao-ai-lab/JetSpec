@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """In-memory host timestamps and nonblocking CUDA duration collection."""
 
 # Locate the component from either its category or its stable forwarding path.
@@ -167,7 +168,55 @@ class Recorder:
 
     cuda_span = dual_span
 
+    @contextmanager
+    def graph_replay(self, *, stream=None):
+        """Time one exact CUDAGraph replay under its active host component."""
+        stack = self._stack()
+        if (not self.device_enabled or not self.graph_replays or not stack
+                or getattr(self.local, 'round', None) is None):
+            yield None
+            return
+        a, b = self._acquire_event_pair()
+        if stream is None:
+            import torch
+            stream = torch.cuda.current_stream()
+        device = getattr(stream, 'device', 'cuda')
+        device_index = getattr(device, 'index', None)
+        device_name = f'cuda:{device_index}' if isinstance(device_index, int) else str(device)
+        stream_id = getattr(stream, 'cuda_stream', 'unknown')
+        parent = stack[-1]
+        row = dict(type='span', id=self.serial, label=parent['label'], side=parent['side'],
+                   kind='cuda', rank=self.rank, thread=threading.get_ident(),
+                   round=getattr(self.local, 'round', None), parent=parent['id'],
+                   start=self.clock(), cuda_stream=f'{device_name}:{stream_id}',
+                   cuda_status='PENDING')
+        self.serial += 1
+        a.record(stream)
+        try:
+            yield row
+        finally:
+            b.record(stream)
+            row['stop'] = self.clock()
+            self.records.append(row)
+            self.pending.append((row, a, b))
 
+    def prepare_cuda_events(self, pair_count=None):
+        """Allocate the fixed event pool before measured serving begins."""
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        if not self.device_enabled:
+            return 0
+        if self.event_pool:
+            return len(self.event_pool)
+        pair_count = pair_count or int(setting(self, 'engine.engine_settings.roundtrace_event_pairs', str(DEFAULT_CUDA_EVENT_PAIRS)))
+        if pair_count <= 0:
+            raise ValueError('CUDA event pool size must be positive')
+        factory = self.event_factory
+        if factory is None:
+            import torch
+            factory = lambda: torch.cuda.Event(enable_timing=True)
+        self.event_pool = [(factory(), factory()) for _ in range(pair_count)]
+        self.available_events = list(reversed(self.event_pool))
+        return len(self.event_pool)
 
     def _acquire_event_pair(self):
         if not self.event_pool:

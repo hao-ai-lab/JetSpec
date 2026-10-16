@@ -83,7 +83,9 @@ def legacy_selector_names():
 
 def select_legacy(environ, mode='current'):
     """Capture legacy selectors once at the adapter, before either rank is spawned."""
-    from jetspec.engines.jetspec_plus_plus.jetspec.env import REQUIRED, NO_DEFAULT, legacy_registry as _legacy_registry
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import REQUIRED
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import NO_DEFAULT
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
     refuse_retired(environ)
     chosen, streams = set(), set()

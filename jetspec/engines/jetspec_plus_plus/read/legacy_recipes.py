@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """The declared store for explicitly requested historical recipes and policies."""
 import json
 from pathlib import Path
@@ -37,3 +38,6 @@ def policy_contents(path):
     return Path(path).read_bytes()
 
 
+def serving_lock_bytes(root):
+    # No live serving lock exists yet. Keep this legacy probe explicit here.
+    return (Path(root) / 'history/retired/serve/uv.lock').read_bytes()

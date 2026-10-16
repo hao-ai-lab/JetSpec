@@ -42,14 +42,56 @@ except ImportError:  # Triton is Linux/CUDA-only in the pinned environment.
     tl = None
 
 
+def rows_live(run_config=None):
+    """JETSPEC_BATCH_ROWS_LIVE (default 1; read only under JETSPEC_BATCH_DRAFT_GRAPH=1): the
+    batched draft graph's Jacobi passes run over the round's live rows (the compact pass above);
+    0 keeps the fixed row-cap pass."""
+    from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
+    value = setting(run_config, 'engine.engine_settings.batch_rows_live', '1')
+    if value not in ('0', '1'):
+        raise ValueError('JETSPEC_BATCH_ROWS_LIVE must be 0 or 1')
+    return value == '1'
 
 
+def rows_live_quantum(capacity, run_config=None):
+    """JETSPEC_BATCH_ROWS_QUANTUM: the compact pass's row count is the live row count rounded up to
+    a multiple of this (fewer captured passes, a few dead rows per round).  Unset, it is a
+    sixteenth of the bucket's rows, at least 2 (2 up to 32 rows, 4 at 64, 8 at 128): at most ~16
+    passes per bucket and prefix bucket, with the rounding small next to the live rows."""
+    from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
+    value = setting(run_config, 'engine.engine_settings.batch_rows_quantum')
+    if value is None:
+        return max(2, int(capacity) // 16)
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError('JETSPEC_BATCH_ROWS_QUANTUM must be a positive integer')
+    return int(value)
 
 
+def live_row_bucket(total, capacity, quantum):
+    """The compact pass's row count for ``total`` live rows of a ``capacity``-row bucket."""
+    if not 1 <= int(total) <= int(capacity):
+        raise ValueError('live rows must number 1..the bucket capacity')
+    return min(int(capacity), -(-int(total) // int(quantum)) * int(quantum))
 
 
+def live_row_buckets(padded, rows_per_request, quantum):
+    """Every compact row count a round of the ``padded`` batch bucket can use.  A bucket serves
+    more than half of its size (batch_draft_bucket: a smaller bucket serves fewer requests; the
+    two-request bucket serves two), and every request drafts 1..rows_per_request rows."""
+    capacity = int(padded) * int(rows_per_request)
+    fewest = 2 if padded <= 2 else padded // 2 + 1
+    return sorted({live_row_bucket(total, capacity, quantum) for total in range(fewest, capacity + 1)})
 
 
+def live_row_order(counts, rows_per_request):
+    """The bucket's rows in compact order: each request's first ``counts[n]`` rows, request-major,
+    then every other row of the bucket (the dead rows a rounded-up compact pass also runs)."""
+    H = int(rows_per_request)
+    if any(not 0 <= int(count) <= H for count in counts):
+        raise ValueError('a request drafts 0..H rows')
+    live = [n * H + j for n, count in enumerate(counts) for j in range(int(count))]
+    dead = [n * H + j for n, count in enumerate(counts) for j in range(int(count), H)]
+    return live + dead
 
 
 class SharedOutLinear(torch.nn.Module):
@@ -83,89 +125,7 @@ class _DrafterView:
 
 
 if triton is not None:
-
-    @triton.jit
-    def _q_rotary_scatter_kernel(normalized_ptr, cos_ptr, sin_ptr, output_ptr, index_ptr,
-                                 heads: tl.constexpr, head_dim: tl.constexpr, BLOCK: tl.constexpr):
-        # c1_fused._q_rotary_kernel at one token per row (the same loads and arithmetic), each
-        # row's heads stored at bucket token index_ptr[row] of the attention's query layout
-        program = tl.program_id(0)
-        head = program % heads
-        row = program // heads
-        offsets = tl.arange(0, BLOCK)
-        mask = offsets < head_dim
-        input_base = (row * heads + head) * head_dim
-        normalized = tl.load(normalized_ptr + input_base + offsets, mask=mask, other=0.0)
-        half = head_dim // 2
-        rotated_offsets = tl.where(offsets < half, offsets + half, offsets - half)
-        rotated = tl.load(normalized_ptr + input_base + rotated_offsets, mask=mask, other=0.0)
-        rotated = tl.where(offsets < half, -rotated, rotated)
-        rope_base = row * head_dim
-        cos = tl.load(cos_ptr + rope_base + offsets, mask=mask, other=0.0)
-        sin = tl.load(sin_ptr + rope_base + offsets, mask=mask, other=0.0)
-        output_base = (tl.load(index_ptr + row) * heads + head) * head_dim
-        first = (normalized * cos).to(tl.bfloat16)
-        second = (rotated * sin).to(tl.bfloat16)
-        tl.store(output_ptr + output_base + offsets, (first + second).to(tl.bfloat16), mask=mask)
-
-
-    @triton.jit
-    def _kv_rotary_slots_kernel(normalized_key_ptr, projected_value_ptr, cos_ptr, sin_ptr, cache_ptr,
-                                slots_ptr, slot_stride, kv_stride, head_stride,
-                                kv_heads: tl.constexpr, head_dim: tl.constexpr, BLOCK: tl.constexpr):
-        # c1_fused._kv_rotary_repeat_kernel at one token per row and one group (the same loads and
-        # arithmetic), each row's key and value stored at its K/V slot slots_ptr[row] of the cache
-        program = tl.program_id(0)
-        head = program % kv_heads
-        row = program // kv_heads
-        offsets = tl.arange(0, BLOCK)
-        mask = offsets < head_dim
-        key_base = row * (kv_heads * head_dim) + head * head_dim
-        normalized = tl.load(normalized_key_ptr + key_base + offsets, mask=mask, other=0.0)
-        half = head_dim // 2
-        rotated_offsets = tl.where(offsets < half, offsets + half, offsets - half)
-        rotated = tl.load(normalized_key_ptr + key_base + rotated_offsets, mask=mask, other=0.0)
-        rotated = tl.where(offsets < half, -rotated, rotated)
-        rope_base = row * head_dim
-        cos = tl.load(cos_ptr + rope_base + offsets, mask=mask, other=0.0)
-        sin = tl.load(sin_ptr + rope_base + offsets, mask=mask, other=0.0)
-        first = (normalized * cos).to(tl.bfloat16)
-        second = (rotated * sin).to(tl.bfloat16)
-        target = cache_ptr + tl.load(slots_ptr + row) * slot_stride + head * head_stride
-        tl.store(target + offsets, (first + second).to(tl.bfloat16), mask=mask)
-        value = tl.load(projected_value_ptr + key_base + offsets, mask=mask, other=0.0)
-        tl.store(target + kv_stride + offsets, value, mask=mask)
-
-
-    @triton.jit
-    def _compact_rows_kernel(order_ptr, qcos_ptr, qsin_ptr, noise_slots_ptr, preceding_ptr, first_ptr,
-                             keys_ptr, active_ptr, token_map_ptr, cos_ptr, sin_ptr, kv_slots_ptr,
-                             preceding_out, first_out, keys_out, active_out, first_stride,
-                             B: tl.constexpr, HD: tl.constexpr, BLOCK_B: tl.constexpr,
-                             BLOCK_HD: tl.constexpr):
-        # compact row -> its bucket row: the tokens' bucket positions, rotary rows and K/V slots,
-        # and the row's anchor, first-pass ids, key and active flag (copies only)
-        row = tl.program_id(0).to(tl.int64)
-        source = tl.load(order_ptr + row)
-        slot = tl.arange(0, BLOCK_B)
-        in_block = slot < B
-        token = source * B + slot
-        target = row * B + slot
-        tl.store(token_map_ptr + target, token, mask=in_block)
-        tl.store(kv_slots_ptr + target, tl.load(noise_slots_ptr + token, mask=in_block, other=0),
-                 mask=in_block)
-        dim = tl.arange(0, BLOCK_HD)
-        inside = in_block[:, None] & (dim[None, :] < HD)
-        tl.store(cos_ptr + target[:, None] * HD + dim[None, :],
-                 tl.load(qcos_ptr + token[:, None] * HD + dim[None, :], mask=inside), mask=inside)
-        tl.store(sin_ptr + target[:, None] * HD + dim[None, :],
-                 tl.load(qsin_ptr + token[:, None] * HD + dim[None, :], mask=inside), mask=inside)
-        tl.store(first_out + row * B + slot, tl.load(first_ptr + source * first_stride + slot,
-                                                    mask=in_block), mask=in_block)
-        tl.store(preceding_out + row, tl.load(preceding_ptr + source))
-        pair = tl.arange(0, 2)
-        tl.store(keys_out + row * 2 + pair, tl.load(keys_ptr + source * 2 + pair))
-        tl.store(active_out + row, tl.load(active_ptr + source))
+    from jetspec.engines.jetspec_plus_plus.kernels.live_rows import (_q_rotary_scatter_kernel, _kv_rotary_slots_kernel, _compact_rows_kernel)
 
 
 def kv_rotary_into_slots(fused, attn, source, cos, sin, cache, slots, projected=None):
@@ -239,6 +199,41 @@ class LiveRowsShelf:
                         if captured and isinstance(getattr(lm_head, 'weight', None), torch.Tensor)
                         and lm_head.weight.ndim == 2 else drafter)
 
+    def write_order(self, order, rows, base, inputs=()):
+        """Upload the round's compact order (every bucket row, live first) in one copy and gather
+        its first ``rows`` rows' token positions, query rotary rows (the bucket head ``base``'s,
+        after this round's geometry) and noise K/V slots, and those rows of each bucket-row tensor
+        in ``inputs`` (anchors [rows, 1], first-pass ids [rows, B], keys [rows, 2], active [rows]:
+        one kernel on CUDA).  Returns (the device order of those rows, the gathered inputs)."""
+        order = list(map(int, order))
+        if sorted(order) != list(range(self.rows)):
+            raise ValueError('the compact order must list every bucket row once')
+        host = torch.tensor(order, dtype=torch.long)
+        cuda = self.order.device.type == 'cuda'
+        self.order.copy_(host.pin_memory() if cuda else host, non_blocking=cuda)
+        rows = int(rows)
+        tokens = rows * self.B
+        order_rows = self.order[:rows]
+        qcos, qsin, noise_slots = base.qcos[0], base.qsin[0], base.layout.noise_slots
+        if (triton is not None and cuda and len(inputs) == 4
+                and all(x.is_contiguous() for x in (qcos, qsin, noise_slots, *inputs))
+                and inputs[1].shape[-1] == self.B and inputs[0].shape[-1] == 1
+                and inputs[2].shape[-1] == 2 and qcos.shape[-1] == self.cos.shape[-1]):
+            preceding, first, keys, active = inputs
+            gathered = (preceding.new_empty(rows, 1), first.new_empty(rows, self.B),
+                        keys.new_empty(rows, 2), active.new_empty(rows))
+            _compact_rows_kernel[(rows,)](
+                order_rows, qcos, qsin, noise_slots, preceding, first, keys, active, self.token_map,
+                self.cos, self.sin, self.kv_slots, *gathered, first.stride(0), B=self.B,
+                HD=qcos.shape[-1], BLOCK_B=triton.next_power_of_2(self.B),
+                BLOCK_HD=triton.next_power_of_2(qcos.shape[-1]), num_warps=1)
+            return order_rows, gathered
+        token_map = self.token_map[:tokens]
+        torch.add(order_rows[:, None] * self.B, self.slots, out=token_map.view(rows, self.B))
+        torch.index_select(qcos, 0, token_map, out=self.cos[:tokens])
+        torch.index_select(qsin, 0, token_map, out=self.sin[:tokens])
+        torch.index_select(noise_slots, 0, token_map, out=self.kv_slots[:tokens])
+        return order_rows, tuple(x.index_select(0, order_rows) for x in inputs)
 
 
 class CompactRowHead(torch.nn.Module):

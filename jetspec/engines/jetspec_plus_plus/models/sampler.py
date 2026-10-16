@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 import torch
 from torch import nn
 from jetspec.engines.jetspec_plus_plus._optional import flashinfer

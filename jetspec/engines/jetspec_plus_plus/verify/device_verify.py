@@ -4,6 +4,15 @@ import numpy as np
 import torch
 
 
+def prepare_single_verify_tensors(proposals, cached_tokens, block_table, block_size):
+    """Match target prefill tensors for one cached sequence without host token lists."""
+    width = proposals.shape[0]
+    positions = torch.arange(width, dtype=torch.int64, device=proposals.device) + cached_tokens
+    slots = block_table[positions.div(block_size, rounding_mode="floor")].to(torch.int32)
+    slots = slots * block_size + positions.remainder(block_size).to(torch.int32)
+    cu_q = torch.arange(2, dtype=torch.int32, device=proposals.device) * width
+    cu_k = torch.arange(2, dtype=torch.int32, device=proposals.device) * (cached_tokens + width)
+    return proposals, positions, cu_q, cu_k, width, cached_tokens + width, slots
 
 
 def stage_single_verify_inputs(buffers, proposals, cached_tokens, block_table, block_size, *, input_staged=False):

@@ -71,6 +71,9 @@ class Sequence:
     def num_completion_tokens(self):
         return self.num_tokens - self.num_prompt_tokens
 
+    @property
+    def prompt_token_ids(self):
+        return self.token_ids[:self.num_prompt_tokens]
 
     @property
     def completion_token_ids(self):
@@ -105,6 +108,13 @@ class Sequence:
         self.last_token = token_id
         self.num_tokens += 1
 
+    def clone_spec(self):
+        """Returns a new sequence with identical state for speculative decoding."""
+        cloned = Sequence.__new__(Sequence)
+        for attr in self._ATTRIBUTES:
+            value = getattr(self, attr)
+            setattr(cloned, attr, copy(value))
+        return cloned
     
     def __getstate__(self):
         state = {}

@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 
 from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
 import os
@@ -38,28 +39,7 @@ ATTENTION_BACKEND = attention_backend()
 from jetspec.engines.jetspec_plus_plus.models.context import get_context
 
 
-@triton.jit
-def store_kvcache_kernel(
-    key_ptr,
-    key_stride,
-    value_ptr,
-    value_stride,
-    k_cache_ptr,
-    v_cache_ptr,
-    slot_mapping_ptr,
-    D: tl.constexpr,
-):
-    idx = tl.program_id(0)
-    slot = tl.load(slot_mapping_ptr + idx)
-    if slot == -1:
-        return
-    key_offsets = idx * key_stride + tl.arange(0, D)
-    value_offsets = idx * value_stride + tl.arange(0, D)
-    key = tl.load(key_ptr + key_offsets)
-    value = tl.load(value_ptr + value_offsets)
-    cache_offsets = slot.to(tl.int64) * D + tl.arange(0, D)
-    tl.store(k_cache_ptr + cache_offsets, key)
-    tl.store(v_cache_ptr + cache_offsets, value)
+from jetspec.engines.jetspec_plus_plus.kernels.store_kvcache import store_kvcache_kernel
 
 
 def store_kvcache(key: torch.Tensor, value: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, slot_mapping: torch.Tensor):

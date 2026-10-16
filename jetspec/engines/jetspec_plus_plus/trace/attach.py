@@ -60,6 +60,14 @@ def _wrapper(original, recorder, label, side, kind):
                 return result
         return chain
     if kind in ('round', 'round_publish'):
+        @functools.wraps(original)
+        def rounded(*args, **kwargs):
+            metadata = {'await_publish': kind == 'round_publish'}
+            if side == 'verify':
+                seqs = args[1] if len(args) > 1 else kwargs.get('seqs', [])
+                metadata['sequences'] = [(s.seq_id, getattr(s, 'jetspec_round', None)) for s in seqs]
+            with recorder.round(side, **metadata):
+                return original(*args, **kwargs)
         return rounded
     if kind == 'publish':
         @functools.wraps(original)
@@ -148,10 +156,78 @@ def _wrapper(original, recorder, label, side, kind):
                 return original(*args, **kwargs)
         return query
     if kind in ('both', 'side_stream', 'replay'):
+        @functools.wraps(original)
+        def dual(*args, **kwargs):
+            if recorder.closed:
+                return original(*args, **kwargs)
+            if (not recorder._stack()
+                    and getattr(recorder.local, 'round', None) is None
+                    and getattr(recorder, 'scoped', False)):
+                return original(*args, **kwargs)
+            stream = getattr(args[0], 'stream', None) if kind == 'side_stream' else None
+            context = (recorder.span(label, side)
+                       if kind == 'replay' and recorder.graph_replays
+                       else recorder.dual_span(label, side, stream=stream))
+            with context:
+                return original(*args, **kwargs)
         return dual
+    @functools.wraps(original)
+    def timed(*args, **kwargs):
+        if recorder.closed:
+            return original(*args, **kwargs)
+        if not recorder._stack() and getattr(recorder.local, 'round', None) is None and label not in ('engine_step', 'scheduler_finished') and getattr(recorder, 'scoped', False) and kind not in ('background', 'background_key'):
+            return original(*args, **kwargs)
+        if kind == 'cuda':
+            with recorder.cuda_span(label, side):
+                return original(*args, **kwargs)
+        row = recorder.begin(label, side)
+        if kind == 'background_key':
+            row['key'] = args[2] if len(args) > 2 else kwargs.get('key')
+        elif kind == 'message_wait':
+            row['key'] = getattr(args[0], 'key', None)
+        try:
+            return original(*args, **kwargs)
+        finally:
+            recorder.end(row)
     return timed
 
 
+def attach(*, recorder=None, table=None, run_config=None):
+    """Attach once per process. Unset env returns before any engine import."""
+    from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+    global _active
+    if recorder is None:
+        directory = setting(run_config, 'engine.engine_settings.roundtrace')
+        if not directory:
+            return None
+        if _active is not None:
+            return _active
+        # Each rank has a distinct process; filenames use PID when RANK is absent.
+        recorder = Recorder(directory, rank=os.environ.get('RANK', os.getpid()), run_config=run_config)
+    if table is None:
+        from .spans_table import SPANS
+        table = SPANS
+        recorder.scoped = True
+    handle = Attachment(recorder)
+    for target, label, side, kind in table:
+        try:
+            module, path = target.split(':', 1)
+            owner = importlib.import_module(module)
+            names = path.split('.')
+            for name in names[:-1]:
+                owner = getattr(owner, name)
+            original = getattr(owner, names[-1])
+        except (ImportError, AttributeError) as error:
+            warnings.warn(f'roundtrace missing target {target}: {error}', RuntimeWarning)
+            continue
+        wrapper = _wrapper(original, recorder, label, side, kind)
+        setattr(owner, names[-1], wrapper)
+        handle.originals.append((owner, names[-1], original, wrapper))
+    if recorder.graph_replays:
+        enable_graph_replays(handle)
+    atexit.register(recorder.close)
+    _active = handle
+    return handle
 
 
 def enable_graph_replays(handle):

@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """Serve a linear block head from target hidden-state taps."""
 
 from __future__ import annotations
@@ -50,11 +51,11 @@ def _run_manifest():
     """The run-manifest recorder; by package when this module has one, else by path
     (the test harness loads this file bare)."""
     if __package__:
-        from . import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         return run_manifest
     name = "jetspec_run_manifest"
     if name not in sys.modules:
-        path = Path(__file__).with_name("run_manifest.py")
+        path = (Path(__file__).parent.parent / 'read/run_manifest.py')
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None

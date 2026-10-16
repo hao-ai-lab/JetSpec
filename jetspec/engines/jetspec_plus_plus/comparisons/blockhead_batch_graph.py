@@ -147,6 +147,43 @@ class _WidthGraph:
     def graph_state(self) -> dict:
         return dict(self._state)
 
+    @torch.inference_mode()
+    def propose_batch(
+        self, context_ids: list[torch.Tensor], k: int, *,
+        target_hidden: list[torch.Tensor],
+    ) -> BlockheadProposal:
+        count = len(context_ids)
+        if not 1 <= count <= self.batch or count != len(target_hidden):
+            raise ValueError("batched block-head graph inputs differ or exceed bucket")
+        if k != self.lookahead:
+            raise ValueError("batched block-head graph lookahead changed")
+        widths = [int(row.shape[1]) for row in target_hidden]
+        for context, width in zip(context_ids, widths):
+            validate_graph_context_length(width, capacity=self.capacity)
+            if context.shape[1] != width + 1:
+                raise ValueError("block-head context and target taps differ")
+        for index, (row, width) in enumerate(zip(target_hidden, widths)):
+            self._hidden[index, :width].copy_(row[0].to(device=self.device, dtype=self.dtype))
+        self._lengths.copy_(torch.tensor(
+            widths + [1] * (self.batch - count), device=self.device))
+        self._anchors[:count].copy_(torch.stack(
+            [row[0, -1] for row in context_ids]).to(self.device))
+
+        start = torch.cuda.Event(enable_timing=True)
+        split = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        self._head_graph.replay()
+        split.record()
+        self._sample_graph.replay()
+        end.record()
+        end.synchronize()
+        self._state["query_replays"] += 1
+        tokens = self._tokens[:count].clone()
+        logits = self._corrected[:count].clone()
+        return BlockheadProposal(
+            tokens, logits,
+            float(start.elapsed_time(split)), float(split.elapsed_time(end)))
 
 
 def width_buckets(capacity: int) -> tuple[int, ...]:
@@ -199,3 +236,20 @@ class BatchedBlockheadGraph:
     def propose(self, context_ids, k, *, target_hidden):
         return self.drafter.propose(context_ids, k, target_hidden=target_hidden)
 
+    def propose_batch(self, context_ids, k, *, target_hidden) -> BlockheadProposal:
+        if not target_hidden:
+            raise ValueError("batched block-head graph inputs are empty")
+        live_width = max(int(row.shape[1]) for row in target_hidden)
+        width = next((bucket for bucket in self.widths if live_width <= bucket), None)
+        if width is None:
+            raise ValueError(f"block-head graph context {live_width} exceeds {self.capacity}")
+        proposal = self._graphs[width].propose_batch(
+            context_ids, k, target_hidden=target_hidden)
+        captures_after_warmup = self.graph_state()["captures"] - self._warmup_captures
+        if captures_after_warmup:
+            raise RuntimeError("block-head graph captured after warm-up")
+        if not self._steady_printed:
+            print(f"BLOCKHEAD_BATCH_GRAPH_STEADY batch={self.batch} "
+                  f"width={width} captures_after_warmup={captures_after_warmup}", flush=True)
+            self._steady_printed = True
+        return proposal

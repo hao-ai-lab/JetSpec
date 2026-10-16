@@ -73,6 +73,13 @@ def _identifier_record(value):
                             ('files', 'bytes'))))
 
 
+def _loaded_head(value):
+    return _record(value, {
+        'path': str, 'paths': str, 'parameters': _positive_int, 'tensors': _positive_int,
+        'dtype': str, 'sha256': _identifier_record, 'architecture_cross_check': str,
+        'files': _positive_int, 'distinct_parameter_counts': _positive_int,
+        'seed0_J0d0_sha256': _identifier_record, 'note': str, 'shape_assertion': str,
+    })
 
 
 def _artifact_provenance(value):

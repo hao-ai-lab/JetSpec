@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """Device-length GQA attention for the fixed chain query blocks."""
 
 from __future__ import annotations

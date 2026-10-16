@@ -30,3 +30,5 @@ class SpeculatorSyncDrafter(SpeculatorBlockhead):
                          max_num_seqs=max_num_seqs, run_config=run_config)
         self.sync_drafter = True
 
+    def _prepare_sequence(self, seq: Sequence) -> None:
+        self.drafter.set_prompt_index(seq.jetspec_prompt_index)

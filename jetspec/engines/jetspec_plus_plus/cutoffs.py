@@ -34,6 +34,9 @@ class DeadlineBudget:
     def switch_length(value):
         return None if value is None else int(value)
 
+    @staticmethod
+    def superseded(newer_ready):
+        return newer_ready
 
     @staticmethod
     def ar_step(kind, miss_mode):
@@ -132,6 +135,10 @@ class DeadlineBudget:
         self.chain_published_passes = None
         self.eager_published_passes = None
 
+    def restart(self, now):
+        """The verify starts later than the request (a fallback round): re-anchor the budget."""
+        self.start = now
+        self.clean = False
 
     def budget_ms(self):
         if len(self.intervals) < self.MIN_SAMPLES:
@@ -159,7 +166,46 @@ class DeadlineBudget:
         ordered = sorted(values)
         return ordered[(95 * len(ordered) + 99) // 100 - 1]
 
+    def learn_chain_times(self, key, device_ms, publish_tail_ms):
+        """Learn per-key segment device costs and the post-device publish handoff."""
+        for name, ms in device_ms.items():
+            self._push(self.chain_times.setdefault((key, name), []), ms, self.WINDOW)
+        self._push(self.chain_tails.setdefault(key, []), publish_tail_ms, self.WINDOW)
 
+    def launch_passes(self, now, key, recipe_J, *, host_pre_ms=0.0):
+        """Pick the last pass whose p95 segments and publish tail fit this budget.
+
+        J_round is 0-based: 0 replays A and P; 3 replays A, B1, B2, C, P.
+        Before a full per-key sample window, preserve the existing untrained
+        deadline behavior and run the recipe ceiling.
+        """
+        if recipe_J not in (0, 1, 2, 3):
+            raise ValueError('recipe_J must be 0..3')
+        self.limit = recipe_J + 1
+        self.chain_published_passes = recipe_J + 1
+        budget = self.budget_ms()
+        names = ('A', 'B1', 'B2', 'C', 'P')
+        costs = {name: self._p95(self.chain_times.get((key, name), ())) for name in names}
+        tail = self._p95(self.chain_tails.get(key, ()))
+        if budget is None or tail is None or any(costs[name] is None
+                for name in names[:recipe_J + 1] + ('P',)):
+            return recipe_J
+        elapsed = 0.0 if self.start is None else (now - self.start) * 1000.0
+        elapsed += host_pre_ms
+        for j in range(recipe_J, -1, -1):
+            predicted = elapsed + costs['A'] + sum(costs[names[i]] for i in range(1, j + 1)) \
+                        + costs['P'] + tail
+            if predicted <= budget:
+                self.chain_published_passes = j + 1
+                if j < recipe_J:
+                    self.decision = dict(stopped_before=j + 1, elapsed_ms=elapsed,
+                                         predicted_ms=predicted, budget_ms=budget)
+                return j
+        self.decision = dict(stopped_before=0, elapsed_ms=elapsed,
+                             predicted_ms=predicted, budget_ms=budget,
+                             deadline_miss=1, stage='before_j0')
+        self.chain_published_passes = 0
+        raise DraftDeadlineMiss('before_j0')
 
     def launch_chain(self, now, key, *, host_pre_ms=0.0):
         """Choose learned throughput, or the J2-R0 primary and J1-R0 tail."""
@@ -396,6 +442,9 @@ class NullBudget:
     def switch_length(value):
         return None
 
+    @staticmethod
+    def superseded(newer_ready):
+        return False
 
     @staticmethod
     def ar_step(kind, miss_mode):
@@ -407,6 +456,9 @@ class NullBudget:
             raise RuntimeError('uncut verify requires the exact sequence/round candidate')
         return False
 
+    @staticmethod
+    def deadline_enabled(environ):
+        return False
 
 
 
