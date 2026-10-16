@@ -51,7 +51,7 @@ def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_mer
              and logits.is_contiguous() and rejected.is_contiguous() and cap <= vocab
              and (not isinstance(q_a, torch.Tensor) or q_a.dtype == torch.float64))
     if fused:
-        from .anchor_select_fused import prepare_probabilities
+        from jetspec.engines.jetspec_plus_plus.jetspec.heads.anchor_select_fused import prepare_probabilities
         probabilities, before_top1 = prepare_probabilities(logits, rejected)
     else:
         if side is not None:
@@ -80,7 +80,7 @@ def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_mer
     if side is not None and not fused:
         main.wait_stream(side)
     if fused:
-        from .anchor_select_fused import select_post
+        from jetspec.engines.jetspec_plus_plus.jetspec.heads.anchor_select_fused import select_post
         ids, p64, pack = select_post(values, ids, before_top1, q_a, q_b, cap, vocab)
         inexact = pack[4].bool()
     else:
@@ -112,7 +112,7 @@ def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_mer
         pack = torch.stack((sizes, before_top1.long(), crosses.long(), finite.long(), inexact.long()))
     if exact_merge:
         if fused and cap & (cap - 1) == 0:
-            from .anchor_select_fused import repair_ties
+            from jetspec.engines.jetspec_plus_plus.jetspec.heads.anchor_select_fused import repair_ties
             ids, p64 = repair_ties(probabilities, ids, p64, pack, cap)
         else:
             # A fixed-shape full-vocabulary selection keeps the tie fallback on device.

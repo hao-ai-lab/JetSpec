@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 
 from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
 
@@ -65,6 +66,12 @@ def plan_eager_verify(runner, context, *, get_mask=None):
 class _TapFreePickler(pickle.Pickler):
     """Pickle Sequences without jetspec_taps (the TP followers never read them)."""
 
+    def reducer_override(self, obj):
+        if isinstance(obj, Sequence) and obj.jetspec_taps is not None:
+            state = obj.__getstate__()
+            state["jetspec_taps"] = None
+            return (Sequence.__new__, (Sequence,), state)
+        return NotImplemented
 
 def shm_name():
     """The per-run shared-memory segment name. LLMEngine sets JETSPEC_SHM_NAME before it spawns
@@ -95,7 +102,7 @@ class ModelRunner:
         if pin_plan is None or pin_plan["mode"] != "off":
             pin_rank_cpu_affinity(setting(self, 'hardware.hardware_settings.rank_cpu_affinity'), rank, plan=pin_plan)
         if pin_plan is not None:
-            from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+            import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
             row = pin_plan["ranks"][rank]
             if row["cpus"] and set(os.sched_getaffinity(0)) != set(row["cpus"]):
                 raise RuntimeError(f"CPU_PIN rank={rank} applied affinity differs from requested")
@@ -744,6 +751,37 @@ class ModelRunner:
             self._hybrid_commit_count.copy_(accepted)
             self._hybrid_commit_graph.replay()
 
+    def _check_compile_pin_served(self):
+        """Check both serving ranks before bench seals the run manifest."""
+        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        if not setting(self, 'engine.engine_settings.c1_compile_pin', ''):
+            return False
+        from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
+        process_check("served")
+        if self.config.jetspec and self.draft_async:
+            ranks = (self.draft_rank,)
+            for rank in ranks:
+                group = self.jetspec_request_pg
+                if ((setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
+                     or current_engine().kind == 'reference')
+                        and setting(self, 'engine.engine_settings.verify_device_transport', 'chain') != "legacy"):
+                    if transport_enabled('pair_outcome_push', run_config=self):
+                        from jetspec.engines.jetspec_plus_plus.wire.pair_transport import announce_tcp
+                        announce_tcp(self.jetspec_mailbox_store, "pin_served")
+                    else:
+                        announce_chain_command(self.jetspec_mailbox_store, "pin_served", run_config=getattr(self, 'run_config', None))
+                else:
+                    dist.send(torch.tensor([4], dtype=torch.int64, device=self.device),
+                              dst=rank, group=group)
+                ack = torch.empty(1, dtype=torch.int64, device=self.device)
+                dist.recv(ack, src=rank, group=group)
+                if int(ack.item()) != 1:
+                    raise RuntimeError(f"C1 COMPILE PIN miss on draft rank {rank} before manifest seal")
+        run_manifest.record_value("compile_pin_served", True, run_config=self.run_config)
+        return True
 
     def exit(self, hard: bool = True):
         # Idempotent
@@ -839,7 +877,15 @@ class ModelRunner:
             if method_name == "exit":
                 break
 
+    def recv_cmd(self, group=None):
+        t = torch.empty(1, dtype=torch.int64, device=self.device)
+        dist.recv(t, src=0, group=self.async_pg if group is None else group)
+        return int(t.item())
 
+    def recv_tensor(self, shape, dtype=torch.int64, group=None):
+        t = torch.empty(shape, dtype=dtype, device=self.device)
+        dist.recv(t, src=0, group=self.async_pg if group is None else group)
+        return t
     
     def send_draft_exit_signal(self):
         """
@@ -1228,7 +1274,99 @@ class ModelRunner:
 
 
 
+    def _run_jetspec_mixed_graph(self, input_ids, positions, context, widths):
+        bs, count = len(widths), len(input_ids)
+        full = sum(width > 1 for width in widths)
+        gv = self._jetspec_mixed_vars
+        gv["input_ids"][:count].copy_(input_ids)
+        gv["positions"][:count].copy_(positions)
+        gv["slot_mapping"][:count].copy_(context.slot_mapping)
+        gv["context_lens"][:bs].copy_(context.cu_seqlens_k[1:] - context.cu_seqlens_k[:-1])
+        gv["block_tables"][:bs].zero_()
+        gv["block_tables"][:bs, :context.block_tables.shape[1]].copy_(context.block_tables)
+        cu = gv["cu_seqlens_q"][:bs + 1]
+        cu.copy_(context.cu_seqlens_q)
+        self.plan_flashinfer_paged_attention(gv["context_lens"][:bs],
+            gv["block_tables"][:bs], qo_indptr=cu, graph_batch_size=bs, causal_only=True)
+        timing = getattr(self, '_anatomy_lite', None)
+        if timing is not None:
+            timing.gpu_begin()
+        self._jetspec_mixed_graphs[bs, full].replay()
+        logits = self.model.compute_logits(gv["outputs"][:count], last_only=False)
+        if timing is not None:
+            timing.gpu_end()
+        return (logits, gv["taps"][:count]) if "taps" in gv else logits
 
+    def _run_jetspec_mixed_staged(self, seqs, widths, staged):
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        from jetspec.engines.jetspec_plus_plus.verify.verify_plan_helpers import assemble_mixed_verify_rows
+        bs = len(seqs)
+        full = sum(query_width > 1 for query_width in widths)
+        assembled = assemble_mixed_verify_rows(
+            staged, seqs, self.config.speculate_k + 1)
+        if assembled is None or (bs, full) not in self._jetspec_mixed_graphs:
+            return None
+        ids, positions, slots, lengths, tables, cu_q, cu_k = assembled
+        gv = self._jetspec_mixed_vars
+        count = len(ids)
+        def copy_host(target, values, dtype):
+            target.copy_(torch.tensor(values.tolist(), dtype=dtype, pin_memory=True),
+                         non_blocking=True)
+        copy_host(gv["input_ids"][:count], ids, torch.int64)
+        copy_host(gv["positions"][:count], positions, torch.int64)
+        copy_host(gv["slot_mapping"][:count], slots, torch.int32)
+        copy_host(gv["context_lens"][:bs], lengths, torch.int32)
+        gv["block_tables"][:bs].zero_()
+        copy_host(gv["block_tables"][:bs, :tables.shape[1]], tables, torch.int32)
+        copy_host(gv["cu_seqlens_q"][:bs + 1], cu_q, torch.int32)
+        cu_k_device = torch.tensor(cu_k.tolist(), dtype=torch.int32, pin_memory=True).to(
+            self.device, non_blocking=True)
+        set_context(is_prefill=True, cu_seqlens_q=gv["cu_seqlens_q"][:bs + 1],
+                    cu_seqlens_k=cu_k_device, max_seqlen_q=max(widths),
+                    max_seqlen_k=int(lengths.max()),
+                    slot_mapping=gv["slot_mapping"][:count], context_lens=None,
+                    block_tables=gv["block_tables"][:bs, :tables.shape[1]])
+        self.plan_flashinfer_paged_attention(
+            gv["context_lens"][:bs], gv["block_tables"][:bs],
+            qo_indptr=gv["cu_seqlens_q"][:bs + 1], graph_batch_size=bs,
+            causal_only=True)
+        timing = getattr(self, '_anatomy_lite', None)
+        if timing is not None:
+            timing.gpu_begin()
+        self._jetspec_mixed_graphs[bs, full].replay()
+        logits = self.model.compute_logits(gv["outputs"][:count], last_only=False)
+        if timing is not None:
+            timing.gpu_end()
+        taps = gv["taps"][:count] if "taps" in gv else None
+        if setting(self, 'engine.engine_settings.verify_prestage_mixed_check', '0') == "1":
+            logits_copy = logits.clone()
+            taps_copy = taps.clone() if taps is not None else None
+            legacy_ids, legacy_positions = self.prepare_prefill(seqs)
+            legacy_context = get_context()
+            for name, got, expected in (
+                ("ids", gv["input_ids"][:count], legacy_ids),
+                ("positions", gv["positions"][:count], legacy_positions),
+                ("slot_mapping", gv["slot_mapping"][:count], legacy_context.slot_mapping),
+                ("context_lens", gv["context_lens"][:bs],
+                 legacy_context.cu_seqlens_k[1:] - legacy_context.cu_seqlens_k[:-1]),
+                ("block_tables", gv["block_tables"][:bs, :tables.shape[1]],
+                 legacy_context.block_tables),
+                ("cu_seqlens_q", gv["cu_seqlens_q"][:bs + 1],
+                 legacy_context.cu_seqlens_q),
+            ):
+                if got.dtype != expected.dtype or got.device != expected.device or not torch.equal(got, expected):
+                    raise RuntimeError(f"VERIFY_PRESTAGE_MIXED_CHECK mismatch: {name}")
+            reference = self._run_jetspec_mixed_graph(
+                legacy_ids, legacy_positions, legacy_context, widths)
+            reference_logits, reference_taps = (reference if taps is not None
+                                               else (reference, None))
+            if not torch.equal(logits_copy, reference_logits):
+                raise RuntimeError("VERIFY_PRESTAGE_MIXED_CHECK mismatch: logits")
+            if taps_copy is not None and not torch.equal(taps_copy, reference_taps):
+                raise RuntimeError("VERIFY_PRESTAGE_MIXED_CHECK mismatch: taps")
+            print("VERIFY_PRESTAGE_MIXED_CHECK=PASS", flush=True)
+            logits, taps = logits_copy, taps_copy
+        return (logits, taps) if taps is not None else logits
 
 
 

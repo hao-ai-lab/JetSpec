@@ -12,7 +12,7 @@ from jetspec.engines.jetspec_plus_plus.jetspec.config_values import config_value
 
 
 def enabled(environ=None):
-    from .config_values import ConfigValues
+    from jetspec.engines.jetspec_plus_plus.jetspec.config_values import ConfigValues
     return current_engine(None if isinstance(environ, ConfigValues) else environ).execution in ("pipelined", "critical-path", "on")
 
 
@@ -142,7 +142,7 @@ def assert_uncut(environ=None, *, run_config=None):
         raise ValueError("eval requires budget 16 or 32")
     if config_values((run_config if environ is None else environ)).get('method.method_settings.eval_rows', "16") not in ("4", "8", "16"):
         raise ValueError("eval rows must be 4, 8 or 16")
-    from .chain.refresh_swap import check_regime
+    from jetspec.engines.jetspec_plus_plus.jetspec.chain.refresh_swap import check_regime
     check_regime(environ=environ, run_config=run_config)
 
 

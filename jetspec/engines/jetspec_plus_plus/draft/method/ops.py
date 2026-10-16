@@ -33,6 +33,8 @@ def register_impl(op_name, fn, *, engine):
     _implementations[engine, op_name] = fn
 
 
+def unregister_impl(op_name, *, engine):
+    _implementations.pop((engine, op_name), None)
 
 
 def select_engine(engine):

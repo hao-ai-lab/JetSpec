@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 #!/usr/bin/env python3
 """Run a manifest-pinned serving read from the repository.
 
@@ -60,7 +61,8 @@ class _RxProvenanceSubprocess:
 
 
 subprocess = _RxProvenanceSubprocess(subprocess)
-MANIFEST_PATH = ROOT / "artifacts" / "manifest.json"
+# Adaptation: keep the public-owned local artifact table.
+MANIFEST_PATH = ROOT / 'artifacts' / 'manifest.json'
 DEFAULT_ARTIFACTS_DIR = ROOT / "artifacts" / "downloaded"
 RECIPE_SCHEMA = "jetspec.serve_recipe/1"
 HOST_VALUES_SCHEMA = "jetspec.serve_host_values/1"
@@ -535,7 +537,7 @@ def assert_artifact_present(name, artifacts, directory, source):
     if not missing:
         return
     listing = ", ".join(missing[:4]) + (f" (+{len(missing) - 4} more)" if len(missing) > 4 else "")
-    remedy = (f"run python3 tools/fetch_artifacts.py --destination {Path(directory).parent}"
+    remedy = (f"run python3 tools/register/fetch_artifacts.py --destination {Path(directory).parent}"
               if source.startswith("artifacts_dir:") else "check the --host-values entry")
     raise FileNotFoundError(
         f"artifact {name!r} is not fetched under {directory} (resolved from {source}): "
@@ -1949,7 +1951,7 @@ def apply_verify_lean_override(environment, choice, stage_early=None):
 
 def apply_knob_overrides(environment, knobs):
     """--knob NAME=VALUE sets one registered knob for this read (repeatable; applied after the named
-    overrides). The name must be registered in jetspec.engines.jetspec_plus_plus/jetspec/env.py; the child validates the requirements."""
+    overrides). The name must be registered in jetspec.engines.jetspec_plus_plus/serving/draft_env.py; the child validates the requirements."""
     if not knobs:
         return
     from jetspec.engines.jetspec_plus_plus.jetspec.env import legacy_registry as _legacy_registry
@@ -2015,7 +2017,8 @@ def _declared_flashinfer_matches(declared):
 
 def _base_environment(recipe, placement_environment, runtime, *, eager_wrapper=False):
     sys.path.insert(0, str(ROOT / "engine"))
-    from jetspec.engines.jetspec_plus_plus.jetspec.env import unregistered_names, legacy_registry as _legacy_registry
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import unregistered_names
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
     from jetspec.engines.jetspec_plus_plus.profiles import refuse_retired
     refuse_retired(os.environ)
@@ -2476,7 +2479,7 @@ def _parser():
                              "(still refused if a prompt + --tokens + lookahead does not fit)")
     parser.add_argument("--output-json", required=True)
     parser.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR),
-                        help="where tools/fetch_artifacts.py --destination put the artifacts")
+                        help="where tools/register/fetch_artifacts.py --destination put the artifacts")
     parser.add_argument("--cache-root", help="persistent compiler cache root shared by serial reads")
     parser.add_argument("--compile-pin", type=Path, help="sealed machine-local compile pin directory")
     parser.add_argument("--compile-pin-sha", help="SHA256 of --compile-pin (both flags required)")
@@ -2657,7 +2660,7 @@ def record_target_autotune(target, *, run_config=None):
     if ("linear_attention" not in config.get("layer_types", [])
             and not kernel_enabled('hybrid_fused_norm')):
         return
-    from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+    import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     unpinned = not bool(setting(run_config, 'engine.engine_settings.c1_compile_pin'))
     run_manifest.record_value("target_triton_autotune_unpinned", unpinned, run_config=run_config)
@@ -2725,7 +2728,7 @@ def load_plan_engine(plan, load, model, *, environment=None, **kwargs):
         kwargs['run_config'] = kwargs.get('run_config') or run_config
         kwargs['engine'] = kwargs.get('engine') or engine
     if model_entry is not None and 'thresholds_sha256' in model_entry:
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         run_manifest.record_value('model_thresholds_sha256', model_entry['thresholds_sha256'])
     return load(model, config_read=config_read, model_entry=model_entry, **kwargs)
 
@@ -2752,7 +2755,7 @@ def _child(plan_path, *, resident=None, run_config=None):
             bench.get_model_paths, bench.record_run_inputs, bench.run_benchmark, bench.LLM)
         from jetspec.engines.jetspec_plus_plus.read.resident import reset_request_state
         from jetspec.engines.jetspec_plus_plus.read.resident import retain_manifest, rank_boundary
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         if resident.manifest is not None:
             retain_manifest(resident.manifest, run_config=run_config)
         bench.LLM = lambda model, **kwargs: resident.engine(saved_load, model, **kwargs)
@@ -2767,7 +2770,7 @@ def _child(plan_path, *, resident=None, run_config=None):
         run_config = kwargs.get('run_config') or run_config
         original_record_inputs(*args, **kwargs)
         record_target_autotune(plan["target_model"], run_config=run_config)
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         if os.environ.get("RX_SOURCE_PROVENANCE"):
             receipt = os.environ["RX_SOURCE_PROVENANCE"]
             run_manifest.record_file("rx_source_provenance", receipt, run_config=run_config)
@@ -2836,7 +2839,7 @@ def _child(plan_path, *, resident=None, run_config=None):
             prebuild_started = time.perf_counter()
             prebuilt = [llm.create_inference_step(llm.config)]
             torch.cuda.synchronize()
-            from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+            import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
             run_manifest.record_value("serve_read_prebuilt_step_seconds", time.perf_counter() - prebuild_started, run_config=run_config)
             build_step = llm.create_inference_step
             llm.create_inference_step = lambda config: prebuilt.pop() if prebuilt else build_step(config)
@@ -2883,7 +2886,7 @@ def _child(plan_path, *, resident=None, run_config=None):
         output_check = measured_output_check(
             outputs, count=plan["count"], tokens=plan["tokens"],
             temperature=args.temp, seed=args.seed, stop_at_eos=args.stop_at_eos)
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         run_manifest.record_value("serve_read_output_check", output_check, run_config=run_config)
         if audit_cache:
             fresh = cache_changes(cache_before, cache_snapshot(os.environ))

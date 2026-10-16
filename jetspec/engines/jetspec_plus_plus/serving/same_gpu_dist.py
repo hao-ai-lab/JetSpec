@@ -34,12 +34,27 @@ def install_cpu_staging(dist):
     original_isend = dist.isend
     original_irecv = dist.irecv
 
+    def send(tensor, *args, **kwargs):
+        staged = tensor.detach().to(device="cpu") if tensor.is_cuda else tensor
+        return original_send(staged, *args, **kwargs)
 
+    def recv(tensor, *args, **kwargs):
+        if not tensor.is_cuda:
+            return original_recv(tensor, *args, **kwargs)
+        staged = tensor.new_empty(tensor.shape, device="cpu")
+        result = original_recv(staged, *args, **kwargs)
+        tensor.copy_(staged)
+        return result
 
     def isend(tensor, *args, **kwargs):
         staged = tensor.detach().to(device="cpu") if tensor.is_cuda else tensor
         return StagedWork(original_isend(staged, *args, **kwargs), staged)
 
+    def irecv(tensor, *args, **kwargs):
+        if not tensor.is_cuda:
+            return original_irecv(tensor, *args, **kwargs)
+        staged = tensor.new_empty(tensor.shape, device="cpu")
+        return StagedWork(original_irecv(staged, *args, **kwargs), staged, tensor)
 
     dist.send = send
     dist.recv = recv

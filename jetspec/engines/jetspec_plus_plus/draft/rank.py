@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
 from jetspec.engines.jetspec_plus_plus.draft.block_geometry import staged_context
 from jetspec.engines.jetspec_plus_plus.draft.config import legacy_name, named_setting, legacy_values, with_settings
@@ -15,16 +16,24 @@ from jetspec.engines.jetspec_plus_plus.models.context import set_context
 from jetspec.engines.jetspec_plus_plus.models.context import reset_context
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import append_jetspec_tap_mirrors
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import recv_int64
-from jetspec.engines.jetspec_plus_plus.jetspec.drafter import (
-    DraftSuperseded,
-    JetSpecDrafter,
-    JetSpecSequence,
-    commit_sequences_batch,
-    anchor_known_correction,
-    following_candidate_from_token_block,
-)
-from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import admission_hypotheses, select_live_block, select_live_blocks_batch, cache_packed_metadata_batch, e04_lean
-from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft, miss_redraft_force, miss_redraft_passes, draft_deadline, DeadlineClock, DraftDeadlineMiss, miss_redraft_anchor
+from jetspec.engines.jetspec_plus_plus.jetspec.drafter import DraftSuperseded
+from jetspec.engines.jetspec_plus_plus.jetspec.drafter import JetSpecDrafter
+from jetspec.engines.jetspec_plus_plus.jetspec.drafter import JetSpecSequence
+from jetspec.engines.jetspec_plus_plus.jetspec.drafter import commit_sequences_batch
+from jetspec.engines.jetspec_plus_plus.jetspec.drafter import anchor_known_correction
+from jetspec.engines.jetspec_plus_plus.jetspec.drafter import following_candidate_from_token_block
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import admission_hypotheses
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import select_live_block
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import select_live_blocks_batch
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import cache_packed_metadata_batch
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import e04_lean
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft_force
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft_passes
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import draft_deadline
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import DeadlineClock
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import DraftDeadlineMiss
+from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft_anchor
 from jetspec.engines.jetspec_plus_plus.wire.protocol import CandidateSet
 from jetspec.engines.jetspec_plus_plus.wire.protocol import unpack_request_wire
 from jetspec.engines.jetspec_plus_plus.wire.protocol import anchor_mode
@@ -69,6 +78,8 @@ def _flush_deferred():
 _IDLE = []
 
 
+def idle_later(call):
+    _IDLE.append(call)
 
 
 def _run_idle(event=None, keep=0):
@@ -81,6 +92,13 @@ def _run_idle(event=None, keep=0):
             _IDLE.pop(0)()
 
 
+def _tail_publish(run_config=None):
+    """serving JETSPEC_TAIL_PUBLISH=1 (default off): the round-ahead candidate is published from
+    inside the refinement, straight from its device rows (one host copy of the rows and keys
+    into the pinned packet, the control fields written on the host), before the metadata trip
+    home, the published blocks' host bookkeeping, the candidate checks' sync and the trace."""
+    from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting
+    return setting(run_config, 'engine.engine_settings.tail_publish', '0') == '1'
 
 
 def _device_publish(run_config=None):
@@ -110,6 +128,17 @@ def _candidate_set_from_rows(seq_id, round_id, blocks, host_keys=None, keys_vali
     return candidate
 
 
+def _draft_verifier_kind_from_pins(candidate, *, seq_id, round_id, true_k, correction):
+    """Mirror the verifier's first live keyed pin without copying every draft token home."""
+    if candidate.seq_id != seq_id or candidate.round_id != round_id:
+        return 'late'
+    key = [true_k, correction]
+    for index, row_key in enumerate(candidate.row_keys.tolist()):
+        if row_key == key:
+            pin = int(candidate.blocks[index, 0].item())
+            if pin >= 0:
+                return 'hit' if pin == correction else 'miss'
+    return 'miss'
 
 
 class DraftRunner(ModelRunner):
@@ -1044,7 +1073,7 @@ class DraftRunner(ModelRunner):
         if not get_profile(engine.profile).compile_pin:
             return False
         from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         process_check("served")
         run_manifest.record_value("compile_pin_served_draft", True, run_config=getattr(self, 'run_config', None))
         return True

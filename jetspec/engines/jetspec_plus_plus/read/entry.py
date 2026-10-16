@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """CPU resolution and the temporary bridge to the manifest-pinned launcher."""
 import argparse
 from copy import deepcopy
@@ -4154,7 +4155,9 @@ COMPOSED_RECIPES = [{'cuda_arch': '8.0',
 def profile_environment(config):
     """A named profile owns selectors; compatibility leaves own other values."""
     from jetspec.engines.jetspec_plus_plus.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
-    from jetspec.engines.jetspec_plus_plus.jetspec.env import REQUIRED, NO_DEFAULT, legacy_registry as _legacy_registry
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import REQUIRED
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import NO_DEFAULT
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
     result = serving_environment(config)
     name = config['engine'].get('profile', 'current')
@@ -4306,19 +4309,12 @@ def granted_devices(devices, visible):
     return ','.join(granted[index] for index in indices)
 
 
-_eval_record_writer = None
-
-
-def register_eval_record_writer(writer):
-    global _eval_record_writer
-    _eval_record_writer = writer
-
-
 def write_eval_records(record, *, process_wall_seconds):
-    """Dispatch records to the eval engine's registered consumer."""
-    if _eval_record_writer is None:
-        raise ValueError('eval records require engines.eval to register a record writer: '
-                         'run full reads through python -m engines.eval.entry')
+    """Write the engine's evaluation records for a read without cutoffs."""
+    # Adaptation: retain the public error for incomplete record requests.
+    if 'environment' not in record:
+        raise ValueError('run full reads through python -m engines.eval.entry')
+    from .eval_records import write_eval_records as writer
     environment = record['environment']
     method = record['config']['method']
     values = dict(
@@ -4330,7 +4326,7 @@ def write_eval_records(record, *, process_wall_seconds):
         refresh_mode=environment.get(environment_name('method', 'method_settings.eval_refresh_mode'), 'full'),
         capture_round_candidates=environment.get(environment_name('engine', 'engine_settings.eval_capture_round_candidates'), '0'))
     output = record['serve_argv'][record['serve_argv'].index('--output-json') + 1]
-    return _eval_record_writer(record['config'], recipe_method=record['recipe']['method'],
+    return writer(record['config'], recipe_method=record['recipe']['method'],
                                output=output, eval_values=values,
                                process_wall_seconds=process_wall_seconds)
 

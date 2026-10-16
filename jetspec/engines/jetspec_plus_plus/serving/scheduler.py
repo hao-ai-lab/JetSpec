@@ -130,6 +130,23 @@ class Scheduler:
         self.running.extendleft(reversed(scheduled_seqs))
         return scheduled_seqs, False
 
+    def preempt(self, seq: Sequence):
+        # print(f"[_preempt] Seq {seq.seq_id}: preempting sequence", flush=True)
+        seq.status = SequenceStatus.WAITING
+        seq.recovery_token_id = None
+        self.block_manager.deallocate(seq)
+        if self.speculate:
+            self.draft_block_manager.deallocate(seq)
+        self.waiting.appendleft(seq) # self.running handled in schedule() when preempt called
+
+        # ── instead, absorb completions as "new prompt" so we re-cache them next prefill
+        seq.num_prompt_tokens = seq.num_tokens
+        # reinit like it's new, this can be a flag for "am on first spec step"
+        seq.last_spec_step_accepted_len = -1
+        # Clear extend data so re-prefilled seq doesn't send stale extend to draft
+        seq.extend_count = 0
+        seq.extend_eagle_acts = None
+        seq.extend_token_ids = None
 
     # non-speculative path, should handle completing a block here as well 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
@@ -318,3 +335,6 @@ import torch
 from jetspec.engines.jetspec_plus_plus.serving.config import Config
 from transformers import AutoTokenizer
 
+@torch.inference_mode()
+def compute_megaspec_lookahead(MQ_LEN: int, K: int) -> int:
+    return K + 1 + K * MQ_LEN 

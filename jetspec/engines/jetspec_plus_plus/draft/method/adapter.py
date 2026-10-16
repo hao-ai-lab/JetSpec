@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """Shared torch reference for the trained and frozen tap-aligned H2H adapter."""
 from __future__ import annotations
 
@@ -1044,7 +1045,61 @@ class CtxKVC1Head(nn.Module):
             u = state
         return torch.cat(outputs, dim=-1)
 
+    def final_output_parameters(self) -> dict[str, torch.nn.Parameter]:
+        """The last parameterised op on each tap's path -- what output_projection's role
+        devolves to when the streams emit tap space directly.
 
+        RESOLVED from the structure, never named. `streams.N.mlp.down_proj` is final only
+        while `extra_stream_layers[N]` is empty; under a C5 depth stack the extra layer
+        runs AFTER its stream (see forward), so `streams.N` becomes an intermediate and
+        naming it would check a mid-stack tensor while reporting that the output was
+        checked. A gate that hardcodes the name cannot tell those two apart.
+        """
+        final: dict[str, torch.nn.Parameter] = {}
+        for index, stream in enumerate(self.streams):
+            extras = self.extra_stream_layers[index]
+            if len(extras) == 0:
+                name = f"streams.{index}.mlp.down_proj.weight"
+                module = stream
+            else:
+                name = (
+                    f"extra_stream_layers.{index}.{len(extras) - 1}"
+                    ".mlp.down_proj.weight"
+                )
+                module = extras[len(extras) - 1]
+            final[name] = module.mlp.down_proj.weight
+        return final
+
+    def parameter_count_split(self) -> dict[str, int]:
+        per_stream = [
+            sum(parameter.numel() for parameter in stream.parameters())
+            for stream in self.streams
+        ]
+        # ⚠ `total` must be the WHOLE head. It summed `streams` alone, which under a C5
+        # depth stack reported 964,752,640 -- C1's own banked count -- for a head holding
+        # 1,929,505,280. A reporter that omits the delta returns the COMPARATOR's known
+        # number, so it reads as confirmation rather than as a mismatch. Derive it from
+        # self.parameters() so a future sub-module cannot fall out of it again.
+        per_extra = [
+            sum(
+                parameter.numel()
+                for layer in extras
+                for parameter in layer.parameters()
+            )
+            for extras in self.extra_stream_layers
+        ]
+        total = sum(parameter.numel() for parameter in self.parameters())
+        assert total == sum(per_stream) + sum(per_extra), (
+            "ctxkv c1 parameter split does not account for every parameter: "
+            f"{total} vs {sum(per_stream) + sum(per_extra)}"
+        )
+        return {
+            "streams": per_stream,
+            "extra_stream_layers": per_extra,
+            "layers_per_stream": self.layers_per_stream,
+            "total": total,
+            "mlp_intermediates": list(self.mlp_intermediates),
+        }
 
 def build_adapter_query_mask(
     *,
@@ -1071,3 +1126,58 @@ def build_adapter_query_mask(
         torch.finfo(dtype).min,
     )
 
+def build_head_attention_mask(
+    *,
+    head,
+    prefix_position_ids: torch.Tensor,
+    query_position_ids: torch.Tensor,
+    block_anchors: torch.Tensor,
+    dtype: torch.dtype,
+    device: torch.device,
+    prefix_valid: torch.Tensor | None = None,
+    query_key_valid: torch.Tensor | None = None,
+    query_row_valid: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Build the trainer-equivalent prefix-plus-query mask for one read batch."""
+    prefix_positions = prefix_position_ids.to(device=device)
+    query_positions = query_position_ids.to(device=device)
+    anchors = block_anchors.to(device=device)
+    if prefix_positions.ndim != 2 or query_positions.ndim != 2:
+        raise ValueError("reader position ids must have shape [batch, sequence]")
+    if anchors.shape != query_positions.shape:
+        raise ValueError("reader block anchors must match query position ids")
+
+    prefix_allowed = prefix_positions.unsqueeze(1) < anchors.unsqueeze(-1)
+    if prefix_valid is not None:
+        prefix_allowed &= prefix_valid.to(device=device, dtype=torch.bool).unsqueeze(1)
+
+    batch_size, query_count = query_positions.shape
+    window_causal = bool(
+        head.resolved_config.get("window_causal_over_tokens", False)
+    )
+    if window_causal:
+        same_block = anchors.unsqueeze(-1) == anchors.unsqueeze(1)
+        strictly_earlier = query_positions.unsqueeze(-1) > query_positions.unsqueeze(1)
+        query_allowed = same_block & strictly_earlier
+        if query_key_valid is not None:
+            query_allowed &= query_key_valid.to(
+                device=device, dtype=torch.bool
+            ).unsqueeze(1)
+        if query_row_valid is not None:
+            query_allowed &= query_row_valid.to(
+                device=device, dtype=torch.bool
+            ).unsqueeze(-1)
+    else:
+        query_allowed = torch.eye(
+            query_count, dtype=torch.bool, device=device
+        ).unsqueeze(0).expand(batch_size, -1, -1)
+
+    allowed = torch.cat([prefix_allowed, query_allowed], dim=-1)
+    additive = torch.zeros(
+        (batch_size, 1, query_count, allowed.shape[-1]),
+        dtype=dtype,
+        device=device,
+    )
+    return additive.masked_fill(
+        allowed.logical_not().unsqueeze(1), torch.finfo(dtype).min
+    )

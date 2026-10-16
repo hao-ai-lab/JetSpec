@@ -5,16 +5,16 @@ from dataclasses import dataclass
 
 import torch
 
-from .. import run_manifest
+import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.models.lac import keep_device
 
 
 def pass_name(passes_run, run_config=None):
     from jetspec.engines.jetspec_plus_plus.draft.method.schedule import completed_label
     passes_run = int(passes_run)
-    from ..profile import enabled as profile_enabled
+    from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled as profile_enabled
     if profile_enabled():
-        from ..pass_labels import eval_completed_label
+        from jetspec.engines.jetspec_plus_plus.jetspec.pass_labels import eval_completed_label
         return eval_completed_label(passes_run, run_config=run_config)
     label = completed_label(passes_run, max_depth=2)
     return label

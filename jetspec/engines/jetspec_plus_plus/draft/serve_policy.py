@@ -188,7 +188,7 @@ def record_policy(run_config=None):
     """Bind the consumed policy to the run manifest once inputs are recorded."""
     policy = load_policy(run_config=run_config)
     if policy.path is not None:
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         entry = run_manifest.record_file('serve_policy', policy.path, run_config=run_config)
         if entry['sha256'] != policy.sha256:
             raise ValueError('JETSPEC_SERVE_POLICY changed after validation')

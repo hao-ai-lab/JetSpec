@@ -34,8 +34,48 @@ def environment_from_config(resolved):
     return result
 
 
+def translate_environment(row, *, config_root=ROOT / 'config'):
+    from jetspec.engines.jetspec_plus_plus.read.resolution import resolve
+    return serving_environment(resolve(row['names'], row['overrides'], root=config_root))
 
 
+def semantic_overrides(environment, config):
+    """Represent recipe values with the structured keys that own launch behavior."""
+    result = {}
+    computed = _BINDINGS['computed']
+    numeric = {_field('method', 'block_size'): int, _field('method', 'cache_rows', 'cap'): int,
+               _field('method', 'anchor', 'cap'): int, _field('method', 'anchor', 'coverage'): float,
+               _field('hardware', 'kv_share'): float}
+    for path, (name, conversion) in _BINDINGS['semantic'].items():
+        if name not in environment or environment[name] is None:
+            continue
+        category, field = path.split('.', 1)
+        base = flatten(config[category], atomic=_ATOMIC).get(field)
+        value = environment[name]
+        if conversion == 'bool':
+            value = value == '1'
+        elif conversion == 'minus_one':
+            value = int(value) + 1
+        elif path in numeric or type(base) in (int, float):
+            value = numeric.get(path, type(base))(value)
+        result[path] = value
+    if config['method']['family'] == 'jetspecpp':
+        tag = environment.get(computed['fixed_config'])
+        if tag:
+            j, r = tag[1:].split('-R')
+            result.update({_field('method', 'schedule', 'j'): int(j), _field('method', 'schedule', 'r'): int(r)})
+        if computed['miss_redraft'] in environment and environment[computed['miss_redraft']] is not None:
+            result[_field('method', 'miss_redraft')] = environment[computed['miss_redraft']] == '1'
+        if computed['deadline'] in environment and environment[computed['deadline']] is not None:
+            result[_field('engine', 'deadline')] = environment[computed['deadline']] == '1'
+    preserved = set(value[0] for value in _BINDINGS['semantic'].values())
+    preserved.update(computed[name] for name in ('eval_rows', 'rows_cap', 'eval_mode'))
+    for category, fields in ENV_FIELDS.items():
+        for name, field in fields.items():
+            if name in preserved and (name not in environment or environment[name] is None
+                                       or name in (computed['eval_rows'], computed['rows_cap'], computed['eval_mode'])):
+                result[category + '.' + field] = environment.get(name)
+    return [key + '=' + json.dumps(value) for key, value in result.items()]
 
 
 def serving_environment(resolved, *, rank_only=False):

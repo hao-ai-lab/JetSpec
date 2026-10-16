@@ -9,14 +9,12 @@ from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculateResult
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifyResult
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculatorBase
-from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import (
-    blockhead_batch_requested,
-    blockhead_graph_requested,
-    configure_blockhead_tf32,
-    load_blockhead,
-    pack_target_taps,
-    record_blockhead_runtime,
-)
+from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import blockhead_batch_requested
+from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import blockhead_graph_requested
+from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import configure_blockhead_tf32
+from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import load_blockhead
+from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import pack_target_taps
+from jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve import record_blockhead_runtime
 
 
 class SpeculatorBlockhead(SpeculatorBase):

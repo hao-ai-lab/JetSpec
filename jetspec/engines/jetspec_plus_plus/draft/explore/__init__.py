@@ -14,6 +14,8 @@ def register(key, **overrides):
         register_impl(op, implementation, engine=key)
     METHODS[key] = tuple(overrides)
 
+def load(key):
+    return import_module("jetspec.engines.jetspec_plus_plus.draft.explore." + _MODULES[key])
 
 def implementation(key, op):
     load(key)

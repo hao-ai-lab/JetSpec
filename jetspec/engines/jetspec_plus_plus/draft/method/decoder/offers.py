@@ -47,3 +47,6 @@ def register_lac_twin(name, implementation, *, interface):
     _lac_twins[name] = (implementation, interface)
 
 
+def lac_twins():
+    """Return the registered native implementations for parity audits."""
+    return dict(_lac_twins)

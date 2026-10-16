@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 from collections import deque
 from jetspec.engines.jetspec_plus_plus._optional import xxhash
 import numpy as np
@@ -80,6 +81,12 @@ class BlockManager:
         
         return blocks
 
+    def _deallocate_n_blocks(self, block_ids: list[int]): # we need to separate where we do ref_count -=1 for forked things from the act of deallocation itself 
+        for block_id in block_ids:
+            block = self.blocks[block_id]
+            block.ref_count -= 1 # added this -- keeping the assert ensures we only have our fork clones pointing to each seq
+            if block.ref_count == 0: 
+                self._deallocate_block(block_id)
 
 
     def _deallocate_block(self, block_id: int) -> Block:

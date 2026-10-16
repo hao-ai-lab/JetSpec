@@ -35,6 +35,31 @@ def staged_verify_rows(seqs, block_size, query_len, bucket):
     return positions, slots, lengths, tables
 
 
+def vectorized_staged_verify_rows(seqs, block_size, query_len, bucket):
+    """Build the same rows as staged_verify_rows with vectorized slot lookup."""
+    assert 1 < len(seqs) <= bucket
+    starts = np.fromiter((len(seq) - 1 for seq in seqs), dtype=np.int64)
+    assert all(seq.num_cached_tokens == start for seq, start in zip(seqs, starts))
+    lengths = starts + query_len
+    assert all(len(seq.block_table) >= (length + block_size - 1) // block_size
+               for seq, length in zip(seqs, lengths))
+    table_width = max(len(seq.block_table) for seq in seqs)
+    tables = np.full((bucket, table_width), -1, dtype=np.int32)
+    for row, seq in enumerate(seqs):
+        tables[row, :len(seq.block_table)] = seq.block_table
+    positions = starts[:, None] + np.arange(query_len, dtype=np.int64)
+    pages = positions // block_size
+    slots = tables[np.arange(len(seqs))[:, None], pages] * block_size + positions % block_size
+    padded_positions = np.zeros((bucket, query_len), dtype=np.int64)
+    padded_slots = np.full((bucket, query_len), -1, dtype=np.int32)
+    padded_lengths = np.empty(bucket, dtype=np.int32)
+    padded_positions[:len(seqs)] = positions
+    padded_slots[:len(seqs)] = slots
+    padded_lengths[:len(seqs)] = lengths
+    padded_lengths[len(seqs):] = lengths[-1]
+    tables[len(seqs):] = tables[len(seqs) - 1]
+    return (padded_positions.ravel().tolist(), padded_slots.ravel().tolist(),
+            padded_lengths.tolist(), tables.tolist())
 
 
 def stage_mixed_verify_rows(seqs, block_size, width):
@@ -65,3 +90,35 @@ def assemble_full_staged_verify_rows(staged, bucket, width):
     return positions.ravel(), slots.ravel(), lengths, tables
 
 
+def assemble_mixed_verify_rows(staged, seqs, width):
+    """Match prepare_prefill's graph inputs after full rows and miss rows are ordered."""
+    indices = {key[0]: row for row, key in enumerate(staged["keys"])}
+    rows = []
+    widths = []
+    for seq in seqs:
+        row = indices.get(id(seq))
+        if row is None:
+            return None
+        _, start, blocks = staged["keys"][row]
+        query_width = len(seq) - seq.num_cached_tokens
+        if (seq.num_cached_tokens != start or tuple(seq.block_table) != blocks
+                or query_width not in (1, width)):
+            return None
+        rows.append(row)
+        widths.append(query_width)
+    # The mixed graph is captured for full queries first, then one-token rows.
+    if widths != sorted(widths, reverse=True):
+        return None
+    ids = np.fromiter((token for seq, count in zip(seqs, widths)
+                       for token in seq.token_ids[-count:]), dtype=np.int64)
+    positions = np.concatenate([staged["positions"][row, :count]
+                                for row, count in zip(rows, widths)])
+    slots = np.concatenate([staged["slots"][row, :count]
+                            for row, count in zip(rows, widths)])
+    lengths = np.fromiter((len(seq) for seq in seqs), dtype=np.int32)
+    cu_q = np.empty(len(seqs) + 1, dtype=np.int32)
+    cu_k = np.empty(len(seqs) + 1, dtype=np.int32)
+    cu_q[0] = cu_k[0] = 0
+    np.cumsum(widths, out=cu_q[1:])
+    np.cumsum(lengths, out=cu_k[1:])
+    return ids, positions, slots, lengths, staged["tables"][rows], cu_q, cu_k

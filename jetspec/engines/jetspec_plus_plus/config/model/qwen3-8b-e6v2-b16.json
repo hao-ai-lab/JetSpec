@@ -142,6 +142,7 @@
     {
       "destination_root": {
         "namespace": "fetch_destination_relative_path",
+        "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
         "resolves": true,
         "value": "served_heads_reused_e6v2_b16"
       },
@@ -149,11 +150,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "BUNDLE.md"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 3478
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/BUNDLE.md"
           },
@@ -162,11 +173,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "bundle-pin.json"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 3788
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/bundle-pin.json"
           },
@@ -175,11 +196,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "decoder/checkpoint-0.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 771794717
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/decoder/checkpoint-0.pt"
           },
@@ -188,11 +219,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "decoder/checkpoint-final-model.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 771794629
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/decoder/checkpoint-final-model.pt"
           },
@@ -201,11 +242,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "decoder/manifest.json"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 375
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/decoder/manifest.json"
           },
@@ -214,11 +265,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J0d0/seed0/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed0/ckpt.pt"
           },
@@ -227,11 +288,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J0d0/seed1/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed1/ckpt.pt"
           },
@@ -240,11 +311,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J0d0/seed2/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed2/ckpt.pt"
           },
@@ -253,11 +334,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J0d0/seed3/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed3/ckpt.pt"
           },
@@ -266,11 +357,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J0d0/seed4/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed4/ckpt.pt"
           },
@@ -279,11 +380,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J1/seed0/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed0/ckpt.pt"
           },
@@ -292,11 +403,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J1/seed1/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed1/ckpt.pt"
           },
@@ -305,11 +426,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J1/seed2/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed2/ckpt.pt"
           },
@@ -318,11 +449,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J1/seed3/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed3/ckpt.pt"
           },
@@ -331,11 +472,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J1/seed4/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed4/ckpt.pt"
           },
@@ -344,11 +495,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J2/seed0/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed0/ckpt.pt"
           },
@@ -357,11 +518,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J2/seed1/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed1/ckpt.pt"
           },
@@ -370,11 +541,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J2/seed2/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed2/ckpt.pt"
           },
@@ -383,11 +564,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J2/seed3/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed3/ckpt.pt"
           },
@@ -396,11 +587,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "kpred/arms/FR/J2/seed4/ckpt.pt"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed4/ckpt.pt"
           },
@@ -409,11 +610,21 @@
         {
           "destination": {
             "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "thresholds.json"
           },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 27622
+          },
           "remote": {
             "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
             "resolves": true,
             "value": "served_heads_reused_e6v2_b16/thresholds.json"
           },
@@ -422,6 +633,32 @@
       ],
       "kind": "published",
       "name": "served_heads_reused_e6v2_b16",
+      "provenance": {
+        "attributes": {
+          "environment_variables": [
+            "JETSPEC_HEADS_DIR",
+            "W314_HEADS_DIR"
+          ],
+          "source_path": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "local-provenance"
+          }
+        },
+        "has_files": true,
+        "order": 19,
+        "repository": {
+          "namespace": "huggingface_repo_id",
+          "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+          "resolves": true
+        },
+        "revision": {
+          "namespace": "huggingface_revision",
+          "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+          "resolves": true
+        }
+      },
       "registration_commit": "c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c",
       "repository": "Moonlight556/jetspec-served-heads-reused",
       "revision": "c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c",

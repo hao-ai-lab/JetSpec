@@ -7,18 +7,18 @@ from jetspec.engines.jetspec_plus_plus.jetspec.config_values import config_value
 def eval_completed_label(passes_run, environ=None, *, run_config=None):
     """Label control for the eval J3/J2 comparison; physical depth is unchanged."""
     label = completed_label(passes_run)
-    from .profile import enabled
+    from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled
     env = environ
     return config_values((run_config if environ is None else environ)).get('method.method_settings.eval_j3_label', 'J3') if enabled(env) and label == 'J3' else label
 
 
 def chain_labels(*, run_config=None):
-    from .profile import enabled
+    from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled
     return PASS_LABELS[:3] + (eval_completed_label(4, run_config=run_config),) if enabled() else PASS_LABELS[:3]
 
 
 def chain_tau_values(table, *, bundle=None, recipe=None, run_config=None):
-    from .profile import enabled
+    from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled
     if enabled():
         return [resolve_tau(table, label, bundle=bundle, recipe=recipe)
                 for label in chain_labels(run_config=run_config)]

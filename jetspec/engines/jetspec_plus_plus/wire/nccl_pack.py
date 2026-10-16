@@ -84,6 +84,21 @@ def pack_jetspec_taps(
     return lengths_tensor, payload
 
 
+def unpack_jetspec_taps(
+    payload: torch.Tensor, lengths: torch.Tensor
+) -> list[torch.Tensor]:
+    """Split a packed tap payload according to its per-sequence lengths."""
+    unpacked = []
+    offset = 0
+    for length in lengths.tolist():
+        next_offset = offset + int(length)
+        unpacked.append(payload[offset:next_offset])
+        offset = next_offset
+    if offset != payload.shape[0]:
+        raise ValueError(
+            f"tap lengths total {offset} does not match payload length {payload.shape[0]}"
+        )
+    return unpacked
 
 
 def append_jetspec_tap_mirrors(

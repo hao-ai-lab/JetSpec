@@ -31,7 +31,7 @@ def install(rank, *, run_config=None):
     import torch
     from torch._inductor import config
     from torch._inductor.runtime import triton_heuristics as heuristics
-    from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+    import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
     if config_values(run_config).get('engine.engine_settings.cublas_workspace_config') != WORKSPACE:
         if torch.cuda.is_initialized():
             raise RuntimeError('eval workspace policy must be installed before CUDA initialization')

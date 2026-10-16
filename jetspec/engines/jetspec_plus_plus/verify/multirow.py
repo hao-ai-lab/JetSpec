@@ -181,7 +181,9 @@ class SpeculatorAsync(SpeculatorBase):
             if (((setting(self, 'engine.engine_settings.rows', '0') != "1") or (setting(self, 'engine.engine_settings.rows_fast', '0') != "1") or (self.jetspec_wait_ms != float("inf")))):
                 raise ValueError(
                     "device verify requires CPU fast candidate delivery with infinite wait")
-        from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import resolve_admission_count, miss_redraft, miss_redraft_force
+        from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import resolve_admission_count
+        from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft
+        from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import miss_redraft_force
         # serving JETSPEC_MISS_REDRAFT=1: a missed round verifies the draft rank's fallback row.
         self.miss_redraft = bool(jetspec) and not jetspec_sync and miss_redraft(run_config=getattr(target_model_runner, "run_config", None))
         self.miss_redraft_force = self.miss_redraft and miss_redraft_force(run_config=getattr(target_model_runner, "run_config", None))
@@ -346,7 +348,8 @@ class SpeculatorAsync(SpeculatorBase):
         capacity = self._jetspec_wire_capacity
         receive_id = self._jetspec_next_receive_id
         if setting(self, 'engine.engine_settings.rows', '0')=='1' and setting(self, 'engine.engine_settings.rows_fast', '0')=='1':
-            from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import candidate_wire_views, candidate_wire_numel
+            from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import candidate_wire_views
+            from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import candidate_wire_numel
             if self.jetspec_wait_ms == float("inf"):
                 if self._jetspec_candidate_receiver is None:
                     decode = partial(candidate_wire_views, capacity=capacity,
@@ -543,7 +546,8 @@ class SpeculatorAsync(SpeculatorBase):
             raise RuntimeError("chain command key differs from the verifier's speculate key")
         self._chain_taken_round[key[0]] = key[1]
         deliveries = self._chain_deliveries.pop(key, 1)
-        from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled as profile_enabled, critical_path
+        from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled as profile_enabled
+        from jetspec.engines.jetspec_plus_plus.jetspec.profile import critical_path
         if profile_enabled():
             first = getattr(self, "_chain_first_key_snapshots", {}).pop(key, None)
             if first is None:

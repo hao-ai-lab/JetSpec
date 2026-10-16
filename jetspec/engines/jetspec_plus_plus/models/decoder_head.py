@@ -32,7 +32,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
     rotate_half,
 )
 
-from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.models.lac import keep_device
 from jetspec.engines.jetspec_plus_plus.models.lac import lac_candidates
 from jetspec.engines.jetspec_plus_plus.jetspec.rows import fused_kernels

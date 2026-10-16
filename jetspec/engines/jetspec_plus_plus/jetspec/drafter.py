@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """JetSpec block drafter, frozen H-to-H adapter, and Jacobi refinement loop."""
 from __future__ import annotations
 
@@ -182,6 +183,36 @@ class OneRoundAdaptedContext:
         self.predicted_hidden = predicted_hidden.detach().clone()
 
     # SOURCE: same file:186-215
+    def consume(
+        self,
+        exact_hidden: torch.Tensor,
+        context_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, int]:
+        full_length = int(exact_hidden.shape[1])
+        indicator = torch.zeros(
+            exact_hidden.shape[:2], dtype=torch.long, device=exact_hidden.device
+        )
+        if self.start_position is None:
+            return exact_hidden, indicator, 0
+        assert self.token_ids is not None and self.predicted_hidden is not None
+        delta = full_length - self.start_position
+        if delta < 1 or delta > int(self.token_ids.shape[1]):
+            raise RuntimeError(
+                f"one-round adapter tail length {delta} is outside staged range "
+                f"1..{self.token_ids.shape[1]}"
+            )
+        actual = context_ids[:, self.start_position:full_length].to(self.token_ids.device)
+        expected = self.token_ids[:, :delta]
+        if not torch.equal(actual, expected):
+            raise RuntimeError("one-round adapter token mismatch after target verification")
+        adapted_count = min(delta, self.max_adapted)
+        staged_start = delta - adapted_count
+        adapted = exact_hidden.clone()
+        adapted[:, -adapted_count:, :] = self.predicted_hidden[
+            :, staged_start:delta, :
+        ].to(device=exact_hidden.device, dtype=exact_hidden.dtype)
+        indicator[:, -adapted_count:] = 1
+        return adapted, indicator, adapted_count
 
 
 @dataclass
@@ -224,11 +255,11 @@ def _run_manifest():
     """The run-manifest recorder; by package when this module has one, else by path
     (the test harness loads drafter.py as a bare file)."""
     if __package__:
-        from . import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         return run_manifest
     name = "jetspec_run_manifest"
     if name not in sys.modules:
-        path = Path(__file__).with_name("run_manifest.py")
+        path = (Path(__file__).parent.parent / 'read/run_manifest.py')
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -778,6 +809,11 @@ class FrozenH2HAdapter(nn.Module):
         self._sealed_state_sha256 = actual
 
     # SOURCE: same file:198-202
+    def assert_frozen(self) -> None:
+        if any(parameter.requires_grad for parameter in self.head.parameters()):
+            raise AssertionError("H-to-H head has trainable parameters")
+        if any(parameter.grad is not None for parameter in self.head.parameters()):
+            raise AssertionError("H-to-H head accumulated gradients")
 
     # SOURCE: same file:204-211
     def assert_byte_identical(self) -> str:
@@ -948,7 +984,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def _c1_fused_module():
         name = "jetspec_c1_fused"
         if name not in sys.modules:
-            path = Path(__file__).with_name("c1_fused.py")
+            path = (Path(__file__).parent / 'c1_fused.py')
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
@@ -961,11 +997,11 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         """The rows kernels; by package when this module has one, else by path
         (the test harness loads drafter.py as a bare file)."""
         if __package__:
-            from . import rows
+            import jetspec.engines.jetspec_plus_plus.jetspec.rows as rows
             return rows
         name = "jetspec_rows"
         if name not in sys.modules:
-            path = Path(__file__).with_name("rows.py")
+            path = (Path(__file__).parent / 'rows.py')
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
@@ -3282,6 +3318,122 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         block_out[row_index, slot] = out[tail_count:]
         return out[:tail_count], block_out
 
+    @torch.inference_mode()
+    def refresh_cached(self, *, block_embeddings, length, tail_counts, prefix_key, row_slots,
+                       pad_to=0, slot_counts=None, first_slots=None, fixed_tokens=None,
+                       fixed_start=None):
+        """JETSPEC_REFRESH_PACK=2: ``refresh_window(row_slots=...)``'s block rows with the
+        staged tail read from the cache instead of recomputed.
+
+        The bf16 D1 staging call wrote its 15 window rows' keys and values to cache
+        slots ``length .. length+14`` (the ephemeral tail slots a later extension
+        overwrites before reading).  The packed block tokens write theirs after them,
+        from slot ``length+15``, and attend over the cache in place: the prefix, tail
+        slot t iff t < the row's k, and the row's own earlier block slots.  ``pad_to``
+        appends masked filler tokens up to that count (a shape choice only: no real
+        token reads a filler).  ``slot_counts``: ``row_slots`` already on the device.
+        ``first_slots`` (JETSPEC_REFRESH_REUSE0, a device 0/1 per row): a row with 1
+        computes block slots 1 .. row_slots[r] and reads tail slot k in place of its
+        block slot 0 (the caller has checked they hold the same token at the same
+        position, so they are the same window slot).  Returns ``block_out [R, 16, H]``
+        (zero outside each row's computed slots), or None when the cache does not hold this sequence's exact
+        prefix and window or has no room for the block tokens.
+        """
+        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        if (not hasattr(self, "_c1_kv") or self._c1_prefix_key is not prefix_key
+                or self.c1_state["cache_length"] != length
+                or not self.resolved_config.get("window_causal_over_tokens", False)
+                or block_embeddings.dtype != torch.bfloat16
+                or block_embeddings.device.type != "cuda"):
+            return None
+        rows, width = int(block_embeddings.shape[0]), int(block_embeddings.shape[1])
+        hidden = int(block_embeddings.shape[-1])
+        if fixed_tokens is not None:
+            if slot_counts is None or first_slots is not None or fixed_tokens < rows * (width - 1):
+                raise ValueError("fixed refresh needs device counts and R x (block-1) slots")
+            window_rows = getattr(self, "_c1_window", 15)
+            if length + window_rows + fixed_tokens > self._c1_kv[0][0].shape[2]:
+                return None
+            return self._refresh_cached_fixed(
+                block_embeddings, length, tail_counts, slot_counts, fixed_tokens, fixed_start)
+        if len(row_slots) != rows or any(not 0 < n <= width - 1 * (first_slots is not None)
+                                         for n in row_slots):
+            raise ValueError("row_slots must hold one count in 1..width per row")
+        real = sum(row_slots)
+        tokens = max(real, int(pad_to))
+        window_rows = getattr(self, "_c1_window", 15)  # serving: 16 with 15 drafts
+        start = length + window_rows
+        keys_total = start + tokens
+        if keys_total > self._c1_kv[0][0].shape[2]:
+            return None
+        fused = self._c1_fused_module()
+        device, dtype = block_embeddings.device, block_embeddings.dtype
+        counts = tail_counts.to(device=device, dtype=torch.long).clamp(0, window_rows)
+        filler = tokens - real
+        # the packed (row, slot) pairs built on device from the counts (no host copy)
+        need = (torch.as_tensor(row_slots, device=device) if slot_counts is None
+                else slot_counts.to(device=device, dtype=torch.long))
+        row_index = torch.repeat_interleave(torch.arange(rows, device=device), need,
+                                            output_size=real)
+        row_starts = torch.cumsum(need, 0) - need
+        slot = torch.arange(real, device=device) - row_starts[row_index]
+        first = (counts.new_zeros(rows + 1) if first_slots is None else
+                 torch.cat((first_slots.to(device=device, dtype=torch.long),
+                            counts.new_zeros(1))))
+        if first_slots is not None:
+            slot = slot + first[row_index]
+        if filler:
+            row_index = torch.cat((row_index, row_index.new_full((filler,), rows)))
+            slot = torch.cat((slot, slot.new_full((filler,), width)))
+        counts_with_filler = torch.cat((counts, counts.new_zeros(1)))
+        from jetspec.engines.jetspec_plus_plus.kernels.attn_sm100 import flashinfer_enabled
+        use_flashinfer = flashinfer_enabled(device, dtype)
+        suffix_meta = None
+        if use_flashinfer:
+            row_starts = torch.cat((row_starts, row_starts.new_full((1,), real)))
+            suffix_meta = (row_index, row_starts, counts_with_filler, first)
+        block_rows = block_embeddings[row_index[:real], slot[:real]]
+        if filler:
+            block_rows = torch.cat((block_rows, block_rows.new_zeros(filler, hidden)))
+        k_of = counts_with_filler[row_index]
+        positions = length + k_of + slot.clamp(max=width - 1)
+        span = k_of + first[row_index]
+        cos, sin = self._c1_rope(block_rows[None], positions[None])
+        tail = torch.arange(window_rows, device=device)
+        allowed = torch.cat((
+            tail[None, :] < span[:, None],
+            (row_index[None, :] == row_index[:, None]) & (slot[None, :] < slot[:, None])), dim=1)
+        lean = (kernel_enabled('refresh_lean', '1')
+                and kernel_enabled('c1_norm', 'wide'))
+        graph = lean and (config_values(self.run_config).get('engine.engine_settings.refresh_graph', "0") == "1"
+                          or kernel_enabled('rows_fused_graph', '1'))
+        # The graphed path keeps the exact mask values and slices K/V to its live bucket.
+        if graph and config_values(self.run_config).get('engine.engine_settings.keylen_bucket', "0") == "1":
+            aligned = self._refresh_key_bucket(keys_total, self._c1_kv[0][0].shape[2])
+        else:
+            aligned = self._c1_kv[0][0].shape[2] if graph else (keys_total + 15) // 16 * 16
+        mask = torch.zeros(1, 1, tokens, aligned, device=device, dtype=dtype)
+        mask[0, 0, :, length:keys_total].masked_fill_(~allowed, torch.finfo(dtype).min)
+        if graph:
+            mask[0, 0, :, keys_total:].fill_(torch.finfo(dtype).min)
+            out = self._refresh_graph_replay(fused, block_rows, cos, sin, mask, start, tokens,
+                                             real, suffix_meta=suffix_meta)
+        elif lean:
+            from jetspec.engines.jetspec_plus_plus.kernels.attn_sm100 import prepare_prefix
+
+            if use_flashinfer:
+                self._flashinfer_refresh_plan = prepare_prefix(
+                    self, "refresh", tokens, self._c1_kv[0][0], length,
+                    self._d1_lean_plan()[0][-1])
+            out = self._refresh_cached_lean(fused, block_rows, cos, sin, mask, start,
+                                            keys_total, tokens, real, suffix_meta=suffix_meta)
+        else:
+            out = self._refresh_cached_plain(fused, block_rows, cos, sin,
+                                             mask[..., :keys_total], start, keys_total,
+                                             tokens, real)
+        block_out = out.new_zeros(rows, width, out.shape[-1])
+        block_out[row_index[:real], slot[:real]] = out
+        return block_out
 
     def _refresh_cached_fixed(self, embeddings, length, tail_counts, slot_counts,
                               tokens, fixed_start, key_width=None):
@@ -3379,6 +3531,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             allow_flashinfer=False, refresh_meta=meta)
         return scatter(output, slot_counts, embeddings.shape[1])
 
+    @staticmethod
+    def _refresh_key_bucket(keys_total, capacity):
+        return key_length_bucket(keys_total, capacity)
 
     def _refresh_graph_replay(self, fused, rows, cos, sin, mask, start, tokens, real,
                               suffix_meta=None):
@@ -4247,6 +4402,29 @@ class JetSpecDrafter:
             correction_head=correction_head,
         run_config=run_config)
 
+    def prepare_sync_context(
+        self,
+        seq: JetSpecSequence,
+        *,
+        mode: Mode,
+    ) -> torch.Tensor:
+        """Prepare the rail's actual post-commit stale context for proof mode."""
+        if mode not in {"token", "kth"}:
+            raise ValueError("sync context requires token or kth mode")
+        exact = seq.exact_hidden(device=self.device, dtype=self.dtype)
+        adapted, indicator, _ = seq.staged.consume(
+            exact,
+            seq.committed_ids,
+        )
+        prepared = adapted + self.head.adapted_position_embedding(indicator).to(
+            dtype=adapted.dtype
+        )
+        if mode == "kth":
+            if int(prepared.shape[1]) < 1:
+                raise ValueError("kth sync context requires a preceding token")
+            prepared = prepared[:, :-1, :]
+        seq.prepared_context = prepared
+        return prepared
 
 
     def _target_contexts(
@@ -4387,6 +4565,30 @@ class JetSpecDrafter:
             )
         return blocks
 
+    @torch.inference_mode()
+    def propose_sync(
+        self,
+        seq: JetSpecSequence,
+        *,
+        mode: Mode,
+        hypotheses: list[int],
+        passes: int | None,
+        abort_if: Callable[[], bool] | None = None,
+    ) -> list[Block]:
+        """Run the sequential rail's single row, then replicate its wire slot."""
+        requested = [int(value) for value in hypotheses]
+        if not requested or len(set(requested)) != len(requested):
+            raise ValueError("hypotheses must be non-empty and unique")
+        if any(value < 0 or value >= self.block_size for value in requested):
+            raise ValueError("hypotheses must be inside [0, 16)")
+        block = self.propose(
+            seq,
+            mode=mode,
+            k_hypotheses=[0],
+            passes=passes,
+            abort_if=abort_if,
+        )[0]
+        return [replace(block, hypothesis=value) for value in requested]
 
     @torch.inference_mode()
     def propose_protocol(
@@ -4546,6 +4748,49 @@ class JetSpecDrafter:
 
     # SOURCE: /home/hal-afeng/w209_tstar/SpecForge-serving-tstar-untouched/
     # eval/the_jacobi_forcing_refine_drafter.py:394-438
+    @torch.inference_mode()
+    def stage_known_correction(
+        self,
+        seq: JetSpecSequence,
+        correction: int | torch.Tensor,
+    ) -> None:
+        """Predict the hidden state of a known correction for H1 catchup."""
+        correction_id = torch.as_tensor(
+            correction,
+            dtype=seq.committed_ids.dtype,
+            device=self.device,
+        ).reshape(1, 1)
+        if not torch.equal(
+            correction_id,
+            seq.committed_ids[:, -1:].to(self.device),
+        ):
+            raise ValueError("known correction must end the committed prefix")
+        prefix = seq.exact_hidden(device=self.device, dtype=self.dtype)
+        prefix_count = int(prefix.shape[1])
+        token_embeddings = self.embed_tokens(correction_id)
+        predicted = self.adapter.head(
+            token_embeddings=token_embeddings,
+            h_prev=prefix[:, -1:, :],
+            prefix_h=prefix,
+            prefix_position_ids=torch.arange(
+                prefix_count, dtype=torch.long, device=self.device
+            ).unsqueeze(0),
+            query_position_ids=torch.tensor(
+                [[prefix_count]], dtype=torch.long, device=self.device
+            ),
+            attention_mask=build_adapter_query_mask(
+                prefix_count=prefix_count,
+                query_count=1,
+                dtype=prefix.dtype,
+                device=self.device,
+            ),
+        ).detach()
+        seq.staged.stage(
+            start_position=prefix_count,
+            token_ids=correction_id,
+            predicted_hidden=predicted,
+        )
+        seq.pending_block = None
 
     @torch.inference_mode()
     def stage(self, seq: JetSpecSequence, block: Block) -> None:

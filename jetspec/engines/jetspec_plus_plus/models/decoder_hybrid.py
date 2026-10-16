@@ -152,7 +152,7 @@ class HybridAnchorDecoder(MethodAnchorDecoder):
 
     @classmethod
     def load(cls, root, drafter, target_model_path, manifest, *, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.jetspec import run_manifest
+        import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest
         from jetspec.engines.jetspec_plus_plus.models.decoder_head import _sha256
         from jetspec.engines.jetspec_plus_plus.models.qwen3_5 import HybridDecoderLayer, HybridRMSNorm
 

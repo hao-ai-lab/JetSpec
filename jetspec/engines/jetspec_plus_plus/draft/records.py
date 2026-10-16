@@ -165,6 +165,42 @@ class ChainWireRecorder:
         append_proposal_record(self.root, record, run_config=run_config)
 
 
+def replay_record(record, thresholds, *, dataset):
+    """CPU replay of the quantized BLEND and capped joint rule from capture inputs."""
+    from jetspec.engines.jetspec_plus_plus.models.fast import dataset_entry
+    if record['record_kind'] == 'redraft':
+        return [[record['k_true'], record['anchor_true']]]
+    coefficients = dataset_entry(thresholds['e04_kscore_blend'], dataset)
+    rule = dataset_entry(thresholds['e04_rowrule_joint'], dataset)
+    offers = record['offers']
+    p = torch.tensor(record['p_top1'][1:], dtype=torch.float64).clamp(1e-6, 1 - 1e-6)
+    q = torch.tensor([value or 0.0 for value in record['q_shadow'][:-1]],
+                     dtype=torch.float64).clamp(1e-6, 1 - 1e-6)
+    a, b, c = (float(coefficients[name]['value']) for name in ('a', 'b', 'c'))
+    eq = top = None
+    if 'argmax' in coefficients:
+        g, t, pos = (float(coefficients[name]['value']) for name in ('argmax', 'top', 'pos'))
+        eq = torch.tensor([x == y for x, y in zip(record['shadow_argmax'][:-1],
+                                                 offers['d_rej'][:-1])], dtype=torch.float64)
+        top = torch.tensor(offers['top_probabilities'][:-1], dtype=torch.float64).amax(-1)
+        top = top.clamp(1e-6, 1 - 1e-6)
+    values = (a, b, c, g, t, pos) if eq is not None else (a, b, c)
+    z = blend_features(p, q, values, argmax_eq=eq, top=top, multiply_position_first=True)
+    mass = blend_mass(z)
+    if record['after_miss']:
+        mass.zero_()
+        mass[0] = 1.0
+    probabilities = torch.tensor(offers['top_probabilities'], dtype=torch.float64)
+    scores = joint_scores(mass, probabilities, float(rule['temperature']['value'])).flatten()
+    from jetspec.engines.jetspec_plus_plus.jetspec.pass_labels import resolve_tau
+    tau = resolve_tau(rule['tau'], record['pass_label'])
+    ids = torch.tensor(offers['top_ids'], dtype=torch.long)
+    device_offers = DeviceOffers(ids, probabilities, torch.ones_like(ids, dtype=torch.bool),
+                                 torch.arange(ids.shape[0]))
+    cap = record['row_cap']
+    requested, keys = select_rows(scores, (scores >= tau) & (scores > 0), device_offers, cap, cap)
+    keys = keys[:min(int(requested), cap)].tolist()
+    return keys or [[0, record['fallback_anchor']]]
 
 
 from jetspec.engines.jetspec_plus_plus.draft.config import legacy_name, named_setting
@@ -201,6 +237,38 @@ def _anchor_evidence(logits, rejected, top_n):
     }
 
 
+def anchor_evidence_batch(logits, rejected, top_n):
+    """Build independent anchor records with one set of host reads for a group."""
+    if len(logits) != len(rejected):
+        raise ValueError("anchor evidence needs one rejected-id row per logits row")
+    if len(logits) <= 1:
+        return [_anchor_evidence(one, drop, top_n)
+                for one, drop in zip(logits, rejected)]
+    ids_device, probs_device, sums_device, drops_device = [], [], [], []
+    for one, drop in zip(logits, rejected):
+        values = torch.as_tensor(one).float()
+        drops = torch.as_tensor(drop, device=values.device, dtype=torch.long)
+        if values.ndim != 2 or drops.shape != values.shape[:1]:
+            raise ValueError("anchor logits and rejected ids have incompatible shapes")
+        pre_exclusion = values.logsumexp(-1)
+        filtered = values.clone()
+        valid = drops >= 0
+        filtered[valid, drops[valid]] = float("-inf")
+        probabilities = filtered.softmax(-1).double()
+        ranked = torch.argsort(probabilities, dim=-1, descending=True, stable=True)
+        ranked = ranked[:, :min(int(top_n), values.shape[1])]
+        ids_device.append(ranked)
+        probs_device.append(probabilities.gather(1, ranked))
+        sums_device.append(pre_exclusion)
+        drops_device.append(drops)
+    ids = torch.stack(ids_device).tolist()
+    probs = torch.stack(probs_device).tolist()
+    sums = torch.stack(sums_device).tolist()
+    rejected_ids = torch.stack(drops_device).tolist()
+    return [dict(top_ids=one_ids, top_probabilities=one_probs,
+                 pre_exclusion_logsumexp=one_sums, d_rej=one_rejected)
+            for one_ids, one_probs, one_sums, one_rejected
+            in zip(ids, probs, sums, rejected_ids)]
 
 
 def proposal_record(*, seq_id, candidate_round, pass_label,

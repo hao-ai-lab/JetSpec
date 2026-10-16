@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """Graph-safe per-row refresh suffix state for FlashInfer cascade merge."""
 
 import torch

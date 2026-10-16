@@ -118,6 +118,9 @@ class Engine:
     def graphs(self):
         return 'none' if self.execution.startswith('eager') else 'target' if self.kind == 'reference' else 'segments'
 
+    @property
+    def compile(self):
+        return ('adapter', 'draft') if self.graphs == 'segments' else ()
 
     @property
     def verify(self):

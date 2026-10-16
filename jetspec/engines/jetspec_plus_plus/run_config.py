@@ -122,7 +122,8 @@ def legacy_environment(environ):
     Ordinary host variables do not form part of the five-entry config. Unknown
     serving knobs are retained so the strict adapter rejects them.
     """
-    from jetspec.engines.jetspec_plus_plus.jetspec.env import SCANNED_PREFIXES, REGISTRY
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import SCANNED_PREFIXES
+    from jetspec.engines.jetspec_plus_plus.jetspec.env import REGISTRY
     bound = {name for fields in ENV_FIELDS.values() for name in fields}
     return {name: value for name, value in environ.items()
             if name not in REGISTRY and (name in bound or name.startswith(SCANNED_PREFIXES)

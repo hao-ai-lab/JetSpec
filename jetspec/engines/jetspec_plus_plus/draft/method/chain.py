@@ -162,6 +162,17 @@ class StandaloneChain:
                 old = self._fidelity.get((position, tap), (0., 0., 0))
                 self._fidelity[(position, tap)] = old[0] + cosine, old[1] + relative, old[2] + 1
 
+    def fidelity_summary(self):
+        positions = []
+        for position in range(1, self.block_size):
+            taps = []
+            for tap in self.tap_ids:
+                cosine, relative, count = self._fidelity.get((position, tap), (0., 0., 0))
+                taps.append({'tap_layer': tap, 'count': count,
+                             'cosine': cosine / count if count else None,
+                             'relative_l2': relative / count if count else None})
+            positions.append({'position': position, 'taps': taps})
+        return {'positions': positions, 'observed_positions': sum(t[2] for t in self._fidelity.values())}
 
     def _predict(self, *, prefix, tokens):
         length, count = prefix.shape[1], tokens.shape[1]

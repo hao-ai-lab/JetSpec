@@ -545,7 +545,8 @@ class StaticSyncDrafter(SyncChainDrafter):
 def load_sync_drafter(checkpoint_dir, *, device, max_context=None,
                       run_config=None) -> SyncChainDrafter:
     """Load through the asynchronous path's loader, fresh-only, and bind the run to what it read."""
-    from jetspec.engines.jetspec_plus_plus.jetspec.drafter import JetSpecDrafter, _run_manifest
+    from jetspec.engines.jetspec_plus_plus.jetspec.drafter import JetSpecDrafter
+    from jetspec.engines.jetspec_plus_plus.jetspec.drafter import _run_manifest
     checkpoint = Path(checkpoint_dir)
     run_config = run_config if run_config is not None else RunConfig.from_environment({})
     release = run_config.model.model_settings.target_release_weights or str(

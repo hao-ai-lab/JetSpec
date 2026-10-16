@@ -10,12 +10,20 @@ TRAINING_CONTAINERS = {
 _training_schemas = {}
 
 
+def register_training_schemas(schemas):
+    global _training_schemas
+    _training_schemas = dict(schemas)
 
 
 def training_schemas():
     return dict(_training_schemas)
 
 
+def _training_key_paths(value, prefix):
+    if isinstance(value, dict) and value:
+        return [leaf for key, child in value.items()
+                for leaf in _training_key_paths(child, prefix + '.' + str(key))]
+    return [prefix]
 
 
 def require_training_schemas(config):

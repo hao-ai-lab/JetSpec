@@ -60,6 +60,21 @@ _packages = None
 _run_token = None
 
 
+def reset(*, run_config=None):
+    """Forget every record; the sha cache survives because its key carries mtime and size."""
+    global _env, _git, _packages, _run_token
+    with _lock:
+        _files.clear()
+        _file_keys.clear()
+        _once.clear()
+        _values.clear()
+        _value_conflicts.clear()
+        _observed.clear()
+        _env = _git = _packages = None
+        _run_token = None
+        directory = config_values(run_config).get('engine.engine_settings.run_manifest_dir')
+        if directory:
+            _ensure_run_token(directory)
 
 
 def _ensure_run_token(directory):
@@ -153,6 +168,14 @@ def record_file(role, path, *, run_config=None):
         return entry
 
 
+def record_file_once(role, path, *, run_config=None):
+    """``record_file`` for a read site that repeats: later calls are one set lookup."""
+    key = (role, os.fspath(path))
+    if key in _once:
+        return
+    with _lock:
+        record_file(role, path, run_config=run_config)
+        _once.add(key)
 
 
 def record_model_dir(role, path, *, run_config=None):

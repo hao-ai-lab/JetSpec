@@ -432,6 +432,15 @@ def digest_defer(tag, path, *, run_config=None, limit=None, **tensors):
         state["kept"] = []
 
 
+def from_env(*, run_config=None):
+    """JETSPEC_C1_COMPILE_PIN (+ _SHA): the installed Pin, or None when unset."""
+    pin = _setting('engine.engine_settings.c1_compile_pin', '', run_config=run_config)
+    if not pin:
+        return None
+    sha = _setting('engine.engine_settings.c1_compile_pin_sha', '', run_config=run_config)
+    if not sha:
+        raise ValueError("C1 COMPILE PIN requires JETSPEC_C1_COMPILE_PIN_SHA")
+    return Pin(pin, sha)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+# Adaptation: package relocation and deferred optional dependencies.
 """One-launch J-pass attention over the row head's contiguous KV cache."""
 
 from __future__ import annotations
