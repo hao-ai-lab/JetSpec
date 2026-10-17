@@ -11,7 +11,15 @@ from jetspec.engines.jetspec_plus_plus.serving.block_manager import BlockManager
 
 class Scheduler:
 
+    state = None
+    has_state = False
+
     def __init__(self, config: Config, draft_cfg: Config | None = None):
+        from jetspec.engines.jetspec_plus_plus.models.registry import model_spec
+        from jetspec.engines.jetspec_plus_plus.models.state import ModelState, state_for
+        self.state = state_for(config) or ModelState(torch.nn.Module(), config.max_num_seqs, device='cpu')
+        spec = model_spec(config.hf_config)
+        self.has_state = spec is not None and spec.has_state
         self.max_num_seqs = config.max_num_seqs
         self.fan_out_list = config.fan_out_list
         self.fan_out_list_miss = config.fan_out_list_miss
@@ -28,7 +36,8 @@ class Scheduler:
         self.draft_async = config.draft_async
         self.jetspec = config.jetspec
         self.block_manager = BlockManager(
-            config.num_kvcache_blocks, config.kvcache_block_size, is_draft=False, verbose=self.verbose, max_model_len=self.max_model_len)
+            config.num_kvcache_blocks, config.kvcache_block_size, is_draft=False, verbose=self.verbose, max_model_len=self.max_model_len,
+            has_state=self.has_state)
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.model)
 
@@ -78,6 +87,8 @@ class Scheduler:
             self.block_manager.allocate(seq)
             if self.speculate:
                 self.draft_block_manager.allocate(seq)
+            if self.has_state and self.state is not None:
+                self.state.for_sequences([seq], prefill=True)
 
             num_batched_tokens += remain
 
@@ -131,6 +142,8 @@ class Scheduler:
         return scheduled_seqs, False
 
     def preempt(self, seq: Sequence):
+        if self.has_state and self.state is not None:
+            self.state.release(seq)
         # print(f"[_preempt] Seq {seq.seq_id}: preempting sequence", flush=True)
         seq.status = SequenceStatus.WAITING
         seq.recovery_token_id = None
@@ -158,6 +171,8 @@ class Scheduler:
                 seq.num_cached_tokens += 1
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_new_tokens:
                 seq.status = SequenceStatus.FINISHED
+                if self.has_state and self.state is not None:
+                    self.state.release(seq)
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
             else: # if block completes, hash it 
@@ -327,6 +342,8 @@ class Scheduler:
             if finished:
                 if self.verbose: print(f'Sequence {seq.seq_id} finished, deallocating and marking as done + removing from running', flush=True)
                 seq.status = SequenceStatus.FINISHED
+                if self.has_state and self.state is not None:
+                    self.state.release(seq)
                 self.block_manager.deallocate(seq)
                 self.draft_block_manager.deallocate(seq)
                 self.running.remove(seq)

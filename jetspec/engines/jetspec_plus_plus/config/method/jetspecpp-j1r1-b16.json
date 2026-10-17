@@ -1,4 +1,12 @@
 {
+  "method_execution": {
+    "defaults": {
+      "refresh_swap": "1",
+      "refresh_fixed": "1",
+      "chain_miss_redraft": "1",
+      "refresh_swap_lean": "1"
+    }
+  },
   "agreed_pins": false,
   "anchor": {
     "cap": 32,

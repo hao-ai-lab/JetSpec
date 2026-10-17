@@ -1,7 +1,6 @@
 import os
 import json
 from dataclasses import dataclass
-from types import SimpleNamespace
 from transformers import AutoConfig
 import torch
 from jetspec.engines.jetspec_plus_plus.serving.paths import DEFAULT_TARGET
@@ -12,27 +11,8 @@ from jetspec.engines.jetspec_plus_plus.serving.paths import DEFAULT_DRAFT
 class Config:
     @staticmethod
     def _target_config(model: str):
-        with open(os.path.join(model, "config.json")) as config_file:
-            raw = json.load(config_file)
-        if raw.get("model_type") not in {"qwen3_5", "qwen3_5_text"}:
-            return AutoConfig.from_pretrained(model)
-        text = raw.get("text_config", raw)
-        if text.get("model_type") != "qwen3_5_text":
-            raise ValueError("hybrid target needs a qwen3_5_text text_config")
-        layers = text.get("layer_types")
-        if (not isinstance(layers, list)
-                or len(layers) != text.get("num_hidden_layers")
-                or any(layer not in {"linear_attention", "full_attention"} for layer in layers)):
-            raise ValueError("hybrid target layer_types must cover every text layer")
-        if text.get("num_attention_heads", 0) % text.get("num_key_value_heads", 1):
-            raise ValueError("hybrid target attention heads must divide KV heads")
-        text = dict(text)
-        text["rope_theta"] = text.get("rope_theta", text.get("rope_parameters", {}).get("rope_theta"))
-        dtype = text.get("dtype", "bfloat16")
-        if dtype not in {"bfloat16", "float32"}:
-            raise ValueError(f"unsupported hybrid target dtype: {dtype}")
-        text["torch_dtype"] = {"bfloat16": torch.bfloat16, "float32": torch.float32}[dtype]
-        return SimpleNamespace(**text)
+        from jetspec.engines.jetspec_plus_plus.models.registry import load_config
+        return load_config(model)
 
     model: str = DEFAULT_TARGET
     run_config: object = None
@@ -197,9 +177,7 @@ class Config:
             self.max_model_len, self.hf_config.max_position_embeddings) 
         if self.speculate: 
             draft = self.draft
-            self.draft_hf_config = (self._target_config(draft)
-                                    if self.hf_config.model_type == "qwen3_5_text"
-                                    else AutoConfig.from_pretrained(draft))
+            self.draft_hf_config = self._target_config(draft)
             self.max_model_len = min(
                 self.max_model_len, self.draft_hf_config.max_position_embeddings)
             if self.draft_async:

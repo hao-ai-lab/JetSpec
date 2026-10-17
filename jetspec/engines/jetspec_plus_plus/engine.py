@@ -20,10 +20,16 @@ class Engine:
     release_finished_requests: bool = False
     tag_sequence_ids: bool = False
     skip_admission_prewarm: bool = False
+    precision_target: str = 'bf16'
+    precision_draft: str = 'bf16'
+    precision_lm_head: str = 'bf16'
 
     def __post_init__(self):
         if self.kind not in ('fast', 'reference'):
             raise ValueError('engine kind must be fast or reference')
+        for role in ('target', 'draft', 'lm_head'):
+            if getattr(self, 'precision_' + role) not in ('bf16', 'fq_w4a16', 'fq_w4a4'):
+                raise ValueError('invalid precision_' + role)
 
     @classmethod
     def from_config(cls, resolved, *, sealed_record=False):
@@ -59,7 +65,9 @@ class Engine:
         if record == 'none' and settings.get('anatomy_lite', '0') != '0':
             record = 'anatomy'
         return cls(kind, cutoffs, cutoffs and deadline, profile,
-                   values.get('deterministic', False), record, **request_policy)
+                   values.get('deterministic', False), record, **request_policy,
+                   **{name: settings.get(name, 'bf16') for name in (
+                       'precision_target', 'precision_draft', 'precision_lm_head')})
 
     @classmethod
     def from_environment(cls, environ, *, regime=None, profile=None, sealed_record=False):
@@ -98,7 +106,9 @@ class Engine:
         return cls('reference' if kind == 'reference' or reference else 'fast',
                    cutoffs, cutoffs and deadline == '1', profile, mode != 'off', record,
                    release_finished_requests=mode != 'off',
-                   tag_sequence_ids=mode != 'off', skip_admission_prewarm=mode != 'off')
+                   tag_sequence_ids=mode != 'off', skip_admission_prewarm=mode != 'off',
+                   **{field: environ.get(name(field), 'bf16') for field in (
+                       'precision_target', 'precision_draft', 'precision_lm_head')})
 
     @property
     def execution(self):
@@ -157,6 +167,8 @@ def install_engine(engine):
     from jetspec.engines.jetspec_plus_plus.kernels import install
     from jetspec.engines.jetspec_plus_plus.draft.method.ops import select_engine
     _installed = engine
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import log_precision_exclusions
+    log_precision_exclusions(engine)
     install(engine.ops)
     select_engine('fast' if engine.ops else None)
     # A module imported before the install read the default engine; bind its backend again.

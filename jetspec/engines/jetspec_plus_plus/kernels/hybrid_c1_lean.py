@@ -85,7 +85,8 @@ def _cuda(x):
 
 
 def norm(x, module):
-    if not _cuda(x):
+    if (not _cuda(x) or module.norm_offset != 1
+            or module.norm_round != "after_weight"):
         return module(x)
     out = torch.empty_like(x, memory_format=torch.contiguous_format)
     width = x.shape[-1]
@@ -99,7 +100,8 @@ def norm(x, module):
 def norm_rotary(x, module, cos, sin):
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.jetspec.drafter import _c1_rotary
-    if not _cuda(x):
+    if (not _cuda(x) or x.shape[0] != 1 or module.norm_offset != 1
+            or module.norm_round != "after_weight"):
         return _c1_rotary(module(x).transpose(1, 2), cos, sin)
     if kernel_enabled('hybrid_c1_gluon', '1') and cos.shape[-1] == 64:
         from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
@@ -120,11 +122,12 @@ def write_kv(key, value, module, cos, sin, cache, slots, groups):
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.jetspec.drafter import _c1_rotary
     k, v = cache
-    _, tokens, heads, dim = key.shape
-    if not _cuda(key):
+    batch, tokens, heads, dim = key.shape
+    if (not _cuda(key) or batch != 1 or module.norm_offset != 1
+            or module.norm_round != "after_weight"):
         rotated = _c1_rotary(module(key).transpose(1, 2), cos, sin)
         k.index_copy_(2, slots, rotated.repeat_interleave(groups, dim=1))
-        v.index_copy_(2, slots, value.view(1, tokens, heads, dim).transpose(1, 2)
+        v.index_copy_(2, slots, value.view(batch, tokens, heads, dim).transpose(1, 2)
                       .repeat_interleave(groups, dim=1))
         return
     if kernel_enabled('hybrid_c1_gluon', '1') and cos.shape[-1] == 64:

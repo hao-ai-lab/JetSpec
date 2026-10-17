@@ -3,10 +3,12 @@
 import torch
 
 from .ops import reference_op
+from .batching import sequencewise
 
 
 
 @reference_op("refresh_cutoff")
+@sequencewise('probabilities', 3)
 def refresh_cutoff(probabilities, threshold, *, start=1, final=None, chained=False):
     """First slot below threshold; ``chained`` consumes already rounded survival values.
 
@@ -36,6 +38,7 @@ def refresh_khat_cap(again=False, *, second_cap=None):
 
 
 @reference_op("refresh_bookkeeping")
+@sequencewise('chained', 3)
 def refresh_bookkeeping(chained, active, keys, length, window, threshold, cap):
     """Select the refresh prefix from already rounded double survival probabilities."""
     khat = refresh_cutoff(chained, threshold, chained=True)
@@ -47,6 +50,7 @@ def refresh_bookkeeping(chained, active, keys, length, window, threshold, cap):
 
 
 @reference_op("rule_f")
+@sequencewise('ids', 3)
 def rule_f(decoder_argmax, ids, slot_counts):
     """Spec rule F: ``agree[r, j] = decoder_argmax[r, j-1] == ids[r, j]`` for j = 1..n_r-1
     (n_r = slot_counts[r], the decoder rows computed); F[r] = the number of leading agreements,
@@ -60,6 +64,7 @@ def rule_f(decoder_argmax, ids, slot_counts):
 
 
 @reference_op("margin_swap")
+@sequencewise('logits', 3)
 def margin_swap(logits, current, margin, *, exclude_current):
     """Per row: the decoder's top-1 (``exclude_current``: the best token other than
     ``current``) and whether p(top-1) - p(current) >= margin under the row's softmax.
@@ -74,6 +79,7 @@ def margin_swap(logits, current, margin, *, exclude_current):
 
 
 @reference_op("swap_decision")
+@sequencewise('ids', 3)
 def swap_decision(logits, ids, khat, slot_counts, active, pin_slot=None):
     """The cutoff and the swap from the refresh-context decoder logits, on device.
 
@@ -111,6 +117,7 @@ def swap_decision(logits, ids, khat, slot_counts, active, pin_slot=None):
     return khat_used, slot, new.to(ids.device), apply.to(ids.device) & eligible
 
 
+@sequencewise('ids', 3)
 def compact_logits(logits, ids):
     """Reference compact epilogue, including float32 softmax's near-tie rounding."""
     current = ids[:, 1:]
@@ -124,6 +131,7 @@ def compact_logits(logits, ids):
 
 
 @reference_op("refresh_compact_head")
+@sequencewise('ids', 3, shared=('weight',))
 def refresh_compact_head(hidden, weight, ids, storage=None, *, persistent=False):
     """Torch compact decoder head; storage holds the engine's preallocated outputs."""
     logits = (hidden @ weight.T).reshape(ids.shape[0], ids.shape[1] - 1, weight.shape[0])
@@ -136,6 +144,7 @@ def refresh_compact_head(hidden, weight, ids, storage=None, *, persistent=False)
 
 
 @reference_op("refresh_swap_write")
+@sequencewise('ids', 3)
 def swap_write(compact, ids, khat, slot_counts, active, pin_slot=None):
     """Consume a refresh decision and write the selected draft ids in place."""
     result = swap_decision(compact, ids, khat, slot_counts, active, pin_slot)
@@ -146,6 +155,7 @@ def swap_write(compact, ids, khat, slot_counts, active, pin_slot=None):
 
 
 @reference_op("refresh_agreed_pins")
+@sequencewise('ids', 3, shared=('lanes',))
 def agreed_pins(ids, khat_used, active, pin_mask, pin_values, *, lanes=None):
     """Pin the refresh input at slots 1..khat_used, retaining every existing pin."""
     if lanes is None:

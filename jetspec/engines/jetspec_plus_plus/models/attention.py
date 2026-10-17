@@ -16,8 +16,8 @@ BACKEND_IMPORTERS = ('jetspec.engines.jetspec_plus_plus.serving.model_runner', '
                      'jetspec.engines.jetspec_plus_plus.verify.forward', 'jetspec.engines.jetspec_plus_plus.comparisons.fanout_graphs')
 
 
-def attention_backend():
-    backend = kernel_value('ssd_attention_backend', "sdpa")
+def attention_backend(selected=None):
+    backend = kernel_value('ssd_attention_backend', "sdpa") if selected is None else selected
     if backend not in {"flashinfer", "sdpa", "triton"}:
         raise ValueError(
             f"Unsupported SSD_ATTENTION_BACKEND={backend!r}; expected 'flashinfer', 'sdpa', or 'triton'"
@@ -25,9 +25,9 @@ def attention_backend():
     return backend
 
 
-def bind_attention_backend():
+def bind_attention_backend(selected=None):
     global ATTENTION_BACKEND
-    ATTENTION_BACKEND = attention_backend()
+    ATTENTION_BACKEND = attention_backend(selected)
     for name in BACKEND_IMPORTERS:
         if name in sys.modules:
             sys.modules[name].ATTENTION_BACKEND = ATTENTION_BACKEND
@@ -127,7 +127,14 @@ class Attention(nn.Module):
         return self._sdpa(q, k, v, attn_mask=mask).flatten(0, 1)
 
     def _triton_paged(self, q, k_cache, v_cache, context_lens, block_tables):
-        if (self.num_heads, self.num_kv_heads, self.head_dim) != (24, 4, 256):
+        from jetspec.engines.jetspec_plus_plus.draft.method.model_spec import AttentionSpec
+        from jetspec.engines.jetspec_plus_plus.serving.jetspec_backend import ATTENTION_BACKENDS
+        # Attention owns local TP heads. Rotary/norm metadata does not constrain
+        # paged attention, which receives already projected and rotated Q/K/V.
+        attention = AttentionSpec(self.num_heads, self.num_kv_heads, self.head_dim,
+                                  self.head_dim, False, 0, 'before_weight')
+        if not ATTENTION_BACKENDS['triton'].supports(
+                attention, query_length=q.shape[0] // context_lens.shape[0]):
             return self._sdpa_paged(q, k_cache, v_cache, context_lens, block_tables)
         from jetspec.engines.jetspec_plus_plus.models.triton_paged import attend
         return attend(q, k_cache, v_cache, context_lens, block_tables, self.scale)

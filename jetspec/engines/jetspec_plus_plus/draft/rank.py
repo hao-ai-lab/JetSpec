@@ -378,10 +378,9 @@ class DraftRunner(ModelRunner):
                 offset = next_offset
 
             from jetspec.engines.jetspec_plus_plus.engine import current_engine
-            from jetspec.engines.jetspec_plus_plus.jetspec.profile import release_finished_sequences
             if current_engine().release_finished_requests:
                 # Free every finished request's taps and state before admission.
-                release_finished_sequences(
+                self.state.free_requests(
                     (self.jetspec_sequences, self.jetspec_tap_mirrors,
                      self.jetspec_candidate_sets, self.jetspec_block_objects),
                     seq_ids.tolist())
@@ -515,6 +514,90 @@ class DraftRunner(ModelRunner):
 
 
 
+
+    def _advance_batch_rows(self, payload, run_config=None):
+        """C>1 rows: the returned round's commit, the chosen block's stage, and round+1's batched
+        draft for every sequence of the request (port of the retired ``_advance_jetspec_rows``
+        without the miss redraft, the deadline, the tree budget and device publish)."""
+        run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
+        from jetspec.engines.jetspec_plus_plus.draft.config import setting
+        from jetspec.engines.jetspec_plus_plus.draft.batch_round import prefetch_batch, propose_batch
+        from jetspec.engines.jetspec_plus_plus.jetspec.live_rows import host_mark
+        if getattr(self, '_w320_redraft', False) or getattr(self, '_w320_clock', None) is not None:
+            raise ValueError('C>1 rows serve miss redraft off and the deadline off')
+        if self.oracle_anchor or _device_publish(run_config):
+            raise ValueError('C>1 rows serve neither the oracle anchor nor device publish')
+        if not (e04_lean() and setting(run_config, 'method.method_settings.rowrule') == 'joint'):
+            raise ValueError('C>1 rows require JETSPEC_E04_LEAN=1 and E04_ROWRULE=joint')
+        seq_ids = [int(seq_id) for seq_id in payload["seq_ids"].tolist()]
+        round_ids = [int(round_id) for round_id in payload["rounds"].tolist()]
+        true_ks = [int(true_k) for true_k in payload["cache_keys"][:, 1].tolist()]
+        corrections = [int(correction) for correction in payload["cache_keys"][:, 2].tolist()]
+        previous = [self.jetspec_block_objects.get(seq_id) for seq_id in seq_ids]
+        stale = [(seq_id, round_id, None if item is None else item[0])
+                 for seq_id, round_id, item in zip(seq_ids, round_ids, previous)
+                 if item is None or item[0] != round_id]
+        if stale:
+            raise RuntimeError(f"JetSpec candidate round mismatch (seq, requested, drafted): {stale}")
+        if len(seq_ids) > 1:
+            cache_packed_metadata_batch([item[1] for item in previous])
+        pending = [(self.jetspec_sequences[seq_id], true_k, correction)
+                   for seq_id, true_k, correction in zip(seq_ids, true_ks, corrections)
+                   if self.jetspec_sequences[seq_id].pending_block is not None]
+        if pending:
+            commit_sequences_batch([item[0] for item in pending], [item[1] for item in pending],
+                                   [item[2] for item in pending])
+        selected = select_live_blocks_batch([item[1] for item in previous], true_ks, corrections)
+        states, chosen, keys = [], [], []
+        for row, (seq_id, round_id) in enumerate(zip(seq_ids, round_ids)):
+            state = self.jetspec_sequences[seq_id]
+            if state.pending_block is not None:
+                mirror = self.jetspec_tap_mirrors[seq_id]
+                if mirror.shape[0] != state.committed_ids.shape[1] - 1:
+                    raise RuntimeError("JetSpec mirror/commit length mismatch")
+                state.replace_taps(mirror)
+            block, selection_miss = selected[row]
+            state._jetspec_previous_selection_miss = selection_miss
+            state._jetspec_seq_id = seq_id
+            state._jetspec_candidate_round = round_id + 1
+            states.append(state)
+            chosen.append(block)
+            keys.append((seq_id, round_id + 1))
+        host_mark('pre_stage', run_config=run_config)
+        started = time.perf_counter()
+        self.jetspec_rows.stage(states, chosen, run_config=run_config)
+        prefetch_batch(self.jetspec_rows, states, run_config=run_config)
+        outputs = propose_batch(self.jetspec_rows, states,
+                                k_hypotheses=list(range(draft_width(run_config=run_config) + 1)),
+                                passes=self.config.jetspec_passes, run_config=run_config)
+        host_mark('propose_ret', run_config=run_config)
+        elapsed = (time.perf_counter() - started) * 1000
+        keys_validated = False
+        if len(outputs) > 1 and all(getattr(blocks, 'row_keys', None) is not None for blocks in outputs):
+            validate_candidate_row_keys_batch(torch.stack([blocks.row_keys for blocks in outputs]),
+                                              run_config=run_config)
+            keys_validated = True
+        for (seq_id, next_round), blocks in zip(keys, outputs):
+            self.jetspec_candidate_sets[seq_id] = _candidate_set_from_rows(
+                seq_id, next_round, blocks, keys_validated=keys_validated, run_config=run_config)
+            self.jetspec_block_objects[seq_id] = (next_round, blocks)
+            self.jetspec_candidate_ms[(seq_id, next_round)] = elapsed
+            self._jetspec_last_drafted_round[seq_id] = next_round
+        # The read joins every verified round to its proposal row (read/legacy.py join_populations)
+        root = setting(run_config, 'engine.engine_settings.pred_serve_read_records')
+        if root:
+            lines = []
+            for (seq_id, next_round), blocks in zip(keys, outputs):
+                metrics = blocks.head_metrics
+                lines.append(json.dumps(dict(
+                    seq_id=seq_id, candidate_round=next_round, pass_label=str(metrics['kpred_pass']),
+                    rows_requested=int(metrics['rows_requested']),
+                    rows_published=int(metrics['rows_published']),
+                    rows_truncated=int(metrics['rows_truncated']), refresh_calls=0),
+                    separators=(',', ':')))
+            os.makedirs(root, exist_ok=True)
+            with open(os.path.join(root, f'{os.getpid()}.jsonl'), 'a') as handle:
+                handle.write('\n'.join(lines) + '\n')
 
     def _send_jetspec_candidates(
         self,
@@ -987,6 +1070,19 @@ class DraftRunner(ModelRunner):
             if head is not None and hasattr(head, 'prewarm_rebuild_rows'):
                 buckets = head.prewarm_rebuild_rows(state.taps)
                 print(f'A03_ADAPTER_REBUILD_PREWARM buckets={buckets}', flush=True)
+            from jetspec.engines.jetspec_plus_plus.draft.batch_round import batch_round_enabled, prewarm_batch_graphs
+            if self.config.max_num_seqs > 1 and batch_round_enabled(self.jetspec_rows, run_config=run_config):
+                def batch_sequence(length):
+                    return JetSpecSequence(
+                        taps=torch.zeros(length, 5, self.config.jetspec_tap_hidden_size,
+                                         device=d.device, dtype=d.dtype),
+                        committed_ids=torch.zeros(1, length + 1, device=d.device, dtype=torch.long),
+                        prompt_index=240, staged=staged_context(getattr(self, 'run_config', None)))
+                prewarm_batch_graphs(
+                    self.jetspec_rows, batch_sequence, max_batch=self.config.max_num_seqs,
+                    max_model_len=self.config.max_model_len, initial_ks=ks,
+                    round_ks=list(range(draft_width(run_config=run_config) + 1)),
+                    passes=self.config.jetspec_passes, run_config=run_config)
             if setting(run_config, 'engine.engine_settings.c1_graph', '0') == '1':
                 head = getattr(d.adapter, 'head', None)
                 if head is not None and hasattr(head, 'prewarm_live_query_window'):
@@ -1613,7 +1709,15 @@ class DraftRunner(ModelRunner):
                 glue_decode_input_ids, partial_tree_decode_args = self._service_spec_request(run_config=run_config)
 
                 if self.config.jetspec:
-                    raise ValueError('retired eager draft loop; use the segmented chain or sealed records')
+                    from jetspec.engines.jetspec_plus_plus.draft.batch_round import batch_round_enabled
+                    if (self.jetspec_rows is None or self.config.jetspec_sync
+                            or self.config.jetspec_wait_ms != float("inf")
+                            or not batch_round_enabled(self.jetspec_rows, run_config=run_config)):
+                        raise ValueError('retired eager draft loop; use the segmented chain or sealed records')
+                    # C>1 rows: commit the returned round, stage, and draft round+1 for every
+                    # sequence in one batched round, then push round+1 before the next request
+                    self._advance_batch_rows(partial_tree_decode_args, run_config=run_config)
+                    self._send_jetspec_candidates(partial_tree_decode_args["seq_ids"], run_config=run_config)
                     self._draft_step_times.append(time.perf_counter() - _ds0)
                     continue
 

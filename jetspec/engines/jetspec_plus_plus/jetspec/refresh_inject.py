@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import os
 
 import torch
-from torch.nn import functional as F
+from jetspec.engines.jetspec_plus_plus.models.target_linear import draft_linear
 
 
 @torch.inference_mode()
@@ -64,7 +64,7 @@ def project(bucket, hidden, khat, run_config=None):
             context = context + head.adapted_position_embedding.weight[1]
         state = head.hidden_norm(head.fc(context))
     weight, bias, _, _ = head._refresh_inject_kv
-    return F.linear(state, weight, bias)
+    return draft_linear(state, weight, bias)
 
 
 def commit(bucket, projected, khat, reset):

@@ -15,21 +15,23 @@ import os
 from jetspec.engines.jetspec_plus_plus._optional import flashinfer
 from jetspec.engines.jetspec_plus_plus.serving.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
-from jetspec.engines.jetspec_plus_plus.models.qwen3 import Qwen3ForCausalLM
-from jetspec.engines.jetspec_plus_plus.models.qwen3_5 import Qwen3_5TextForCausalLM
-from jetspec.engines.jetspec_plus_plus.models.llama3 import LlamaForCausalLM
+from jetspec.engines.jetspec_plus_plus.models.registry import model_class as target_model_class, model_spec
+from jetspec.engines.jetspec_plus_plus.models.target import TargetForCausalLM
 from jetspec.engines.jetspec_plus_plus.models.sampler import Sampler
-from jetspec.engines.jetspec_plus_plus.models.attention import ATTENTION_BACKEND
+from jetspec.engines.jetspec_plus_plus.models.attention import ATTENTION_BACKEND, bind_attention_backend
 from jetspec.engines.jetspec_plus_plus.models.context import set_context
 from jetspec.engines.jetspec_plus_plus.models.context import reset_context
 from jetspec.engines.jetspec_plus_plus.models.context import get_context
-from jetspec.engines.jetspec_plus_plus.models.loader import load_model
+from jetspec.engines.jetspec_plus_plus.models.forward_context import set_verification
+from jetspec.engines.jetspec_plus_plus.models.state import ModelState, has_state, bind_state
+from jetspec.engines.jetspec_plus_plus.models.target_loader import load_model
 from jetspec.engines.jetspec_plus_plus.serving.runner_helpers import prepare_decode_tensors_from_seqs
 from jetspec.engines.jetspec_plus_plus.serving.runner_helpers import prepare_block_tables_from_seqs
 from jetspec.engines.jetspec_plus_plus.serving.runner_helpers import prepare_prefill_tensors_from_seqs
 from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import announce_chain_command
 from jetspec.engines.jetspec_plus_plus.serving.jetspec_backend import require_hybrid_sdpa_verify
 from jetspec.engines.jetspec_plus_plus.serving.jetspec_backend import resolve_jetspec_verify_backend
+from jetspec.engines.jetspec_plus_plus.serving.jetspec_backend import select_attention_backend
 from jetspec.engines.jetspec_plus_plus.serving.device_placement import cuda_device_for_rank
 from jetspec.engines.jetspec_plus_plus.serving.device_placement import gpu_memory_utilization
 from jetspec.engines.jetspec_plus_plus.serving.cpu_affinity import pin_rank_cpu_affinity
@@ -128,9 +130,9 @@ class ModelRunner:
             assert (config.draft_hf_config.vocab_size == config.hf_config.vocab_size) or config.use_eagle, "ERROR in ModelRunner: draft_hf_config.vocab_size != hf_config.vocab_size"
         
         self.hf_config = config.hf_config if not is_draft else config.draft_hf_config
-        self.hybrid_target = not is_draft and self.hf_config.model_type == "qwen3_5_text"
-        if self.hybrid_target and (config.max_num_seqs != 1 or num_tp_gpus != 1):
-            raise ValueError("hybrid target currently requires N=1 and one GPU")
+        self.model_spec = model_spec(self.hf_config) if not (is_draft and config.use_eagle) else None
+        if has_state(self) and num_tp_gpus != 1:
+            raise ValueError("stateful target currently requires one GPU")
         self.block_size = config.kvcache_block_size
         self.enforce_eager = config.enforce_eager
         self.verify_plan_cache = setting(self, 'engine.engine_settings.verify_plan_cache', '0') == "1"
@@ -194,6 +196,15 @@ class ModelRunner:
         print(f'SSD_RANK_DEVICE logical_rank={self.rank} cuda_device={self.cuda_device_index}'
               f' visible={os.environ.get("CUDA_VISIBLE_DEVICES")}'
               f' mps={bool(os.environ.get("CUDA_MPS_PIPE_DIRECTORY"))}', flush=True)
+        if not is_draft:
+            major, minor = torch.cuda.get_device_capability(self.device)
+            architecture = f'sm{major}{minor}'
+            qualifications = tuple(name for name in ('hybrid_verify_triton', 'hybrid_verify_flashinfer')
+                                   if setting(self, 'engine.engine_settings.' + name, '0') == '1')
+            bind_attention_backend(select_attention_backend(
+                self.model_spec.attention, self.model_spec.has_state, architecture,
+                requested=ATTENTION_BACKEND, qualifications=qualifications,
+                reference=self.engine.kind == 'reference'))
         jetspec_target = bool(config.jetspec and not is_draft)
         flashinfer_dtype_supported = self.hf_config.torch_dtype in {
             torch.float16,
@@ -206,8 +217,10 @@ class ModelRunner:
         )
         self.jetspec_paged_flashinfer = (
             jetspec_verify_backend == "flashinfer_paged")
-        if self.hybrid_target and jetspec_target:
-            require_hybrid_sdpa_verify(jetspec_verify_backend, ATTENTION_BACKEND, run_config=run_config)
+        if has_state(self) and jetspec_target:
+            require_hybrid_sdpa_verify(jetspec_verify_backend, ATTENTION_BACKEND, run_config=run_config,
+                                      attention=self.model_spec.attention,
+                                      has_state=self.model_spec.has_state, architecture=architecture)
         if self._verify_plan_reuse_enabled and jetspec_target and (
                 self.enforce_eager or ATTENTION_BACKEND != "flashinfer" or
                 flashinfer.__version__ != "0.6.18"):
@@ -271,9 +284,9 @@ class ModelRunner:
             self.tp_pg = None # every rank is given an object from self.tp_pg, even tho draft doesnt participate it gets GROUP_NON_MEMBER object != None back, so we can't assert None here, we 
         
         print(f'[model_runner] about to setup and warmup model and cudagraphs, is use_eagle={self.use_eagle}', flush=True)
-        model_type = self.setup_and_warmup_model_and_cudagraphs(config, self.hf_config, init_q, is_draft)
+        model_role = self.setup_and_warmup_model_and_cudagraphs(config, self.hf_config, init_q, is_draft)
 
-        if self.verbose: print(f'-----CAPTURED {model_type}CUDAGRAPH----', flush=True)
+        if self.verbose: print(f'-----CAPTURED {model_role}CUDAGRAPH----', flush=True)
         # None, not "cpu": factories already default to the CPU, and a "cpu" mode
         # still routes every later torch call (the verify host path) through Python dispatch.
         torch.set_default_device(None)
@@ -317,7 +330,7 @@ class ModelRunner:
                 self.shm = SharedMemory(name=shm_name())
                 self.loop()
                 
-        if self.verbose: print(f'-----{model_type}MODEL RUNNER INITIALIZED----', flush=True)
+        if self.verbose: print(f'-----{model_role}MODEL RUNNER INITIALIZED----', flush=True)
 
     def _init_flashinfer_attention_backend(self):
         self.flashinfer_attention_workspace = torch.empty(
@@ -583,18 +596,11 @@ class ModelRunner:
         self.graphs = {}
         self.graph_bs_list = {}
 
-        assert hasattr(hf_config, 'model_type'), "ERROR in ModelRunner: hf_config.model_type is not set"
         if config.use_eagle and is_draft:
             print(f'[EAGLE3] Loading Eagle3DraftForCausalLM as model_class', flush=True)
             model_class = self.eagle3_model_class
-        elif hf_config.model_type == 'llama':
-            model_class = LlamaForCausalLM
-        elif hf_config.model_type == 'qwen3':
-            model_class = Qwen3ForCausalLM
-        elif hf_config.model_type == 'qwen3_5_text' and not is_draft:
-            model_class = Qwen3_5TextForCausalLM
         else:
-            raise ValueError(f"Unsupported model type: {hf_config.model_type}")
+            model_class = target_model_class(hf_config, draft=is_draft)
 
         # only give Qwen3 a tp_group if we're a TARGET runner
         kwargs = dict(
@@ -607,7 +613,7 @@ class ModelRunner:
             tp_group=self.tp_pg,
             tp_size=self.num_tp_gpus,
         )
-        if model_class in (Qwen3ForCausalLM, Qwen3_5TextForCausalLM):
+        if model_class is TargetForCausalLM:
             kwargs["jetspec_taps"] = self.config.jetspec_taps and not self.is_draft
             kwargs["jetspec_tap_layer_ids"] = self.config.jetspec_target_layer_ids
         
@@ -620,22 +626,23 @@ class ModelRunner:
             kwargs['debug_mode'] = config.debug_mode
             
         self.model = model_class(**kwargs, **(
-            {"run_config": self.run_config} if model_class is Qwen3_5TextForCausalLM else {}))
+            {"run_config": self.run_config} if model_class is TargetForCausalLM else {}))
+        self.state = ModelState(self.model, config.max_num_seqs, device=self.device)
+        self._state_slots = self.state.graph_slots(1)
+        self._state_prefill_lengths = None
+        if not self.is_draft:
+            bind_state(config, self.state)
         if ATTENTION_BACKEND == "flashinfer" or self.jetspec_paged_flashinfer:
             self._attach_flashinfer_attention_backend()
 
-        model_type = "DRAFT " if self.is_draft else "TARGET "
+        model_role = "DRAFT " if self.is_draft else "TARGET "
         if self.verbose:
-            print(f'-----LOADING {model_type}MODEL----', flush=True)
+            print(f'-----LOADING {model_role}MODEL----', flush=True)
         
         # Pass tokenizer_path as target_path if it's available (mostly for Eagle draft)
         target_path = getattr(config, 'tokenizer_path', None)
         target_hidden_size = getattr(config, 'd_model_target', None)
-        if self.hybrid_target:
-            from jetspec.engines.jetspec_plus_plus.models.hybrid_loader import load_hybrid_text
-            load_hybrid_text(self.model, config.model)
-        else:
-            load_model(self.model, config.model, target_path=target_path, target_hidden_size=target_hidden_size)
+        load_model(self.model, config.model, target_path=target_path, target_hidden_size=target_hidden_size)
         
         if config.draft_async:  # move this here so we don't get a timeout waiting for draft rank while load_model happens?
             ranks = (self.draft_rank,)
@@ -661,17 +668,17 @@ class ModelRunner:
             (self.async_pg, self.jetspec_request_pg, self.jetspec_candidate_pg,
              self.jetspec_mailbox_store) = draft_groups[selected]
         if self.verbose:
-            print(f'-----{model_type}MODEL LOADED----', flush=True)
+            print(f'-----{model_role}MODEL LOADED----', flush=True)
         if config.sampler_x is not None:
             assert config.draft_async, "ERROR in ModelRunner: sampler_x requires draft_async"
             assert sum(config.fan_out_list) == sum(config.fan_out_list_miss) == config.async_fan_out * (config.speculate_k + 1), "ERROR in ModelRunner: fancy sampling only supported for constant fan out for now."
 
         self.sampler = Sampler(sampler_x=config.sampler_x, async_fan_out=config.async_fan_out)
         if self.verbose:
-            print(f'-----WARMING UP {model_type}MODEL----', flush=True)
+            print(f'-----WARMING UP {model_role}MODEL----', flush=True)
         self.warmup_model()
         if self.verbose:
-            print(f'-----ALLOCATING {model_type}KV CACHE----', flush=True)
+            print(f'-----ALLOCATING {model_role}KV CACHE----', flush=True)
         self.allocate_kv_cache()
         if init_q is not None:
             # super().__init__() runs warmup and calculates num_kvcache_blocks, pass that up
@@ -686,11 +693,9 @@ class ModelRunner:
             self.graphs["decode"] = decode_graphs
             self.graph_bs_list["decode"] = decode_graph_bs_list
             if self.config.speculate and not (self.is_draft and self.config.use_eagle):  # verify CG: target always, non-EAGLE draft for fan-out; EAGLE draft uses glue_decode CG instead
-                if self.hybrid_target:
-                    self.model.model.gdn_verify_mode = True
+                set_verification(True)
                 verify_graph_vars, verify_graph_pool, verify_graphs, verify_graph_bs_list = capture_verify_cudagraph(self)
-                if self.hybrid_target:
-                    self.model.model.gdn_verify_mode = False
+                set_verification(False)
                 self.graph_vars["verify"] = verify_graph_vars
                 self.graph_pools["verify"] = verify_graph_pool
                 self.graphs["verify"] = verify_graphs
@@ -716,40 +721,72 @@ class ModelRunner:
                      ((verify_device or ssd_verify_device) and ATTENTION_BACKEND in {"sdpa", "triton"}))
                 and (setting(self, 'engine.engine_settings.perseq', '0') == "1" or verify_device
                      or ssd_verify_device)):
-            if self.hybrid_target:
-                self.model.model.gdn_verify_mode = True
+            set_verification(True)
             self._capture_target_graphs()
-            if self.hybrid_target:
-                self.model.model.gdn_verify_mode = False
+            set_verification(False)
 
-        if self.hybrid_target:
-            self.model.reset_gdn_state()
+        if has_state(self):
+            self.state.reset(self.state.reserved)
             if config.speculate and not self.enforce_eager:
                 with torch.inference_mode():
-                    self._hybrid_commit_count = torch.zeros((), dtype=torch.int64, device=self.device)
-                    self._hybrid_commit_graph = torch.cuda.CUDAGraph()
-                    with torch.cuda.graph(self._hybrid_commit_graph):
-                        self.model.commit_gdn(self._hybrid_commit_count)
-                    self.model.reset_gdn_state()
+                    from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_commit_graphs
+                    self._commit_graphs = capture_commit_graphs(self)
+                    self.state.reset(self.state.reserved)
 
         # serving: every compile of the warm-up and graph captures hit the pinned cache
         from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
         process_check("ready " + ("draft" if self.is_draft else "target"))
-        return model_type
+        return model_role
 
     def _capture_target_graphs(self):
         """Target runners capture mixed verify graphs at this startup boundary."""
         pass
 
     @torch.inference_mode()
-    def commit_hybrid_state(self, accepted: torch.Tensor):
-        if not self.hybrid_target:
+    def commit_state(self, accepted: torch.Tensor):
+        if not has_state(self):
             return
+        accepted = accepted.to(device=self._state_slots.device)
         if self.enforce_eager:
-            self.model.commit_gdn(accepted)
+            self.state.commit(self._state_slots, accepted)
         else:
-            self._hybrid_commit_count.copy_(accepted)
-            self._hybrid_commit_graph.replay()
+            count = self._state_slots.numel()
+            bucket = next(size for size in sorted(self._commit_graphs) if size >= count)
+            graph, slots, counts = self._commit_graphs[bucket]
+            if self.state.capacity > 1:
+                slots.copy_(self.state.reserved[:bucket])
+                slots[:count].copy_(self._state_slots)
+            if counts.ndim == 0:
+                counts.copy_(accepted.reshape(()))
+            else:
+                counts.zero_()
+                counts[:count].copy_(accepted.reshape(-1))
+            graph.replay()
+
+    def prepare_state(self, seqs, *, prefill=False):
+        # The scheduler already reset live slots. KV-less startup probes have
+        # no scheduler owner and reset the reserved slot here instead.
+        reset = prefill and any(seq.seq_id not in self.state.owners for seq in seqs)
+        self._state_slots = self.state.for_sequences(seqs, prefill=reset)
+        self._state_prefill_lengths = (torch.tensor([len(seq) for seq in seqs], device='cpu')
+                                       if prefill else None)
+
+    def state_model_forward(self, input_ids, positions, *args, slot_ids=None, verify=None,
+                            query_lengths=None):
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        if not has_state(self):
+            return self.model(input_ids, positions, *args)
+        from jetspec.engines.jetspec_plus_plus.models.forward_context import forward_context, get_forward_context
+        verify = get_forward_context().verify if verify is None else verify
+        slots = self._state_slots if slot_ids is None else slot_ids
+        if verify:
+            self.state.prepare_verify(slots, max(query_lengths) if query_lengths is not None
+                                      else input_ids.shape[0] // slots.numel())
+        with forward_context(verify=verify, slot_ids=slots,
+                             prefill_lengths=(query_lengths if query_lengths is not None
+                                              else self._state_prefill_lengths if get_context().is_prefill
+                                              else None)):
+            return self.model(input_ids, positions, *args)
 
     def _check_compile_pin_served(self):
         """Check both serving ranks before bench seals the run manifest."""
@@ -952,12 +989,15 @@ class ModelRunner:
 
     def run_cold_prefill(self, lengths):
         """serve_read's cold phase: one KV-less prefill of zero tokens per prompt, on every TP rank."""
-        ids, positions = self.prepare_prefill([Sequence([0] * length) for length in lengths])
-        get_context().slot_mapping = ids.new_full(ids.shape, -1, dtype=torch.int32)
-        try:
-            self.run_model(ids, positions, True)
-        finally:
-            reset_context()
+        probe_batch = self.config.max_num_seqs if has_state(self) else max(1, len(lengths))
+        for offset in range(0, len(lengths), probe_batch):
+            ids, positions = self.prepare_prefill([Sequence([0] * length)
+                for length in lengths[offset:offset + probe_batch]])
+            get_context().slot_mapping = ids.new_full(ids.shape, -1, dtype=torch.int32)
+            try:
+                self.run_model(ids, positions, True)
+            finally:
+                reset_context()
 
     def gather_full_vocab_weights(self):
         """All-gather the vocab-sharded embedding and LM head over the target TP group.
@@ -999,9 +1039,14 @@ class ModelRunner:
         # Simplify: just look at free memory on the GPU, and allocate up to gpu_memory_utilization * free.
         free, _ = torch.cuda.mem_get_info()
         num_kv_heads = hf_config.num_key_value_heads // self.num_tp_gpus
+        # Only attention layers bind a slice of the pool (the loop below). A linear-attention layer of a hybrid
+        # target keeps recurrent state instead, so the pool is sized by the attention layers.
+        attention_layers = sum(1 for module in self.model.modules()
+                               if hasattr(module, "k_cache") and hasattr(module, "v_cache"))
+        assert attention_layers > 0, "ERROR: the model has no attention layer to bind a KV cache to"
         block_bytes = (
             2
-            * hf_config.num_hidden_layers
+            * attention_layers
             * self.block_size
             * num_kv_heads
             * hf_config.head_dim
@@ -1041,7 +1086,7 @@ class ModelRunner:
         allocated_blocks = config.num_kvcache_blocks
         self.kv_cache = torch.zeros(
             2,
-            hf_config.num_hidden_layers,
+            attention_layers,
             allocated_blocks,
             self.block_size,
             num_kv_heads,
@@ -1062,7 +1107,9 @@ class ModelRunner:
 
     
     def prepare_prefill(self, seqs: list[Sequence]):
-        if self.hybrid_target:
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        if has_state(self):
+            self.prepare_state(seqs, prefill=True)
             # Cached KV blocks have no GDN state; replay the full target prefix.
             for seq in seqs:
                 seq.num_cached_tokens = 0
@@ -1079,6 +1126,9 @@ class ModelRunner:
         return input_ids, positions
     
     def prepare_decode(self, seqs: list[Sequence], verify: bool = False): 
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        if has_state(self):
+            self.prepare_state(seqs)
         if self.verify_mask_cache or self.verify_plan_cache:
             self._verify_context_lens_cpu = tuple(len(seq) for seq in seqs) if verify else None
         if self.verify_plan_cache:
@@ -1161,11 +1211,22 @@ class ModelRunner:
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool, last_only: bool = True, tree_decode_step: int = -1, cache_hits: torch.Tensor | None = None, hidden_states: torch.Tensor | None = None):
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        if not has_state(self):
+            return self._run_model(input_ids, positions, is_prefill, last_only,
+                                   tree_decode_step, cache_hits, hidden_states)
+        from jetspec.engines.jetspec_plus_plus.models.forward_context import forward_context
+        verify = not is_prefill and self.config.speculate and not last_only
+        if verify:
+            self.state.prepare_verify(self._state_slots, input_ids.shape[0] // self._state_slots.numel())
+        with forward_context(verify=verify, slot_ids=self._state_slots,
+                             prefill_lengths=self._state_prefill_lengths):
+            return self._run_model(input_ids, positions, is_prefill, last_only,
+                                   tree_decode_step, cache_hits, hidden_states)
+
+    def _run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool, last_only: bool = True, tree_decode_step: int = -1, cache_hits: torch.Tensor | None = None, hidden_states: torch.Tensor | None = None):
         is_tree_decode = self.is_draft and self.config.draft_async and tree_decode_step >= 0
         is_mq_kp1 = self.config.speculate and not last_only
-        spec_and_dec = not is_prefill and self.config.speculate
-        if self.hybrid_target:
-            self.model.model.gdn_verify_mode = bool(spec_and_dec and not last_only)
 
         assert not (is_prefill and not last_only), "ERROR in run_model: is_prefill and not last_only"
         if ATTENTION_BACKEND == "flashinfer":

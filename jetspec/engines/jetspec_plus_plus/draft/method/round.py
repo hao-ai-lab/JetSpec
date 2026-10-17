@@ -1,11 +1,13 @@
 """Executable account of admission, served segments, and miss recovery."""
-from dataclasses import dataclass, field
+from copy import copy
+from dataclasses import InitVar, dataclass, field
 from types import SimpleNamespace
 from typing import Optional, Protocol
 
 import torch
 
 from .adapter import CtxKVC1Head
+from .batching import prefix_lengths, sequence_slice, sequence_stack, sequencewise
 from .cache_rows import after_miss, cache_rows_chain, hit_lookup
 from .decoder.offers import lac_candidates
 from .geometry import Geometry
@@ -57,6 +59,32 @@ class MethodState:
     redraft: Optional['Candidate'] = None
     missed: bool = False
     staged: Optional[torch.Tensor] = None
+    prefix_lengths: InitVar[Optional[torch.Tensor]] = None
+
+    def __post_init__(self, prefix_lengths):
+        # InitVar keeps legacy state snapshots/serialization unchanged.
+        self.prefix_lengths = prefix_lengths
+
+    @classmethod
+    def batch(cls, states):
+        """Group independently admitted states, retaining their caches and round IDs.
+
+        Prefix padding is storage only; prefix_lengths is always explicit.
+        The supplied states remain the per-sequence owners and are advanced by run.
+        """
+        states = tuple(states)
+        if not states or any(s.width != states[0].width or s.prefix_lengths is not None
+                             for s in states):
+            raise ValueError('batch requires unbatched states with a common width')
+        result = cls(torch.nn.utils.rnn.pad_sequence([s.prefix.reshape(-1) for s in states],
+                                                     batch_first=True),
+                     torch.stack([s.anchor for s in states]), width=states[0].width,
+                     seed=torch.tensor([int(s.seed) for s in states]),
+                     prefix_lengths=torch.tensor([s.prefix.numel() for s in states]))
+        result.sequence_states = list(states)
+        if all(s.context is not None for s in states):
+            result.context = tuple(s.context for s in states)
+        return result
 
 
 @dataclass(frozen=True)
@@ -71,14 +99,22 @@ class Candidate:
 
 
 @reference_op("adapter_tap")
-def adapter_tap(adapter, target, prefix):
+def adapter_tap(adapter, target, prefix, *, lengths=None):
+    if lengths is not None:
+        valid = prefix_lengths(prefix, lengths)
+        return tuple(adapter_tap(adapter, target, prefix[c, :length])
+                     for c, length in enumerate(valid))
     if isinstance(adapter, CtxKVC1Head):
         return target.tap(prefix)
     return adapter.tap(target.tap(prefix))
 
 
 @reference_op("adapter_block")
-def adapter_block(adapter, ids, context, *, embedding=None, tail=None, tail_counts=None):
+@sequencewise('ids', 3, shared=('adapter', 'embedding'))
+def adapter_block(adapter, ids, context, *, embedding=None, tail=None, tail_counts=None,
+                  context_lengths=None):
+    if context_lengths is not None:
+        context = context[:int(context_lengths)]
     if not isinstance(adapter, CtxKVC1Head):
         return adapter.block(ids, context)
     prefix = context.reshape(1, -1, context.shape[-1]).expand(ids.shape[0], -1, -1)
@@ -97,11 +133,13 @@ def adapter_block(adapter, ids, context, *, embedding=None, tail=None, tail_coun
 
 
 @reference_op("draft_forward")
+@sequencewise('ids', 3, shared=('drafter',))
 def draft_forward(drafter, ids, adapted):
     return drafter(ids, adapted)
 
 
 @reference_op("inject_hidden")
+@sequencewise('previous', 4)
 def inject_hidden(previous, refreshed, cutoff):
     slots = torch.arange(previous.shape[1], device=previous.device)
     return torch.where((slots[None, :] <= cutoff[:, None])[..., None], refreshed, previous)
@@ -113,6 +151,12 @@ class MethodRound:
     The first call admits a seed block. Subsequent calls take the verifier's
     true_k and correction for the previously published keys. A miss publishes
     a J0-only redraft before constructing the next hypotheses.
+
+    Batched states carry prefix [C, L], prefix_lengths [C], anchor [C], and
+    optionally seed [C]. Candidate tensors have C before their legacy axes.
+    ``sequence_states`` retains ragged context, steps, redrafts and refresh
+    telemetry per sequence. A schedule may be shared or a C-element tuple.
+    Use MethodState.batch to combine states that have already been admitted.
     """
     def __init__(self, *, adapter, target, drafter, decoder, schedule, threshold=.1,
                  tau=0., temperature=1., cap=16, offer_width=32,
@@ -272,6 +316,8 @@ class MethodRound:
 
     @torch.inference_mode()
     def run(self, state, *, true_k=None, correction=None):
+        if state.prefix_lengths is not None:
+            return self._run_batched(state, true_k=true_k, correction=correction)
         if self.chain is not None:
             state.steps.clear()
             state.steps.append('context')
@@ -310,4 +356,65 @@ class MethodRound:
                     tuple(state.refresh_decisions), state.values.p_top1.clone())
             state.steps.append(step)
         state.round_id += 1
+        return state.candidate
+
+    def _run_batched(self, state, *, true_k, correction):
+        lengths = prefix_lengths(state.prefix, state.prefix_lengths)
+        count = len(lengths)
+        if state.anchor.shape != (count,):
+            raise ValueError('batched anchor must have shape [C]')
+        schedules = self.schedule if isinstance(self.schedule, (tuple, list)) else (self.schedule,) * count
+        if len(schedules) != count:
+            raise ValueError('one schedule is required per sequence')
+        if not hasattr(state, 'sequence_states'):
+            state.sequence_states = [MethodState(state.prefix[c, :length], state.anchor[c],
+                                                 width=state.width,
+                                                 seed=sequence_slice(state.seed, c, count))
+                                     for c, length in enumerate(lengths)]
+        if len(state.sequence_states) != count:
+            raise ValueError('C cannot change on an admitted state')
+        if not hasattr(state, 'sequence_methods'):
+            state.sequence_methods = []
+            for schedule in schedules:
+                method = copy(self)
+                method.schedule = schedule
+                if self.chain is not None:
+                    method.chain = copy(self.chain)
+                    method.chain.schedule = schedule
+                    method.chain.reset_cache()
+                    method.chain._fidelity = {}
+                state.sequence_methods.append(method)
+        candidates = []
+        for c, (length, single, method) in enumerate(zip(lengths, state.sequence_states,
+                                                       state.sequence_methods)):
+            single.prefix, single.anchor = state.prefix[c, :length], state.anchor[c]
+            single.seed = sequence_slice(state.seed, c, count)
+            method.schedule = schedules[c]
+            if method.chain is not None:
+                method.chain.schedule = schedules[c]
+                if state.context is None:
+                    raise ValueError('standalone chain requires exact target hidden states')
+                context = state.context[c]
+                single.context = context.reshape(1, -1, context.shape[-1])[:, :length]
+            candidates.append(method.run(single,
+                                          true_k=None if true_k is None else int(sequence_slice(true_k, c, count)),
+                                          correction=None if correction is None else int(sequence_slice(correction, c, count))))
+        state.candidate = Candidate(
+            *(torch.stack([getattr(candidate, name) for candidate in candidates])
+              for name in ('tokens', 'keys', 'requested', 'passes_run')),
+            pins=None if candidates[0].pins is None else sequence_stack([v.pins for v in candidates]),
+            refresh_decisions=tuple(v.refresh_decisions for v in candidates),
+            p_top1=None if candidates[0].p_top1 is None else torch.stack([v.p_top1 for v in candidates]))
+        for name in ('anchor', 'ids', 'adapted', 'values', 'finished', 'pins', 'passes_run',
+                     'keys', 'requested', 'active', 'previous_top1', 'pending', 'prior_top1',
+                     'offers', 'row_home', 'err', 'staged'):
+            values = [getattr(single, name) for single in state.sequence_states]
+            if values[0] is not None:
+                setattr(state, name, sequence_stack(values))
+        state.missed = torch.tensor([s.missed for s in state.sequence_states], device=state.prefix.device)
+        state.round_id = torch.tensor([s.round_id for s in state.sequence_states], device=state.prefix.device)
+        for name in ('steps', 'refresh_decisions', 'redraft'):
+            setattr(state, name, tuple(getattr(s, name) for s in state.sequence_states))
+        if self.chain is None:
+            state.context = tuple(s.context for s in state.sequence_states)
         return state.candidate

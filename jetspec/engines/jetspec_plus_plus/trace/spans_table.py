@@ -27,7 +27,7 @@ SPANS = [
     ('jetspec.engines.jetspec_plus_plus.wire.transport:OutcomeReceiveRing.stage_mirror', 'outcome_mirror_enqueue', 'draft', 'both'),
     ('jetspec.engines.jetspec_plus_plus.draft.graph:ChainGraph.run', 'chain_graph', 'draft', 'chain_metrics'),
     ('jetspec.engines.jetspec_plus_plus.verify.forward:TargetRunner.run_jetspec_mixed_device', 'verify_forward', 'verify', 'replay'),
-    ('jetspec.engines.jetspec_plus_plus.models.qwen3:Qwen3ForCausalLM.compute_logits', 'lm_head', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.models.target:TargetForCausalLM.compute_logits', 'lm_head', 'verify', 'both'),
     ('jetspec.engines.jetspec_plus_plus.verify.forward:greedy_accept_device', 'accept_device', 'verify', 'both'),
     ('jetspec.engines.jetspec_plus_plus.verify.outcome:launch_outcome_fused', 'commit_outcome_taps_ids', 'verify', 'both'),
     ('jetspec.engines.jetspec_plus_plus.verify.forward:Verifier.finish_jetspec_postpublish', 'commit_host_state', 'verify', 'host'),

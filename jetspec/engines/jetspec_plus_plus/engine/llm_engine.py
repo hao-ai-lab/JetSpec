@@ -6,7 +6,7 @@ from jetspec.engines.jetspec_plus_plus.serving.sampling_params import SamplingPa
 from jetspec.engines.jetspec_plus_plus.serving.misc import infer_model_family
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
-from jetspec.engines.jetspec_plus_plus.models.qwen3 import JETSPEC_TARGET_LAYER_IDS
+from jetspec.engines.jetspec_plus_plus.models.target import JETSPEC_TARGET_LAYER_IDS
 from jetspec.engines.jetspec_plus_plus.draft.rank import DraftRunner
 from jetspec.engines.jetspec_plus_plus.comparisons.fanout_tree import FanoutTreeDraftRunner
 from jetspec.engines.jetspec_plus_plus.verify.multirow import SpeculatorAsync

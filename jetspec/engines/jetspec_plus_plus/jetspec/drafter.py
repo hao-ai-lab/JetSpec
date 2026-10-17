@@ -5,6 +5,7 @@ from __future__ import annotations
 from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
 
 import copy
+from functools import partial
 import hashlib
 import json
 import math
@@ -40,6 +41,7 @@ from jetspec.engines.jetspec_plus_plus.draft.method.adapter import (
     _c1_rotary,
 )
 from jetspec.engines.jetspec_plus_plus.wire.contract import key_length_buckets
+from jetspec.engines.jetspec_plus_plus.models.target_linear import DraftLinear, draft_linear, draft_bmm, draft_precision
 from jetspec.engines.jetspec_plus_plus.draft import block_geometry
 
 from jetspec.engines.jetspec_plus_plus.wire.contract import FrontInputs
@@ -581,16 +583,16 @@ class _PinnedCtxKVAttention(nn.Module):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.scaling = self.head_dim**-0.5
         bias = bool(config.attention_bias)
-        self.q_proj = nn.Linear(
+        self.q_proj = DraftLinear(
             self.hidden_size, self.num_heads * self.head_dim, bias=bias
         )
-        self.k_proj = nn.Linear(
+        self.k_proj = DraftLinear(
             self.hidden_size, self.num_key_value_heads * self.head_dim, bias=bias
         )
-        self.v_proj = nn.Linear(
+        self.v_proj = DraftLinear(
             self.hidden_size, self.num_key_value_heads * self.head_dim, bias=bias
         )
-        self.o_proj = nn.Linear(
+        self.o_proj = DraftLinear(
             self.num_heads * self.head_dim, self.hidden_size, bias=bias
         )
         self.q_norm = Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)
@@ -659,8 +661,8 @@ class _PinnedCtxKVL1H2HHead(nn.Module):
         self.hspace_dim = len(config.dflash_config["target_layer_ids"]) * int(
             getattr(config, "target_hidden_size", self.hidden_size)
         )
-        self.fusion = nn.Linear(2 * self.hidden_size, self.hidden_size, bias=False)
-        self.input_projection = nn.Linear(
+        self.fusion = DraftLinear(2 * self.hidden_size, self.hidden_size, bias=False)
+        self.input_projection = DraftLinear(
             self.hspace_dim, self.hidden_size, bias=False
         )
         self.fusion_norm = Qwen3RMSNorm(
@@ -670,7 +672,7 @@ class _PinnedCtxKVL1H2HHead(nn.Module):
         self.final_norm = Qwen3RMSNorm(
             self.hidden_size, eps=config.rms_norm_eps
         )
-        self.output_projection = nn.Linear(
+        self.output_projection = DraftLinear(
             self.hidden_size, self.hspace_dim, bias=False
         )
 
@@ -928,9 +930,9 @@ def _d1_compiled_pre_q(u, window, in_w, q_w, qn_w, kvn_w, kv_w, cos, sin, in_eps
     the window's projected k|v rows [15, 2 * kv width] (normed, rotated and written into
     the cache by ``k_norm_rotary_cache``, the lean path's kernel)."""
     rows = u.shape[0]
-    q = F.linear(_d1_rms(u, in_w, in_eps), q_w).view(rows, heads, head_dim)
+    q = draft_linear(_d1_rms(u, in_w, in_eps), q_w).view(rows, heads, head_dim)
     q = _d1_rope(_d1_rms(q, qn_w, qn_eps).transpose(0, 1), cos, sin)
-    return q.unsqueeze(0).contiguous(), F.linear(_d1_rms(window, kvn_w, kvn_eps), kv_w)
+    return q.unsqueeze(0).contiguous(), draft_linear(_d1_rms(window, kvn_w, kvn_eps), kv_w)
 
 
 def _d1_compiled_pre(u, window, in_w, q_w, qn_w, kvn_w, kv_w, kn_w, cos, sin, in_eps, qn_eps,
@@ -940,9 +942,9 @@ def _d1_compiled_pre(u, window, in_w, q_w, qn_w, kvn_w, kv_w, kn_w, cos, sin, in
     key/value rows [heads, 15, head_dim] (repeated over the query groups, the cache's
     layout)."""
     rows = u.shape[0]
-    q = F.linear(_d1_rms(u, in_w, in_eps), q_w).view(rows, heads, head_dim)
+    q = draft_linear(_d1_rms(u, in_w, in_eps), q_w).view(rows, heads, head_dim)
     q = _d1_rope(_d1_rms(q, qn_w, qn_eps).transpose(0, 1), cos, sin)
-    key, value = F.linear(_d1_rms(window, kvn_w, kvn_eps), kv_w).split(
+    key, value = draft_linear(_d1_rms(window, kvn_w, kvn_eps), kv_w).split(
         kv_heads * head_dim, dim=-1)
     key = _d1_rope(_d1_rms(key.view(rows, kv_heads, head_dim), kn_w, kn_eps).transpose(0, 1),
                    cos, sin)
@@ -956,9 +958,9 @@ def _d1_compiled_pre(u, window, in_w, q_w, qn_w, kvn_w, kv_w, kn_w, cos, sin, in
 def _d1_compiled_post(attended, u, o_w, post_w, gate_up, down_w, post_eps):
     """JETSPEC_C1_COMPILE: one D1 block after attention (attended [1, heads, 15, d])."""
     rows = u.shape[0]
-    state = u + F.linear(attended.transpose(1, 2).reshape(rows, -1), o_w)
-    gate, up = F.linear(_d1_rms(state, post_w, post_eps), gate_up).chunk(2, dim=-1)
-    return state + F.linear(F.silu(gate) * up, down_w)
+    state = u + draft_linear(attended.transpose(1, 2).reshape(rows, -1), o_w)
+    gate, up = draft_linear(_d1_rms(state, post_w, post_eps), gate_up).chunk(2, dim=-1)
+    return state + draft_linear(F.silu(gate) * up, down_w)
 
 
 def fixed_refresh_layout(counts, tokens, width):
@@ -973,10 +975,38 @@ def fixed_refresh_layout(counts, tokens, width):
     return row, slot, valid
 
 
+def _adapter_dense_shape(head, *, any_dim=False):
+    """Whether every block supports the original dense arithmetic/shape kernels."""
+    for index, stream in enumerate(getattr(head, "streams", ())):
+        for layer in (stream, *head.extra_stream_layers[index]):
+            spec = layer.attention_spec
+            if not (layer.dense_shape or (any_dim and spec.head_dim == spec.rotary_dim
+                    and not spec.output_gate and spec.norm_offset == 0
+                    and spec.norm_round == "before_weight" and layer.q_proj.bias is None
+                    and isinstance(layer.mlp.act_fn, nn.SiLU))):
+                return False
+    return True
+
+
+class ServingCtxKVC1Stream(CtxKVC1Stream):
+    """Engine packed projection; the reference adapter remains pure torch."""
+
+    def project_kv(self, source):
+        packed = getattr(self, "_fused_kv", None)
+        if packed is None:
+            return self.k_proj(source), self.v_proj(source)
+        weight, bias, widths = packed
+        return draft_linear(source, weight, bias).split(widths, dim=-1)
+
+
 class ServingCtxKVC1Head(CtxKVC1Head):
     """Reference serving translation plus default-off per-sequence C1 KV/replay."""
     def __init__(self, config, *, run_config=None):
         super().__init__(config)
+        for child in self.modules():
+            if type(child) is CtxKVC1Stream:
+                child.__class__ = ServingCtxKVC1Stream
+        DraftLinear.bind(self)
         self.run_config = run_config
 
 
@@ -1215,37 +1245,11 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         cos, sin = self.streams[0].rotary_emb(token_embeddings, query_position_ids)
         window_causal = self.resolved_config.get("window_causal_over_tokens", False)
         mask = attention_mask[..., :P + Q] if window_causal else attention_mask[..., :P]
-        u, outputs, block = token_embeddings, [], 0
         slot_ids = torch.tensor(slots, device=prefix_h.device)
-        for index, stream in enumerate(self.streams):
-            window = u
-            for layer in (stream, *self.extra_stream_layers[index]):
-                normed = layer.input_norm(u)
-                q = layer.q_norm(layer.q_proj(normed).view(count, Q, layer.num_heads,
-                                                          layer.head_dim)).transpose(1, 2)
-                q = _c1_rotary(q, cos, sin)
-                k = self._c1_multi_kv[0][block, :, :, :P].index_select(0, slot_ids)
-                v = self._c1_multi_kv[1][block, :, :, :P].index_select(0, slot_ids)
-                if window_causal:
-                    source = layer.kv_norm(window)
-                    projected_key, projected_value = layer.project_kv(source)
-                    wk = layer.k_norm(projected_key.view(count, Q, layer.num_key_value_heads,
-                                                               layer.head_dim)).transpose(1, 2)
-                    wv = projected_value.view(count, Q, layer.num_key_value_heads,
-                                                   layer.head_dim).transpose(1, 2)
-                    wk = _c1_rotary(wk, cos, sin)
-                    if layer.num_key_value_groups != 1:
-                        wk = wk.repeat_interleave(layer.num_key_value_groups, dim=1)
-                        wv = wv.repeat_interleave(layer.num_key_value_groups, dim=1)
-                    k, v = torch.cat((k, wk), 2), torch.cat((v, wv), 2)
-                attended = F.scaled_dot_product_attention(q, k, v, attn_mask=mask,
-                                                          scale=layer.scaling)
-                attended = attended.transpose(1, 2).reshape(count, Q, layer.num_heads * layer.head_dim)
-                state = u + layer.o_proj(attended)
-                u = state + layer.mlp(layer.post_attention_norm(state))
-                block += 1
-            outputs.append(u)
-        return torch.cat(outputs, dim=-1)
+        cache = [(self._c1_multi_kv[0][block, :, :, :P].index_select(0, slot_ids),
+                  self._c1_multi_kv[1][block, :, :, :P].index_select(0, slot_ids))
+                 for block in range(len(self._c1_multi_blocks))]
+        return self._adapter_cache_query(token_embeddings, cos, sin, mask, P, cache=cache)
 
     # --- JETSPEC_BATCH_DRAFT_GRAPH_FRONT=1 (default off): N>1 staging through a per-sequence prefix
     # K/V slot cache and one CUDA graph per (batch bucket, key bucket). The graph appends each
@@ -1316,6 +1320,13 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         cos, sin = self.streams[0].rotary_emb(rows[None], positions[None])
         keys, values = [], []
         for index, layer in state["blocks"]:
+            if not _adapter_dense_shape(self, any_dim=True):
+                source = layer.kv_norm(rows[:, index*self.hidden_size:(index+1)*self.hidden_size])
+                key, value = layer.project_kv(source)
+                key = layer.k_norm(key.view(1, -1, layer.num_key_value_heads, layer.head_dim))
+                keys.append(_c1_rotary(key.transpose(1, 2), cos, sin)[0])
+                values.append(value.view(1, -1, layer.num_key_value_heads, layer.head_dim).transpose(1, 2)[0])
+                continue
             source = fused.fast_rms_norm(
                 rows[:, index * self.hidden_size:(index + 1) * self.hidden_size],
                 layer.kv_norm.weight, layer.kv_norm.variance_epsilon)
@@ -1337,7 +1348,12 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             self._c1_blocks = state["blocks"]  # _cache_init's list: the same blocks, same order
         rows = prefix[start:length][None]
         cos, sin = self._c1_rope(rows, torch.arange(start, length, device=prefix.device)[None])
-        keys, values = self._d1_cache_project_batched(rows, cos, sin)
+        if _adapter_dense_shape(self, any_dim=True):
+            keys, values = self._d1_cache_project_batched(rows, cos, sin)
+        else:
+            projected = self._cache_project(rows, None, cos, sin)
+            keys = torch.stack([key for key, _ in projected])
+            values = torch.stack([value for _, value in projected])
         groups = state["blocks"][0][1].num_key_value_groups
         state["kv"][0][:, slot, :, start:length].copy_(keys[:, 0, ::groups])
         state["kv"][1][:, slot, :, start:length].copy_(values[:, 0, ::groups])
@@ -1350,6 +1366,24 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         embeddings, tile, tile_positions, write_slots, lengths, slot_ids = (
             buffers["embeddings"], buffers["tile"], buffers["tile_positions"],
             buffers["write_slots"], buffers["lengths"], buffers["slot_ids"])
+        if not _adapter_dense_shape(self, any_dim=True):
+            keys, values = self._bg_project(state, tile, tile_positions)
+            cache = []
+            for block, (_, layer) in enumerate(state["blocks"]):
+                for target, source in zip(state["kv"], (keys, values)):
+                    target[block, write_slots, :, tile_positions] = source[block].permute(1, 0, 2)
+                cache.append(tuple(target[block, :, :, :keys_total].index_select(0, slot_ids)
+                    .repeat_interleave(layer.num_key_value_groups, dim=1) for target in state["kv"]))
+            count, query_count = embeddings.shape[:2]
+            query_positions = lengths[:, None] + torch.arange(query_count, device=embeddings.device)
+            cos, sin = self.streams[0].rotary_emb(embeddings, query_positions)
+            allowed = (torch.arange(keys_total, device=embeddings.device)[None, None, :]
+                       < lengths[:, None, None]).expand(-1, query_count, -1)
+            allowed = torch.cat((allowed, torch.ones(count, query_count, query_count,
+                dtype=torch.bool, device=embeddings.device).tril(-1)), -1)
+            mask = embeddings.new_zeros(count, 1, query_count, keys_total + query_count)
+            mask.masked_fill_(~allowed[:, None], torch.finfo(embeddings.dtype).min)
+            return self._adapter_cache_query(embeddings, cos, sin, mask, keys_total, cache=cache)
         fused = self._c1_fused_module()
         if "stacked_kv" not in state:
             stacked_kv, stacked_mlp = [], []
@@ -1652,7 +1686,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 raise ValueError('fixed refresh requires JETSPEC_ROWS_RULE_CAP in 4,8,16')
             block = block_geometry.window_rows(run_config=run_config)
             window_capacity += ((cap * (block - 1) + 15) // 16) * 16
-        if getattr(self, "target_text_config", None) is None and self._c1_fused2_enabled(prefix_h):
+        if _adapter_dense_shape(self) and self._c1_fused2_enabled(prefix_h):
             layer = self._c1_blocks[0][1]
             shape = (
                 len(self._c1_blocks), 1, layer.num_heads,
@@ -1674,7 +1708,17 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             extension_path="eager", query_path="eager")
 
     def _cache_project(self, prefix, positions, cos, sin):
-        if getattr(self, "target_text_config", None) is not None:
+        if not _adapter_dense_shape(self):
+            layer = self._c1_blocks[0][1]
+            spec = layer.attention_spec
+            if (spec.norm_offset == 0 and spec.norm_round == "before_weight"
+                    and not spec.output_gate and spec.rotary_dim == spec.head_dim
+                    and self.resolved_config.get("window_causal_over_tokens", False)
+                    and prefix.shape[1] < 16):
+                count = prefix.shape[1]
+                projected = self._cache_project(F.pad(prefix, (0, 0, 0, 16 - count)), positions,
+                    F.pad(cos, (0, 0, 0, 16 - count)), F.pad(sin, (0, 0, 0, 16 - count)))
+                return [(k[:, :, :count], v[:, :, :count]) for k, v in projected]
             count, result = prefix.shape[1], []
             for index, layer in self._c1_blocks:
                 source = layer.kv_norm(prefix[..., index*self.hidden_size:(index+1)*self.hidden_size])
@@ -1763,14 +1807,14 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             source = source[:, :tokens].contiguous()
         if hasattr(layer, "_fused_kv"):
             widths = layer._fused_kv[2]
-            projected = torch.bmm(source, layer._fused_kv_stack.transpose(1, 2))
+            projected = draft_bmm(source, layer._fused_kv_stack)
             key, value = projected.split(widths, dim=-1)
             if self._d1_projection_biases[0] is not None:
                 key = key + self._d1_projection_biases[0]
                 value = value + self._d1_projection_biases[1]
         else:
-            key = torch.bmm(source, self._d1_projection_weights[0].transpose(1, 2))
-            value = torch.bmm(source, self._d1_projection_weights[1].transpose(1, 2))
+            key = draft_bmm(source, self._d1_projection_weights[0])
+            value = draft_bmm(source, self._d1_projection_weights[1])
             if self._d1_projection_biases[0] is not None:
                 key = key + self._d1_projection_biases[0]
                 value = value + self._d1_projection_biases[1]
@@ -1858,8 +1902,8 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def _d1_cache_query(self, embeddings, cos, sin, mask, length):
         """Refresh lower-stream window K/V while retaining the committed prefix."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        if getattr(self, "target_text_config", None) is not None:
-            return self._hybrid_cache_query(embeddings, cos, sin, mask, length)
+        if not _adapter_dense_shape(self):
+            return self._adapter_cache_query(embeddings, cos, sin, mask, length)
         fused = (self._c1_fused_module() if embeddings.dtype == torch.bfloat16
                  and (self._c1_fused_enabled() or self._c1_fused2_enabled(embeddings))
                  else None)
@@ -1940,22 +1984,21 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             outputs.append(u)
         return torch.cat(outputs, dim=-1)
 
-    def _hybrid_cache_query(self, embeddings, cos, sin, mask, length,
-                            window_slots=None, stop_before_attention=False, resume=None):
-        """Gated/partial-RoPE fallback, including the chain's split first attention.
-
-        The Qwen3 kernels assume ordinary norm weights, ungated Q and full RoPE.
-        Module arithmetic here matches training and uses device index copies for
-        live cache slots; no device scalar is read by Python during capture.
-        """
+    def _adapter_cache_query(self, embeddings, cos, sin, mask, length,
+                            window_slots=None, stop_before_attention=False, resume=None,
+                            cache=None):
+        """Execute each block's norm, rotary and gate parameters over private KV."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        if kernel_enabled('hybrid_c1_fused', '1'):
-            return self._c1_fused_module().lean_variant_query(
+        batch, count = embeddings.shape[:2]
+        bound_shape = all(layer.q_proj.bias is None and isinstance(layer.mlp.act_fn, nn.SiLU)
+                          for index, stream in enumerate(self.streams)
+                          for layer in (stream, *self.extra_stream_layers[index]))
+        if cache is None and batch == 1 and bound_shape and kernel_enabled('hybrid_c1_fused', '1'):
+            return self._c1_fused_module().adapter_query(
                 self, embeddings, cos, sin, mask, length, window_slots,
                 False, None)
-        count = embeddings.shape[1]
         lean = None
-        if kernel_enabled('hybrid_c1_lean', '1'):
+        if cache is None and batch == 1 and kernel_enabled('hybrid_c1_lean', '1'):
             from jetspec.engines.jetspec_plus_plus.kernels import hybrid_c1_lean as lean
         live = window_slots is not None
         total = mask.shape[-1] if live else length + (
@@ -1972,19 +2015,19 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 window = u
             normed = layer.input_norm(u) if lean is None else lean.norm(u, layer.input_norm)
             projected = layer.q_proj(normed).view(
-                1, count, layer.num_heads,
+                batch, count, layer.num_heads,
                 layer.head_dim * (2 if layer.attn_output_gate else 1))
             gate = None
             if layer.attn_output_gate:
                 projected, gate = projected.chunk(2, dim=-1)
                 if lean is None:
-                    gate = gate.reshape(1, count, -1)
+                    gate = gate.reshape(batch, count, -1)
             q = (_c1_rotary(layer.q_norm(projected).transpose(1, 2), cos, sin)
                  if lean is None else lean.norm_rotary(projected, layer.q_norm, cos, sin))
             if self.resolved_config.get("window_causal_over_tokens", False):
                 source = layer.kv_norm(window) if lean is None else lean.norm(window, layer.kv_norm)
                 key, value = layer.project_kv(source)
-                k, v = self._c1_kv[block]
+                k, v = (self._c1_kv if cache is None else cache)[block]
                 if lean is not None:
                     slots = (window_slots if live else
                              torch.arange(length, total, device=u.device, dtype=torch.long))
@@ -1992,21 +2035,25 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                                   value, layer.k_norm, cos, sin, (k, v), slots,
                                   layer.num_key_value_groups)
                 else:
-                    key = layer.k_norm(key.view(1, count, layer.num_key_value_heads,
+                    key = layer.k_norm(key.view(batch, count, layer.num_key_value_heads,
                                                layer.head_dim)).transpose(1, 2)
-                    value = value.view(1, count, layer.num_key_value_heads, layer.head_dim).transpose(1, 2)
+                    value = value.view(batch, count, layer.num_key_value_heads, layer.head_dim).transpose(1, 2)
                     key = _c1_rotary(key, cos, sin).repeat_interleave(layer.num_key_value_groups, dim=1)
                     value = value.repeat_interleave(layer.num_key_value_groups, dim=1)
-                    if live:
+                    if cache is not None:
+                        # Window predictions never enter the committed slot cache.
+                        k, v = torch.cat((k, key), 2), torch.cat((v, value), 2)
+                    elif live:
                         k.index_copy_(2, window_slots, key)
                         v.index_copy_(2, window_slots, value)
                     else:
                         k[:, :, length:total].copy_(key)
                         v[:, :, length:total].copy_(value)
-            k, v = self._c1_kv[block]
+            else:
+                k, v = (self._c1_kv if cache is None else cache)[block]
             attended = F.scaled_dot_product_attention(q, k[:, :, :total], v[:, :, :total],
                                                       attn_mask=mask, scale=layer.scaling)
-            attended = attended.transpose(1, 2).reshape(1, count, -1)
+            attended = attended.transpose(1, 2).reshape(batch, count, -1)
             if gate is not None:
                 attended = (attended * torch.sigmoid(gate) if lean is None else
                             lean.gate_mul(attended, gate, layer.num_heads, layer.head_dim))
@@ -2140,10 +2187,10 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         cache slots, whose mask hides every slot past the live prefix and the window.
         """
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        if getattr(self, "target_text_config", None) is not None:
+        if not _adapter_dense_shape(self):
             if append is not None:
                 raise ValueError("hybrid C1 requires the unfused prefix append")
-            return self._hybrid_cache_query(embeddings, cos, sin, mask, length,
+            return self._adapter_cache_query(embeddings, cos, sin, mask, length,
                 window_slots=window_slots, stop_before_attention=False, resume=None)
         # serving: Q = 15 (14 drafts) or 16 (15 drafts) window rows
         Q = int(embeddings.shape[1])
@@ -2191,13 +2238,13 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         # certified norm); an add whose sum no norm reads stays a torch add.
         fold = kernel_enabled('c1_norm', 'wide')
         gate_up_pack = kernel_enabled('c1_gateup_packed', '1')
-        gate_up_linear = F.linear
+        gate_up_linear = draft_linear
         if kernel_enabled('adapter_gemm_tune', '1'):
             if not hasattr(self, "_adapter_gemm"):
                 from jetspec.engines.jetspec_plus_plus.jetspec.adapter_gemm import AdapterGemm
 
                 self._adapter_gemm = AdapterGemm(embeddings.device)
-            gate_up_linear = self._adapter_gemm.linear
+            gate_up_linear = partial(draft_linear, implementation=self._adapter_gemm.linear)
         add_norm = fused._lean_ops_extension().add_rms_norm if fold else None
         silu_mul = fused._silu_mul_extension().silu_mul if fold else None
         span_fused = (kernel_enabled('c1_span_kv_fused', '1')
@@ -2280,13 +2327,13 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 window, current = u, index
             fused_rope = rope_norm and head_dim == 128
             if fused_rope:
-                projected_q = F.linear(normed, q_w)
+                projected_q = draft_linear(normed, q_w)
                 q = (fused.query_output(projected_q, heads, Q, head_dim) if qk_fused and query_layout
                      else projected_q.new_empty((1, heads, Q, head_dim)))
                 if not qk_fused:
                     head_ops.q_norm_rotary(projected_q, qn_w, cos, sin, q, Q, heads, qn_eps)
             else:
-                q = fused.lean_q_postprocess(F.linear(normed, q_w).view(1, Q, -1),
+                q = fused.lean_q_postprocess(draft_linear(normed, q_w).view(1, Q, -1),
                                              qn_w, cos, sin, qn_eps, heads, head_dim, norm)
             source = ew_source
             if kv_stack is not None:
@@ -2308,8 +2355,8 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 source_rows = kv_sources
                 if append is not None and not ew_fused:
                     source_rows = torch.cat((append[0][kv_first:kv_first + count], kv_sources), dim=1)
-                span_projected = torch.bmm(source_rows,
-                    weights[kv_first:kv_first + count].transpose(1, 2))
+                span_projected = draft_bmm(source_rows,
+                    weights[kv_first:kv_first + count], precision=draft_precision(weights))
                 if append is not None:
                     layer = self._c1_blocks[0][1]
                     width = layer.num_key_value_heads * layer.head_dim
@@ -2344,9 +2391,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 if not fused_rope:
                     projected_key, projected_value = projected_key.contiguous(), projected_value.contiguous()
             elif packed_kv is None:
-                projected_key, projected_value = F.linear(source, k_w), F.linear(source, v_w)
+                projected_key, projected_value = draft_linear(source, k_w), draft_linear(source, v_w)
             else:
-                projected_key, projected_value = F.linear(source, packed_kv[0], packed_kv[1]).split(
+                projected_key, projected_value = draft_linear(source, packed_kv[0], packed_kv[1]).split(
                     packed_kv[2], dim=-1)
                 if not (fused_rope and kernel_enabled('c1_kv_split_lean', '1')):
                     projected_key, projected_value = projected_key.contiguous(), projected_value.contiguous()
@@ -2396,19 +2443,19 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             else:
                 attended = attend_c1(q, k[:, :, :keys_total], v[:, :, :keys_total],
                                      scaling, flash_plan)
-            projected = F.linear(attended.transpose(1, 2).reshape(Q, -1), o_w)
+            projected = draft_linear(attended.transpose(1, 2).reshape(Q, -1), o_w)
             if fold:
                 post, state = add_norm(projected, u, post_w, post_eps)
                 if gate_up_pack:
                     gate, up = gate_up_linear(post, self._refresh_gate_up_weights[block]).chunk(2, dim=-1)
-                    pending = (F.linear(silu_mul(gate, up), down_w), state)
+                    pending = (draft_linear(silu_mul(gate, up), down_w), state)
                 else:
-                    pending = (F.linear(silu_mul(F.linear(post, gate_w), F.linear(post, up_w)),
+                    pending = (draft_linear(silu_mul(draft_linear(post, gate_w), draft_linear(post, up_w)),
                                         down_w), state)
             else:
                 state = u + projected
                 post = norm(state, post_w, post_eps)
-                u = state + F.linear(F.silu(F.linear(post, gate_w)) * F.linear(post, up_w), down_w)
+                u = state + draft_linear(F.silu(draft_linear(post, gate_w)) * draft_linear(post, up_w), down_w)
         if pending is not None and kernel_enabled('c1_glue_fused', '1'):
             return fused.finish_streams(outputs, pending[1], pending[0]).view(1, Q, -1)
         if pending is not None:
@@ -2417,8 +2464,8 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         return torch.cat(outputs, dim=-1).view(1, Q, -1)
 
     def _cache_query(self, embeddings, cos, sin, mask, length):
-        if getattr(self, "target_text_config", None) is not None:
-            return self._hybrid_cache_query(embeddings, cos, sin, mask, length)
+        if not _adapter_dense_shape(self) or embeddings.shape[1] != 15:
+            return self._adapter_cache_query(embeddings, cos, sin, mask, length)
         if self.resolved_config.get("window_causal_over_tokens", False):
             return self._d1_cache_query(embeddings, cos, sin, mask, length)
         if ((self._c1_fused_enabled() or self._c1_fused2_enabled(embeddings))
@@ -2432,7 +2479,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                         u, layer.input_norm.weight, layer.input_norm.variance_epsilon
                     )
                     q = fused.fused_q_postprocess(
-                        F.linear(normed, layer.q_proj.weight, layer.q_proj.bias),
+                        draft_linear(normed, layer.q_proj.weight, layer.q_proj.bias),
                         layer.q_norm.weight, cos, sin, layer.q_norm.variance_epsilon,
                         layer.num_heads, layer.head_dim,
                     )
@@ -2568,7 +2615,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         round is not that steady state or an entry is not compiled yet (the Python path,
         which compiles them, runs instead)."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        if getattr(self, "target_text_config", None) is not None:
+        if not _adapter_dense_shape(self):
             return None
         table = getattr(self, "_c1_rope_table", None)
         weights = getattr(self, "_d1_projection_weights", None)
@@ -2705,16 +2752,16 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         cos, sin = (self._c1_rope(dirty, positions)
                     if kernel_enabled('c1_prep_lean', '1')
                     else self.streams[0].rotary_emb(dirty, positions))
-        if (getattr(self, "target_text_config", None) is not None
+        if (not _adapter_dense_shape(self)
                 and kernel_enabled('hybrid_c1_fused', '1')):
-            self._c1_fused_module().hybrid_cache_extend(self, dirty, cos, sin, slots)
+            self._c1_fused_module().adapter_cache_extend(self, dirty, cos, sin, slots)
             return
         # The live layout (D1) takes the stacked write too: all 16 dirty rows are live
         # lanes or reserved-tail slots, so _cache_project would not pad them, and the
         # stacked projection is the per-block one (two index copies instead of 30).
         live = (config_values(self.run_config).get('engine.engine_settings.c1_graph_layout', "full") == "live"
                 and kernel_enabled('c1_lean', '1'))
-        if (getattr(self, "target_text_config", None) is None and self._c1_fused2_enabled(dirty)
+        if (_adapter_dense_shape(self) and self._c1_fused2_enabled(dirty)
                 and hasattr(self, "_c1_fast_key_cache")
                 and (live or not self.resolved_config.get("window_causal_over_tokens", False))):
             key, value = self._cache_project_fused2(dirty, cos, sin)
@@ -2859,6 +2906,11 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 inner = layer.mlp.gate_proj.weight.shape[0]
                 layer.mlp.gate_proj.weight.data = gate_up[:inner]
                 layer.mlp.up_proj.weight.data = gate_up[inner:]
+                # Dynamo must only read existing precision objects when tracing;
+                # create packed-weight metadata before entering compiled helpers.
+                for weight in (layer.q_proj.weight, kv, layer.o_proj.weight,
+                               gate_up, layer.mlp.down_proj.weight):
+                    draft_precision(weight)
                 plan.append((
                     index, layer.input_norm.weight, layer.input_norm.variance_epsilon,
                     layer.q_proj.weight, layer.q_norm.weight, layer.q_norm.variance_epsilon,
@@ -3192,6 +3244,20 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         first_rows.scatter_reduce_(0, owners, torch.arange(rows, device=owners.device), reduce="amin")
         positions = prefix_position_ids.index_select(0, first_rows)
         mask = None if attention_mask is None else attention_mask[..., :prefix]
+        if not _adapter_dense_shape(self, any_dim=True):
+            cache = []
+            for index, stream in enumerate(self.streams):
+                for layer in (stream, *self.extra_stream_layers[index]):
+                    source = layer.kv_norm(prefix_h[..., index*self.hidden_size:(index+1)*self.hidden_size])
+                    key, value = layer.project_kv(source)
+                    key = layer.k_norm(key.view(sequences, prefix, layer.num_key_value_heads, layer.head_dim))
+                    cos, sin = layer.rotary_emb(source, positions)
+                    key = _c1_rotary(key.transpose(1, 2), cos, sin)
+                    value = value.view(sequences, prefix, layer.num_key_value_heads, layer.head_dim).transpose(1, 2)
+                    cache.append(tuple(part.repeat_interleave(layer.num_key_value_groups, dim=1)
+                                       .index_select(0, owners) for part in (key, value)))
+            cos, sin = self.streams[0].rotary_emb(token_embeddings, query_position_ids)
+            return self._adapter_cache_query(token_embeddings, cos, sin, mask, prefix, cache=cache)
         u, outputs = token_embeddings, []
         for index, stream in enumerate(self.streams):
             prefix_tap = prefix_h[..., index*self.hidden_size:(index+1)*self.hidden_size]
@@ -3640,12 +3706,12 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         into the cache with v, attention defaulting to the memory-efficient kernel over
         the 16-aligned mask, and F.linear on the bound weights."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        if getattr(self, "target_text_config", None) is not None:
+        if not _adapter_dense_shape(self):
             if aligned is None:
                 raise ValueError("hybrid cached refresh requires an explicit attention mask")
             first = start if start_slot is None else start_slot
             slots = torch.arange(tokens, device=rows.device, dtype=torch.long) + first
-            return self._hybrid_cache_query(
+            return self._adapter_cache_query(
                 rows[None], cos, sin, aligned[..., :keys_total], None,
                 window_slots=slots)[0, :real]
         norm = fused._wide_norm_extension().rms_norm
@@ -3679,20 +3745,20 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         window, current = u, 0
         kv_pack = kernel_enabled('refresh_kv_pack', '1')
         gate_up_pack = kernel_enabled('refresh_gateup_packed', '1')
-        linear = F.linear
+        linear = draft_linear
         if kernel_enabled('refresh_gemm_tune', '1'):
             if not hasattr(self, "_refresh_gemm"):
                 from jetspec.engines.jetspec_plus_plus.kernels.refresh_gemm import RefreshGemm
 
                 self._refresh_gemm = RefreshGemm(rows.device)
-            linear = self._refresh_gemm.linear
+            linear = partial(draft_linear, implementation=self._refresh_gemm.linear)
         gate_up_linear = linear
         if kernel_enabled('adapter_gemm_tune', '1'):
             if not hasattr(self, "_adapter_gemm"):
                 from jetspec.engines.jetspec_plus_plus.jetspec.adapter_gemm import AdapterGemm
 
                 self._adapter_gemm = AdapterGemm(rows.device)
-            gate_up_linear = self._adapter_gemm.linear
+            gate_up_linear = partial(draft_linear, implementation=self._adapter_gemm.linear)
         ew_fused = (kernel_enabled('adapter_ew_fused', '1')
                     or kernel_enabled('c1_glue_fused', '1'))
         if config_values(self.run_config).get('engine.engine_settings.refresh_adapter_loop', "0") == "1":
@@ -3715,7 +3781,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 ops.update(native_norm=fused.native_entry(fused._wide_norm_extension(), 'rms_norm'),
                            native_add=fused.native_entry(fused._lean_ops_extension(), 'add_rms_norm'),
                            native_silu=fused.native_entry(fused._silu_mul_extension(), 'silu_mul'))
-            if linear is not F.linear:
+            if linear is not draft_linear:
                 ops['linear'] = linear
             if ew_fused:
                 ops['ew_pre_norm'] = fused.ew_pre_norm
@@ -4074,7 +4140,7 @@ class CorrectionHead:
 
     def bias(self, prev_tokens: torch.Tensor) -> torch.Tensor:
         """(R,) previous tokens -> (R, V) logit bias in the table dtype."""
-        return F.linear(self.w1[prev_tokens.long()], self.w2)
+        return draft_linear(self.w1[prev_tokens.long()], self.w2)
 
     def chain(self, logits: torch.Tensor, anchors: torch.Tensor, pinned=None) -> torch.Tensor:
         """Spine read: slot d = argmax(logits[d] + bias(token at d-1)); slot 0 keys on the anchor.
@@ -4121,14 +4187,14 @@ def load_correction_head(path, *, device, dtype, pins_path=None) -> CorrectionHe
 def served_target_layer_ids(config=None) -> tuple[int, ...]:
     """The configured taps, or Qwen3's legacy default for callers without a config.
 
-    Read from the module's source rather than imported: qwen3.py imports the attention
+    Read from the module's source rather than imported: target.py imports the attention
     layers (triton, flashinfer), and this module otherwise loads on a CPU-only host.
     """
     configured = getattr(config, "jetspec_target_layer_ids", None)
     if configured is not None:
         return tuple(configured)
     import ast
-    source = Path(__file__).resolve().parents[1] / "models" / "qwen3.py"
+    source = Path(__file__).resolve().parents[1] / "models" / "target.py"
     for node in ast.parse(source.read_text()).body:
         if isinstance(node, ast.Assign) and any(
                 isinstance(target, ast.Name) and target.id == "JETSPEC_TARGET_LAYER_IDS"
@@ -4144,11 +4210,12 @@ def check_rotary_agreement(drafter_freq, adapter_freq, *, target_text_config=Non
     while the drafter keeps fp32, so compare at the adapter's precision.
     """
     expected = drafter_freq
-    if target_text_config is not None:
+    target = target_text_config or {}
+    rope = target.get("rope_parameters") or target
+    if rope.get("rope_theta") is not None:
         # A trained hybrid adapter rotates target D256/partial-RoPE channels;
         # the separately trained drafter retains its own full D128 geometry.
-        rope = target_text_config["rope_parameters"]
-        dim = int(target_text_config["head_dim"] * rope.get("partial_rotary_factor", 1.0))
+        dim = int(target["head_dim"] * rope.get("partial_rotary_factor", 1.0))
         expected = 1.0 / (rope["rope_theta"] ** (
             torch.arange(0, dim, 2, dtype=torch.float32, device=adapter_freq.device) / dim))
     if not torch.equal(expected.to(adapter_freq.dtype), adapter_freq):
@@ -4203,6 +4270,14 @@ class JetSpecDrafter:
         self.block_size = 16 if width == 14 else width + 1
         if any("clean_prefix_embedding" in name for name, _ in head.named_parameters()):
             raise AssertionError("p-free Jacobi serving forbids clean_prefix_embedding")
+        from jetspec.engines.jetspec_plus_plus.models.target_linear import DraftLinear
+        DraftLinear.bind(head)
+        if isinstance(lm_head, torch.nn.Module):
+            DraftLinear.bind(lm_head, precision_role='lm_head')
+        if isinstance(adapter, torch.nn.Module):
+            DraftLinear.bind(adapter)
+        elif isinstance(getattr(adapter, 'head', None), torch.nn.Module):
+            DraftLinear.bind(adapter.head)
 
     @classmethod
     def load(
@@ -4354,7 +4429,8 @@ class JetSpecDrafter:
             )
         vocab_size, hidden_size = release["lm_head.weight"].shape
         embed_tokens = nn.Embedding(vocab_size, hidden_size, dtype=torch.bfloat16)
-        lm_head = nn.Linear(hidden_size, vocab_size, bias=False, dtype=torch.bfloat16)
+        lm_head = DraftLinear(hidden_size, vocab_size, bias=False, dtype=torch.bfloat16,
+                              precision_role='lm_head')
         embed_tokens.load_state_dict(
             {"weight": release["model.embed_tokens.weight"]}, strict=True
         )

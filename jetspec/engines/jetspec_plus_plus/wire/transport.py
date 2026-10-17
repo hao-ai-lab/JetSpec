@@ -7,6 +7,7 @@ import os
 import time
 import torch
 from jetspec.engines.jetspec_plus_plus.wire.contract import OUTCOME_WORDS
+from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeLayout
 from jetspec.engines.jetspec_plus_plus.wire.contract import FrontInputs
 from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
 from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset
@@ -15,6 +16,10 @@ from jetspec.engines.jetspec_plus_plus.wire.contract import TokenBuffers
 from jetspec.engines.jetspec_plus_plus.wire.contract import outcome_message_views
 from jetspec.engines.jetspec_plus_plus.wire.contract import rng_words
 from jetspec.engines.jetspec_plus_plus.jetspec.chain.intake import CHAIN_COMMAND_PREFIX
+
+# After a request's last EOS the target writes the read's outputs, audits its compile caches
+# and only then sends "exit"; on a shared filesystem that can take longer than 30 s.
+BOUNDARY_WAIT_S = 600.0
 
 class ChainCommandInbox:
     """Read host-known command types; NCCL carries payloads only."""
@@ -41,7 +46,7 @@ class ChainCommandInbox:
             # A device EOS can precede the host's request-end decision. Accept
             # either a continued pushed round or the next TCP control.
             key = f"{CHAIN_COMMAND_PREFIX}{command_id}"
-            deadline = time.monotonic() + 30.0
+            deadline = time.monotonic() + BOUNDARY_WAIT_S
             while True:
                 if self.store.check([key]):
                     boundary = self.store.get(key).decode("ascii")
@@ -156,9 +161,9 @@ class OutcomeReceiveRing:
 
         self.recv = recv or dist.irecv
         self.event_factory = event_factory or (lambda: torch.cuda.Event())
-        tap_bytes = lanes * 5 * hidden * torch.empty((), dtype=tap_dtype).element_size()
-        size = (hybrid_layout.outcome_bytes if hybrid_layout is not None
-                else OUTCOME_WORDS * 8 + tap_bytes)
+        layout = (hybrid_layout.layout if hybrid_layout is not None
+                  else OutcomeLayout(lanes, hidden, tap_dtype))
+        size = layout.outcome_bytes
         self.hybrid_transfer_bytes = (size if hybrid_layout is not None else None)
         self.hybrid_transfer_timing = (hybrid_layout is not None and
                                        setting(self, 'engine.engine_settings.hybrid_transfer_timing', '0') == "1")

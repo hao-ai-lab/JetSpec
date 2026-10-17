@@ -4,6 +4,23 @@ from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import (_fiel
                                            _probability, _safe_file, _is_sha256)
 
 
+# Effective defaults stay out of canonical configs and legacy launch snapshots.
+# Keys are (category, field) pairs; the launch overlay joins them with a dot.
+BATCH_DEFAULTS = {
+    ('benchmark', 'concurrency'): 1,
+    ('engine', 'supports_batch'): False,
+    ('engine', 'max_num_seqs'): 1,
+    ('engine', 'batch_buckets'): [1],
+    ('engine', 'max_num_batched_tokens'): 16384,
+    ('engine', 'gpu_memory_utilization'): 0.7,
+}
+
+
+def batch_buckets(value):
+    return (isinstance(value, list) and bool(value) and all(_positive_int(x) for x in value)
+            and value == sorted(set(value)))
+
+
 def prompt_files(value):
     if not isinstance(value, list) or not value:
         return False
@@ -14,6 +31,19 @@ def prompt_files(value):
             return False
         if item['turn'] not in (1, 2) or type(item['temperature']) not in (int, float):
             return False
+    return True
+
+
+def check_batch_capacity(config):
+    engine = config['engine']
+    concurrency = config['benchmark'].get('concurrency', 1)
+    capacity = engine.get('max_num_seqs', 1)
+    if concurrency > capacity:
+        support = '; missing supports_batch=true' if not engine.get('supports_batch', False) else ''
+        raise ValueError(f"engine profile {engine.get('profile', 'current')!r}{support}: "
+                         f'benchmark.concurrency={concurrency} exceeds max_num_seqs={capacity}')
+    if any(bucket > capacity for bucket in engine.get('batch_buckets', [1])):
+        raise ValueError('engine.batch_buckets exceeds max_num_seqs')
     return True
 
 
@@ -34,7 +64,13 @@ ENGINE_SCHEMA = Schema({
     'kind': ('fast', 'reference', 'trainer'), 'cutoffs': bool, 'deadline': bool,
     'profile': str, 'recipe': str, 'deterministic': bool, 'record': ('none', 'rounds', 'anatomy', 'candidates'),
     'release_finished_requests': bool, 'tag_sequence_ids': bool, 'skip_admission_prewarm': bool,
-}, required=('kind',))
+    'supports_batch': bool, 'max_num_seqs': _positive_int,
+    'batch_buckets': batch_buckets, 'max_num_batched_tokens': _positive_int,
+    'gpu_memory_utilization': lambda v: type(v) in (int, float) and 0 < v <= 1,
+    _field('engine_settings', 'precision_target'): ('bf16', 'fq_w4a16', 'fq_w4a4'),
+    _field('engine_settings', 'precision_draft'): ('bf16', 'fq_w4a16', 'fq_w4a4'),
+    _field('engine_settings', 'precision_lm_head'): ('bf16', 'fq_w4a16', 'fq_w4a4'),
+}, required=('kind',), checks=(check_batch_capacity,))
 
 HARDWARE_SCHEMA = Schema({
     'gpu': ('a100', 'b200', 'gb200'), 'placement': ('pair', 'one_gpu', 'one_gpu_mps', 'tp2'),
@@ -46,6 +82,7 @@ HARDWARE_SCHEMA = Schema({
 BENCHMARK_SCHEMA = Schema({
     'dataset': str, 'prompt_files': prompt_files, 'chat_template': str,
     'count': _positive_int, 'offset': _nonnegative_int, 'cap': _positive_int,
+    'concurrency': _positive_int,
     'temperature': lambda v: type(v) in (int, float) and v >= 0,
     'seed': _nonnegative_int, 'stop_at_eos': bool, 'turns': _positive_int, 'repeats': _positive_int,
     _field('corpus', 'sha256'): _is_sha256, _field('corpus', 'name'): str,
@@ -769,6 +806,9 @@ RANK_CONFIG_FIELDS = {
         _field('engine_settings', 'profile'): '0',
         _field('engine_settings', 'profile_draft'): '0',
         _field('engine_settings', 'profile_target'): '0',
+        _field('engine_settings', 'precision_target'): 'bf16',
+        _field('engine_settings', 'precision_draft'): 'bf16',
+        _field('engine_settings', 'precision_lm_head'): 'bf16',
         _field('engine_settings', 'record_flags'): None,
         _field('engine_settings', 'record_ptop1'): None,
         _field('engine_settings', 'record_qshadow'): None,

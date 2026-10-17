@@ -9,8 +9,8 @@ import time
 import torch
 
 from jetspec.engines.jetspec_plus_plus.wire.contract import OUTCOME_WORDS
+from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeLayout
 from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset
-from jetspec.engines.jetspec_plus_plus.wire.contract import outcome_message_views
 from jetspec.engines.jetspec_plus_plus.wire.contract import HASH_WEIGHTS, HASH_WINDOW
 from jetspec.engines.jetspec_plus_plus.wire.contract import hash_last16 as hash16_committed
 
@@ -117,47 +117,96 @@ def admission_outcome(sequence, *, capacity: int, device, weights: torch.Tensor)
 
 
 class OutcomeWire:
-    """One fixed-size NCCL byte tensor: contract header, then [lanes,5,H] taps."""
+    """Fixed NCCL storage; each sequence owns its dense core and shipped state.
 
-    def __init__(self, lanes, hidden, dtype, device):
-        self.lanes = lanes
-        self.hidden = hidden
-        self.dtype = dtype
-        tap_bytes = lanes * 5 * hidden * torch.empty((), dtype=dtype).element_size()
-        self.tensor = torch.empty(OUTCOME_WORDS * 8 + tap_bytes,
-                                  dtype=torch.uint8, device=device)
-        self.packet, self.taps = outcome_message_views(
-            self.tensor, lanes=lanes, hidden=hidden, tap_dtype=dtype)
+    ``packet`` and ``taps`` retain the single-sequence ABI. Batched callers use
+    ``sequences`` and pass one packet, tap block and state mapping per sequence.
+    """
 
-    def pack(self, packet, taps, *, skip_full_zero=False):
+    def __init__(self, lanes, hidden, dtype, device, *, layout=None):
+        self.layout = layout if layout is not None else OutcomeLayout(lanes, hidden, dtype)
+        self.lanes = self.layout.lanes
+        self.hidden = self.layout.hidden
+        self.dtype = self.layout.tap_dtype
+        self.tensor = torch.empty(self.layout.outcome_bytes, dtype=torch.uint8, device=device)
+        self.sequences = self.layout.views(self.tensor)
+        self.packet, self.taps = self.sequences[0].packet, self.sequences[0].taps
+
+    def pack(self, packet, taps, *, skip_full_zero=False, states=None):
+        if self.layout.sequence_count > 1:
+            if (len(packet) != self.layout.sequence_count or len(taps) != self.layout.sequence_count
+                    or states is not None and len(states) != self.layout.sequence_count):
+                raise ValueError('outcome batch must match the sequence count')
+            rows = zip(self.sequences, packet, taps,
+                       states if states is not None else [{} for _ in self.sequences])
+        else:
+            rows = [(self.sequences[0], packet, taps, states or {})]
+        for row, header, block, state in rows:
+            self._pack_sequence(row, header, block, state, skip_full_zero=skip_full_zero)
+        return self.tensor
+
+    def _pack_sequence(self, row, packet, taps, states, *, skip_full_zero):
         if packet.shape != (OUTCOME_WORDS,) or packet.dtype != torch.int64:
             raise ValueError(f"OutcomePacket must be int64[{OUTCOME_WORDS}]")
-        if taps.ndim != 3 or taps.shape[0] > self.lanes or taps.shape[1:] != (5, self.hidden):
+        if taps.ndim != 3 or taps.shape[0] > self.lanes or taps.shape[1:] != row.taps.shape[1:]:
             raise ValueError("outcome taps exceed the fixed lane block")
-        self.packet.copy_(packet)
+        row.packet.copy_(packet)
         if not skip_full_zero or taps.shape[0] != self.lanes:
-            self.taps.zero_()
-        self.taps[:taps.shape[0]].copy_(taps.to(self.dtype))
-        return self.tensor
+            row.taps.zero_()
+        row.taps[:taps.shape[0]].copy_(taps.to(self.dtype))
+        self._copy_state(row, states)
+
+    @staticmethod
+    def _copy_state(row, states):
+        if states.keys() != row.states.keys():
+            raise ValueError('outcome state must match the shipped layers')
+        for layer, destination in row.states.items():
+            source = states[layer]
+            if len(source) != len(destination) or any(
+                    a.shape != b.shape or a.dtype != b.dtype for a, b in zip(source, destination)):
+                raise ValueError('outcome state geometry or dtype changed')
+            for target, value in zip(destination, source):
+                target.copy_(value)
 
     def prepare_taps(self, taps):
         """Copy the invariant full tap block before host acceptance completes."""
-        if taps.shape != (self.lanes, 5, self.hidden):
-            raise ValueError("early outcome preparation requires every tap lane")
-        self.taps.copy_(taps.to(self.dtype))
+        blocks = [taps] if self.layout.sequence_count == 1 else taps
+        if len(blocks) != self.layout.sequence_count:
+            raise ValueError('outcome batch must match the sequence count')
+        for row, block in zip(self.sequences, blocks):
+            if block.shape != row.taps.shape:
+                raise ValueError("early outcome preparation requires every tap lane")
+            row.taps.copy_(block.to(self.dtype))
 
-    def pack_prepared_header(self, packet):
-        if packet.shape != (OUTCOME_WORDS,) or packet.dtype != torch.int64:
-            raise ValueError(f"OutcomePacket must be int64[{OUTCOME_WORDS}]")
-        self.packet.copy_(packet)
+    def pack_prepared_header(self, packet, *, states=None):
+        packets = [packet] if self.layout.sequence_count == 1 else packet
+        state_rows = [states or {}] if self.layout.sequence_count == 1 else states
+        if state_rows is None:
+            state_rows = [{} for _ in self.sequences]
+        if len(packets) != self.layout.sequence_count or len(state_rows) != self.layout.sequence_count:
+            raise ValueError('outcome batch must match the sequence count')
+        for row, header, state in zip(self.sequences, packets, state_rows):
+            if header.shape != (OUTCOME_WORDS,) or header.dtype != torch.int64:
+                raise ValueError(f"OutcomePacket must be int64[{OUTCOME_WORDS}]")
+            row.packet.copy_(header)
+            self._copy_state(row, state)
         return self.tensor
+
+    def state_digests(self):
+        """Optional audit: one committed-state digest per sequence and round."""
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import state_digest
+        return tuple((int(row.packet[OutcomeOffset.SEQ_ID]), int(row.packet[OutcomeOffset.ROUND]),
+                      state_digest(*(tensor for section in self.layout.sections
+                          if section.kind == 'linear_attention'
+                          for tensor in row.states[section.layer_index])))
+                     for row in self.sequences)
 
 
 class OutcomeWireRing:
     """Keep each packed envelope until its asynchronous send completes."""
 
-    def __init__(self, lanes, hidden, dtype, device):
-        self.wires = [OutcomeWire(lanes, hidden, dtype, device) for _ in range(2)]
+    def __init__(self, lanes, hidden, dtype, device, *, layout=None):
+        self.wires = [OutcomeWire(lanes, hidden, dtype, device, layout=layout) for _ in range(2)]
         self.works = [[], []]
         self.next_slot = 0
         self.pending_slot = None
@@ -176,3 +225,33 @@ class OutcomeWireRing:
             raise RuntimeError("outcome envelope send has no acquired slot")
         self.works[self.pending_slot] = list(works)
         self.pending_slot = None
+
+
+def outcome_layout(owner):
+    """Resolve a session layout, retaining the geometry-only public ABI."""
+    layout = getattr(owner, '_outcome_layout', None)
+    if layout is not None:
+        return layout
+    legacy = getattr(owner, '_hybrid_pair_layout', None)
+    if legacy is not None:
+        return legacy.layout
+    return OutcomeLayout(owner.K + 1, owner.jetspec_tap_hidden_size, owner.draft_dtype)
+
+
+def make_outcome_wire(owner, *, ring=False):
+    """Build every verify-side wire from the session layout.
+
+    Geometry-only callers retain their historical constructors; serving sessions
+    supply the ModelSpec-derived layout once, before the first round.
+    """
+    layout = getattr(owner, '_outcome_layout', None)
+    if layout is not None:
+        cls = OutcomeWireRing if ring else OutcomeWire
+        return cls(layout.lanes, layout.hidden, layout.tap_dtype, owner.device, layout=layout)
+    legacy = getattr(owner, '_hybrid_pair_layout', None)
+    if legacy is not None:
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridOutcomeWire, HybridOutcomeWireRing
+        cls = HybridOutcomeWireRing if ring else HybridOutcomeWire
+        return cls(legacy, owner.device)
+    cls = OutcomeWireRing if ring else OutcomeWire
+    return cls(owner.K + 1, owner.jetspec_tap_hidden_size, owner.draft_dtype, owner.device)

@@ -33,6 +33,13 @@ class ConfigValues(Mapping):
         return len(self._values)
 
 
+# One view per live rank record, keyed by identity: the value-keyed cache above hashes the whole
+# frozen record (thousands of nested hashes) on every lookup, which per-row serving code pays for
+# each setting it reads. Each entry holds its record, so an id is not reused while it is cached.
+_VIEWS = {}
+_VIEW_LIMIT = 128
+
+
 def config_values(run_config):
     """Accept a rank record or an explicit legacy launch mapping; never read ambient env."""
     if isinstance(run_config, ConfigValues):
@@ -43,7 +50,15 @@ def config_values(run_config):
         bound = {name for fields in ENV_FIELDS.values() for name in fields}
         run_config = RunConfig.from_environment(
             {key: value for key, value in run_config.items() if key in bound})
-    return ConfigValues(run_config)
+        return ConfigValues(run_config)
+    entry = _VIEWS.get(id(run_config))
+    if entry is not None and entry[0] is run_config:
+        return entry[1]
+    view = ConfigValues(run_config)
+    if len(_VIEWS) >= _VIEW_LIMIT:
+        del _VIEWS[next(iter(_VIEWS))]
+    _VIEWS[id(run_config)] = (run_config, view)
+    return view
 
 
 def config_flag01(key, run_config):

@@ -164,17 +164,124 @@ class OutcomePacket:
         return cls(*words[:len(OUTCOME_FIELDS)].tolist())
 
 
+@dataclass(frozen=True)
+class StateSection:
+    """The tensors shipped for one target-tail layer, in wire order."""
+
+    layer_index: int
+    kind: str
+    tensors: tuple[tuple[tuple[int, ...], torch.dtype], ...]
+
+
+@dataclass(frozen=True)
+class OutcomeSequenceViews:
+    packet: torch.Tensor
+    taps: torch.Tensor
+    states: dict[int, tuple[torch.Tensor, ...]]
+
+    @property
+    def digest(self):
+        """One existing HASH16 word per sequence and round; no extra wire bytes."""
+        return self.packet[OutcomeOffset.HASH16]
+
+
+@dataclass(frozen=True)
+class OutcomeLayout:
+    """Dense core followed by the shipped tail sections, repeated per sequence.
+
+    Each sequence owns its header (including round and digest), taps and state.
+    Only inter-sequence padding is added for int64 header alignment. C=1 keeps
+    the original byte length and ordering, including the FP32 state alignment.
+    """
+
+    lanes: int
+    hidden: int
+    tap_dtype: torch.dtype
+    tap_count: int = 5
+    sequence_count: int = 1
+    sections: tuple[StateSection, ...] = ()
+
+    def __post_init__(self):
+        if any(type(value) is not int or value <= 0 for value in (
+                self.lanes, self.hidden, self.tap_count, self.sequence_count)):
+            raise ValueError('outcome dimensions and sequence count must be positive integers')
+        if self.tap_dtype not in (torch.bfloat16, torch.float32):
+            raise ValueError('outcome taps must be bf16 or fp32')
+
+    @classmethod
+    def from_spec(cls, spec, *, lanes, tap_dtype, sequence_count):
+        sections = []
+        # Dense tails rebuild their KV from taps. A stateful tail ships its
+        # committed recurrent state and attention deltas in layer order.
+        if any(spec.layer_kinds[index] != 'full_attention' for index in spec.tail):
+            for index in spec.tail:
+                kind = spec.layer_kinds[index]
+                if kind == 'linear_attention':
+                    gdn = spec.gdn
+                    width = 2 * gdn.k_heads * gdn.k_dim + gdn.v_heads * gdn.v_dim
+                    tensors = (((1, gdn.v_heads, gdn.k_dim, gdn.v_dim), torch.float32),
+                               ((1, width, gdn.conv_kernel), tap_dtype))
+                else:
+                    shape = (lanes, spec.attention.kv_heads, spec.attention.head_dim)
+                    tensors = ((shape, tap_dtype), (shape, tap_dtype))
+                sections.append(StateSection(index, kind, tensors))
+        return cls(lanes, spec.hidden_size, tap_dtype, len(spec.taps),
+                   sequence_count, tuple(sections))
+
+    @property
+    def base_bytes(self):
+        return OUTCOME_WORDS * 8 + self.lanes * self.tap_count * self.hidden * self.tap_dtype.itemsize
+
+    def _state_fields(self):
+        cursor = self.base_bytes
+        for section in self.sections:
+            alignment = max(dtype.itemsize for _, dtype in section.tensors)
+            cursor = (cursor + alignment - 1) // alignment * alignment
+            for shape, dtype in section.tensors:
+                size = dtype.itemsize
+                for dimension in shape:
+                    size *= dimension
+                yield section.layer_index, cursor, size, shape, dtype
+                cursor += size
+
+    @property
+    def sequence_bytes(self):
+        end = self.base_bytes
+        for _, offset, size, _, _ in self._state_fields():
+            end = offset + size
+        return end
+
+    @property
+    def sequence_stride(self):
+        return (self.sequence_bytes + 7) & ~7
+
+    @property
+    def outcome_bytes(self):
+        return (self.sequence_count - 1) * self.sequence_stride + self.sequence_bytes
+
+    def views(self, message):
+        if message.dtype != torch.uint8 or message.shape != (self.outcome_bytes,):
+            raise ValueError('outcome message has the wrong static byte length')
+        result = []
+        for sequence in range(self.sequence_count):
+            start = sequence * self.sequence_stride
+            core = message[start:start + self.base_bytes]
+            packet = core[:OUTCOME_WORDS * 8].view(torch.int64)
+            taps = core[OUTCOME_WORDS * 8:].view(self.tap_dtype).view(
+                self.lanes, self.tap_count, self.hidden)
+            states = {section.layer_index: [] for section in self.sections}
+            for layer, offset, size, shape, dtype in self._state_fields():
+                states[layer].append(message[start + offset:start + offset + size].view(dtype).view(shape))
+            result.append(OutcomeSequenceViews(packet, taps,
+                {layer: tuple(tensors) for layer, tensors in states.items()}))
+        return tuple(result)
+
+
 def outcome_message_views(message: torch.Tensor, *, lanes: int, hidden: int,
                           tap_dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
     """Interpret one static uint8 NCCL message as header and fixed tap block."""
-    if tap_dtype not in (torch.bfloat16, torch.float32):
-        raise ValueError("outcome taps must be bf16 or fp32")
-    tap_bytes = lanes * 5 * hidden * torch.empty((), dtype=tap_dtype).element_size()
-    if message.dtype != torch.uint8 or message.shape != (OUTCOME_WORDS * 8 + tap_bytes,):
-        raise ValueError("outcome message has the wrong static byte length")
-    packet = message[:OUTCOME_WORDS * 8].view(torch.int64)
-    taps = message[OUTCOME_WORDS * 8:].view(tap_dtype).view(lanes, 5, hidden)
-    return packet, taps
+    row = OutcomeLayout(lanes, hidden, tap_dtype).views(message)[0]
+    return row.packet, row.taps
 
 
 def patch_round_params_from_outcome(rp: torch.Tensor, packet: torch.Tensor) -> None:

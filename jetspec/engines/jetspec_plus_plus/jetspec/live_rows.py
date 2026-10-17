@@ -469,9 +469,11 @@ def require_segmented_rows(run_config):
     """Refuse retired eager rows before a launch allocates models or starts ranks."""
     from jetspec.engines.jetspec_plus_plus.draft.config import setting
     if (setting(run_config, 'engine.engine_settings.rows', '0') == '1'
-            and setting(run_config, 'engine.engine_settings.chain_graph', '0') != 'seg'):
-        raise ValueError('retired eager row path: JetSpec rows require chain_graph=seg; '
-                         'its results are sealed records pinned to their commits')
+            and setting(run_config, 'engine.engine_settings.chain_graph', '0') != 'seg'
+            and setting(run_config, 'engine.engine_settings.batch_draft_graph', '0') != '1'):
+        raise ValueError('retired eager row path: JetSpec rows require chain_graph=seg, or '
+                         'batch_draft_graph=1 for the C>1 batched round; its results are sealed '
+                         'records pinned to their commits')
 
 
 class KthRowsDrafter:
@@ -1317,6 +1319,14 @@ class BucketPass:
         return self.logits
 
 
+def _precision_head_kn(lm_head):
+    from jetspec.engines.jetspec_plus_plus.kernels.projections import prepare_j0_lmhead_kn
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import bind_weight_role
+    weight = prepare_j0_lmhead_kn(lm_head)
+    bind_weight_role(weight, 'lm_head')
+    return weight
+
+
 def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
                           refresh_at, T_ref, *, outputs=None, refresh_swap=None,
                           standalone_refresh_at=(), exact_prefix=False, run_config=None):
@@ -1397,8 +1407,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     if fused_head and (not k3 or keys.device.type != 'cuda'):
         raise ValueError('JETSPEC_LMHEAD_FUSED requires CUDA JETSPEC_REFINE_K3=1')
     if head_kn:
-        from jetspec.engines.jetspec_plus_plus.kernels.projections import prepare_j0_lmhead_kn
-        weight_kn = prepare_j0_lmhead_kn(bucket.drafter.lm_head)
+        weight_kn = _precision_head_kn(bucket.drafter.lm_head)
         partials = allocate_partials(rows, lanes, bucket.drafter.lm_head.weight.shape[0], keys.device)
         bucket.chain_lmhead_partials = partials
     elif fused_head:
@@ -1560,7 +1569,8 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
         # serving: after the refresh every pass's output keeps the round's pinned swaps
         pins = refresh_swap.pins() if refresh_swap is not None and index >= 1 else None
         if head_kn:
-            logits = torch.mm(logits.reshape(-1, logits.shape[-1]), weight_kn).reshape(rows, lanes, -1)
+            from jetspec.engines.jetspec_plus_plus.models.target_linear import draft_mm
+            logits = draft_mm(logits.reshape(-1, logits.shape[-1]), weight_kn).reshape(rows, lanes, -1)
             chain_pass(logits, bucket.ids, keys, active, outputs, p_top1_prev,
                        tokens, rp, partials, index,
                        save_previous=index == 0 or index + 1 in refresh_at, pins=pins)

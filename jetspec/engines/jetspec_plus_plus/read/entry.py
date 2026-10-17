@@ -4260,7 +4260,8 @@ def serving_recipe(config, *, root=ROOT):
     return recipe
 
 
-def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read.json'):
+def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read.json',
+               sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
     """Return the environment and legacy argv without probing host artifacts or GPUs."""
     config_root = Path(config_root or Path(root) / 'config')
     recipe = serving_recipe(config, root=root) if launch is None else deepcopy(launch)
@@ -4281,16 +4282,39 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
             '--temperature', str(benchmark['temperature']), '--seed', str(benchmark['seed']),
             '--repeats', str(benchmark['repeats']), '--output-json', str(output),
             '--cpu-pin', hardware['cpu_pin']]
+    from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+    run_config = RunConfig.from_config(config)
+    if sequential_prompts:
+        if run_config.concurrency != 1:
+            raise ValueError('--sequential-prompts requires benchmark.concurrency=1')
+        argv.append('--sequential-prompts')
+    if cache_root is not None:
+        argv.extend(['--cache-root', str(cache_root)])
+    for flag, value in (('--wire-records', wire_records), ('--anatomy', anatomy)):
+        if value is not None:
+            if value not in ('on', 'off'):
+                raise ValueError(f'{flag} must be on or off')
+            argv.extend([flag, value])
+    if run_config.concurrency > 1 and not run_config.batch_capacity.supports_batch:
+        profile = config['engine'].get('profile', 'current')
+        raise ValueError(f'engine profile {profile!r} is missing supports_batch=true '
+                         f'for benchmark.concurrency={run_config.concurrency}')
     if benchmark['stop_at_eos']:
         argv.extend(['--stop-at-eos', 'on'])
     if hardware.get('mps'):
         argv.extend(['--mps-root', str(Path(output).absolute().parent / 'mps')])
-    return dict(recipe=recipe, environment=recipe['environment'], serve_argv=argv)
+    if run_config.concurrency > 1:
+        argv.extend(['--batch', str(run_config.concurrency)])
+    return dict(recipe=recipe, environment=recipe['environment'], serve_argv=argv,
+                launch_overlay=run_config.batch_overlay())
 
 
-def resolve_read(names, overrides=(), *, root=ROOT / 'config', launch=None, output='read.json'):
+def resolve_read(names, overrides=(), *, root=ROOT / 'config', launch=None, output='read.json',
+                 sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
     config = resolve(names, overrides, root=root)
-    plan = build_plan(config, launch=launch, root=Path(root).parent, config_root=root, output=output)
+    plan = build_plan(config, launch=launch, root=Path(root).parent, config_root=root, output=output,
+                      sequential_prompts=sequential_prompts, cache_root=cache_root,
+                      wire_records=wire_records, anatomy=anatomy)
     return dict(schema='jetspec.config_read/1', config=config, canonical_json=canonical_json(config),
                 config_sha256=config_hash(config), launched=False, **plan)
 
@@ -4338,6 +4362,13 @@ def main(argv=None):
     parser.add_argument('--output', default='read.json')
     parser.add_argument('--host-values')
     parser.add_argument('--artifacts-dir')
+    parser.add_argument('--sequential-prompts', action='store_true',
+                        help='serve C=1 prompts sequentially in one loaded process')
+    parser.add_argument('--cache-root', help='root for the serving child compiler caches')
+    parser.add_argument('--wire-records', choices=('on', 'off'),
+                        help='write proposal wire records (serving default: on)')
+    parser.add_argument('--anatomy', choices=('on', 'off'),
+                        help='write per-read host anatomy (serving default: on)')
     parser.add_argument('--child-wall-seconds', type=float,
                         help='wall limit of the serve child, compile included (default: the launcher\'s)')
     args = parser.parse_args(argv)
@@ -4353,7 +4384,9 @@ def main(argv=None):
         else:
             overrides.append(setting)
     try:
-        record = resolve_read(names, overrides, output=args.output)
+        record = resolve_read(names, overrides, output=args.output,
+                              sequential_prompts=args.sequential_prompts, cache_root=args.cache_root,
+                              wire_records=args.wire_records, anatomy=args.anatomy)
         from jetspec.engines.jetspec_plus_plus.engine import Engine
         Engine.from_config(record['config'], sealed_record=args.resolve_only)
     except (ValueError, OSError) as error:
