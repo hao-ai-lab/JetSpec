@@ -11,7 +11,7 @@ import pytest
 def test_launch_overlay_preserves_launcher_precedence_and_rejects_missing_fields():
     from jetspec.engines.jetspec_plus_plus import entry
     from jetspec.engines.jetspec_plus_plus.run_config import RunConfig, launch_overlay
-    args = entry.parser().parse_args(['--config', 'reference-j1-r1',
+    args = entry.parser().parse_args(['--schedule', 'j1-r1', '--engine', 'reference',
                                      '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
     entry.resolve(args)
     overlay = launch_overlay({'JETSPEC_ROWS_CAP': '8'})
@@ -27,7 +27,7 @@ def test_launch_overlay_preserves_launcher_precedence_and_rejects_missing_fields
 def test_entry_maps_user_paths_without_loading_models():
     from jetspec.engines.jetspec_plus_plus import entry
     args = entry.parser().parse_args([
-        '--config', 'reference-j1-r1', '--target', '/target', '--drafter', '/draft',
+        '--schedule', 'j1-r1', '--engine', 'reference', '--target', '/target', '--drafter', '/draft',
         '--adapter', '/adapter', '--heads-bundle', '/heads',
         '--prompts-json', '/prompts.json', '--tokens', '2048', '--devices', '0,1',
         '--output-json', '/read.json'])
@@ -39,15 +39,30 @@ def test_entry_maps_user_paths_without_loading_models():
     assert argv[argv.index('--tokens') + 1] == '2048'
 
 
-@pytest.mark.parametrize('config', ['a100-j1-r0', 'b200-j1-r1', 'reference-j1-r1', 'ar',
-                                  'a100-27b-j1-r1', 'b200-27b-j1-r1', 'ar-27b'])
-def test_supported_aliases_resolve_with_persistent_cache_and_knobs(config, monkeypatch):
+def _host(tmp_path, family):
+    path = tmp_path / f'host-{family}.json'
+    path.write_text(json.dumps({'cuda_arch': '10.0' if family == 'sm100' else '8.0',
+                                'environment': {}, 'artifacts': {}}))
+    return str(path)
+
+
+def _entry_keys():
     from jetspec.engines.jetspec_plus_plus import entry
+    return sorted(entry.RECIPES)
+
+
+@pytest.mark.parametrize('key', _entry_keys())
+def test_every_supported_combination_resolves_with_persistent_cache_and_knobs(key, tmp_path, monkeypatch):
+    from jetspec.engines.jetspec_plus_plus import entry
+    model, schedule, engine, family = key
     monkeypatch.setenv('JSPP_CACHE_ROOT', '/persistent-cache')
     args = entry.parser().parse_args([
-        '--config', config, '--prompts-json', '/prompts.json', '--output-json', '/read.json',
+        '--model', model, '--schedule', schedule, '--engine', engine,
+        '--host-values', _host(tmp_path, family),
+        '--prompts-json', '/prompts.json', '--output-json', '/read.json',
         '--knob', 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'])
     recipe, argv, _ = entry.resolve(args)
+    assert argv[argv.index('--recipe') + 1] == entry.RECIPES[key]
     assert args._record['config']['engine']['cutoffs'] is True
     assert argv[argv.index('--cache-root') + 1] == '/persistent-cache'
     assert argv[argv.index('--knob') + 1] == 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'
@@ -58,10 +73,9 @@ def test_supported_aliases_resolve_with_persistent_cache_and_knobs(config, monke
         assert argv[argv.index('--devices') + 1] == '0'
 
 
-def test_a100_alias_keeps_the_pinned_schedule_and_thresholds():
+def test_sm80_default_keeps_the_pinned_schedule_and_thresholds():
     from jetspec.engines.jetspec_plus_plus import entry
-    args = entry.parser().parse_args(['--config', 'a100-j1-r0',
-                                     '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
+    args = entry.parser().parse_args(['--prompts-json', '/prompts.json', '--output-json', '/read.json'])
     recipe, _, _ = entry.resolve(args)
     assert args._record['config']['method']['schedule'] == {'j': 1, 'r': 0}
     assert args._record['config']['model']['thresholds_sha256'] == recipe['thresholds_sha256']
@@ -77,7 +91,7 @@ def test_host_values_do_not_gain_an_empty_release_override(tmp_path):
     from jetspec.engines.jetspec_plus_plus import entry
     path = tmp_path / 'host.json'
     path.write_text(json.dumps({'cuda_arch': '8.0', 'environment': {}, 'artifacts': {}}))
-    args = entry.parser().parse_args(['--config', 'a100-27b-j1-r1', '--host-values', str(path),
+    args = entry.parser().parse_args(['--model', 'qwen3.8-27b', '--host-values', str(path),
                                      '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
     recipe, _, host = entry.resolve(args)
     assert recipe['target_release_artifact'] not in host['artifacts']
@@ -124,9 +138,25 @@ def test_entry_selects_architecture_from_the_granted_gpu(monkeypatch):
     monkeypatch.setattr(torch.cuda, 'get_device_capability', capability)
     args = entry.parser().parse_args(['--devices', '3,4',
                                      '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
-    _, _, host = entry.resolve(args)
-    assert args.config == 'b200-j1-r1'
+    _, argv, host = entry.resolve(args)
+    assert (args.model, args.schedule, args.engine) == ('qwen3-8b', 'j1-r1', 'fast')
+    assert argv[argv.index('--recipe') + 1] == entry.RECIPES[('qwen3-8b', 'j1-r1', 'fast', 'sm100')]
     assert host['cuda_arch'] == '10.0'
+
+
+def test_unsupported_combination_names_the_supported_ones(tmp_path):
+    from jetspec.engines.jetspec_plus_plus import entry
+    args = entry.parser().parse_args(['--schedule', 'j1-r1', '--host-values', _host(tmp_path, 'sm80'),
+                                     '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
+    with pytest.raises(SystemExit, match='supported here:.*--schedule j1-r0'):
+        entry.resolve(args)
+
+
+def test_no_entry_names_a_machine():
+    from jetspec.engines.jetspec_plus_plus import entry
+    import re
+    text = ' '.join(' '.join(key) for key in entry.RECIPES)
+    assert not re.search(r'a100|b200|gb200|h100|h200', text)
 
 
 def test_source_revision_is_null_outside_git_without_receipt(tmp_path, monkeypatch):
@@ -181,24 +211,27 @@ def test_long_decode_allocates_and_releases_additional_blocks(monkeypatch, is_dr
     assert manager.used_block_ids == set()
 
 
-@pytest.mark.parametrize('config,baseline', [('reference-j1-r1', 'ar'), ('a100-27b-j1-r1', 'ar-27b')])
-def test_speedup_uses_matching_ar_baseline_and_stops_at_eos(config, baseline, tmp_path):
+@pytest.mark.parametrize('model,schedule,engine', [('qwen3-8b', 'j1-r1', 'reference'),
+                                                   ('qwen3.8-27b', 'j1-r1', 'fast')])
+def test_speedup_uses_matching_ar_baseline_and_stops_at_eos(model, schedule, engine, tmp_path):
     from bench.jetspec_plus_plus import speedup
     calls = []
 
     def run(command, **kwargs):
         calls.append(command)
         output = Path(command[command.index('--output-json') + 1])
-        selected = command[command.index('--config') + 1]
-        rate = 50.0 if selected == baseline else 200.0
+        selected = command[command.index('--schedule') + 1]
+        rate = 50.0 if selected == 'ar' else 200.0
         output.write_text(json.dumps({'outputs': [{'token_ids': [1, 2]}] * 2,
             'metrics': {'serve_read': {'measured': {'decode_tok_s': rate}}}}))
 
-    assert speedup.main(['--config', config, '--target', '/target', '--drafter', '/draft',
+    assert speedup.main(['--model', model, '--schedule', schedule, '--engine', engine, '--target', '/target', '--drafter', '/draft',
                          '--prompts-json', '/prompts.json', '--output-dir', str(tmp_path),
                          '--knob', 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'], run=run) == 0
     ar, method = calls
-    assert ar[ar.index('--config') + 1] == baseline
+    assert ar[ar.index('--schedule') + 1] == 'ar'
+    assert ar[ar.index('--model') + 1] == method[method.index('--model') + 1] == model
+    assert '--engine' not in ar and method[method.index('--engine') + 1] == engine
     assert '--drafter' not in ar and '--knob' not in ar
     assert '--drafter' in method and '--knob' in method
     for command in calls:

@@ -18,7 +18,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument('--config', help='JetSpec++ configuration; defaults by device architecture')
+    result.add_argument('--model', default='qwen3-8b', help='target model (as in the engine entry)')
+    result.add_argument('--schedule', help='JetSpec++ J/R schedule; defaults to the fastest measured one')
+    result.add_argument('--engine', default='fast', help='fast or reference')
     for role in ('target', 'drafter', 'adapter', 'heads-bundle', 'target-release', 'host-values'):
         result.add_argument('--' + role)
     result.add_argument('--prompts-json', required=True)
@@ -35,15 +37,18 @@ def parser():
     return result
 
 
-def engine_command(args, config, output):
+def engine_command(args, schedule, output):
     command = [sys.executable, '-m', 'jetspec.engines.jetspec_plus_plus',
                '--prompts-json', args.prompts_json, '--dataset', args.dataset,
                '--count', str(args.count), '--tokens', str(args.tokens),
                '--devices', args.devices, '--output-json', str(output),
                '--stop-at-eos', args.stop_at_eos]
-    if config:
-        command += ['--config', config]
-    roles = ('target', 'host_values') if config in ('ar', 'ar-27b') else (
+    command += ['--model', args.model]
+    if schedule:
+        command += ['--schedule', schedule]
+    if schedule != 'ar':
+        command += ['--engine', args.engine]
+    roles = ('target', 'host_values') if schedule == 'ar' else (
         'target', 'drafter', 'adapter', 'heads_bundle', 'target_release', 'host_values')
     for role in roles:
         value = getattr(args, role)
@@ -51,7 +56,7 @@ def engine_command(args, config, output):
             command += ['--' + role.replace('_', '-'), value]
     if args.cache_root:
         command += ['--cache-root', args.cache_root]
-    if config not in ('ar', 'ar-27b'):
+    if schedule != 'ar':
         for knob in args.knob:
             command += ['--knob', knob]
     return command
@@ -70,16 +75,15 @@ def main(argv=None, *, run=subprocess.run):
     environment = dict(os.environ, PYTHONPATH=os.pathsep.join(
         filter(None, [str(ROOT), os.environ.get('PYTHONPATH')])))
     reads = {}
-    baseline = 'ar-27b' if args.config and '27b' in args.config else 'ar'
-    for name, config in (('ar', baseline), ('jetspec_plus_plus', args.config)):
+    for name, schedule in (('ar', 'ar'), ('jetspec_plus_plus', args.schedule)):
         path = output / f'{name}.json'
-        run(engine_command(args, config, path), cwd=ROOT, env=environment, check=True)
+        run(engine_command(args, schedule, path), cwd=ROOT, env=environment, check=True)
         reads[name] = decode_tok_s(path)
     ar, _ = reads['ar']
     method, outputs = reads['jetspec_plus_plus']
     result = dict(ar_decode_tok_s=ar, jetspec_plus_plus_decode_tok_s=method,
                   speedup=method / ar, prompts=len(outputs), tokens=args.tokens,
-                  config=args.config, devices=args.devices, stop_at_eos=args.stop_at_eos,
+                  model=args.model, schedule=args.schedule, engine=args.engine, devices=args.devices, stop_at_eos=args.stop_at_eos,
                   knobs=args.knob,
                   baseline='graphed AR, same engine and GPU type, one GPU')
     (output / 'speedup.json').write_text(json.dumps(result, indent=2) + '\n')
