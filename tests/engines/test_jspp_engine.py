@@ -41,8 +41,10 @@ def test_entry_maps_user_paths_without_loading_models():
 
 def _host(tmp_path, family):
     path = tmp_path / f'host-{family}.json'
-    path.write_text(json.dumps({'cuda_arch': '10.0' if family == 'sm100' else '8.0',
-                                'environment': {}, 'artifacts': {}}))
+    host = {'cuda_arch': '8.0' if family == 'sm80' else '10.0', 'environment': {}, 'artifacts': {}}
+    if family == 'sm100-aarch64':
+        host['machine'] = 'aarch64'
+    path.write_text(json.dumps(host))
     return str(path)
 
 
@@ -62,7 +64,13 @@ def test_every_supported_combination_resolves_with_persistent_cache_and_knobs(ke
         '--prompts-json', '/prompts.json', '--output-json', '/read.json',
         '--knob', 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'])
     recipe, argv, _ = entry.resolve(args)
-    assert argv[argv.index('--recipe') + 1] == entry.RECIPES[key]
+    expected = entry.RECIPES[key]
+    if isinstance(expected, dict):
+        # A release composition resolves through its own config names, with passes J + 1.
+        assert args._record['config']['method']['schedule']['j'] == 1
+        assert recipe['passes'] == 2
+    else:
+        assert argv[argv.index('--recipe') + 1] == expected
     assert args._record['config']['engine']['cutoffs'] is True
     assert argv[argv.index('--cache-root') + 1] == '/persistent-cache'
     assert argv[argv.index('--knob') + 1] == 'SSD_SHARED_GPU_KV_UTILIZATION=0.1'
@@ -140,7 +148,7 @@ def test_entry_selects_architecture_from_the_granted_gpu(monkeypatch):
                                      '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
     _, argv, host = entry.resolve(args)
     assert (args.model, args.schedule, args.engine) == ('qwen3-8b', 'j1-r1', 'fast')
-    assert argv[argv.index('--recipe') + 1] == entry.RECIPES[('qwen3-8b', 'j1-r1', 'fast', 'sm100')]
+    assert argv[argv.index('--recipe') + 1] == 'jetspecpp-graphed-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6'
     assert host['cuda_arch'] == '10.0'
 
 
@@ -176,7 +184,11 @@ import torch
 os.environ.setdefault('SSD_HF_CACHE', '/tmp/unused-import-hf')
 os.environ.setdefault('SSD_DATASET_DIR', '/tmp/unused-import-datasets')
 root = Path(sys.argv[1])
-paths = sorted((root / 'jetspec/engines/jetspec_plus_plus').rglob('*.py'))
+# CuTe DSL kernels that their callers import lazily, on CUDA only.
+cuda_only = {'kernels/nvfp4/_k1_kernel.py'}
+package = root / 'jetspec/engines/jetspec_plus_plus'
+paths = [path for path in sorted(package.rglob('*.py'))
+         if str(path.relative_to(package)) not in cuda_only]
 for path in paths:
     name = '.'.join(path.relative_to(root).with_suffix('').parts).removesuffix('.__init__')
     importlib.import_module(name)

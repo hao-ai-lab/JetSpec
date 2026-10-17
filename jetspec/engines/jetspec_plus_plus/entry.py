@@ -7,15 +7,25 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parent
-# (model, schedule, engine, kernel family) -> validated serving recipe. The kernel family
-# comes from the GPU compute capability, so no entry names a machine.
+# (model, schedule, engine, kernel family) -> a validated serving composition (a dict of config
+# names, as in the release commands) or a named recipe. The kernel family comes from the GPU
+# compute capability and, for 10.x, the host CPU architecture, so no entry names a machine.
 RECIPES = {
-    ('qwen3-8b', 'j1-r0', 'fast', 'sm80'): 'jetspecpp-graphed-pair-e6-b16-chain-r4-j1-lean-sm80',
-    ('qwen3-8b', 'j1-r1', 'fast', 'sm100'): 'jetspecpp-graphed-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6',
+    ('qwen3-8b', 'j1-r0', 'fast', 'sm80'): dict(
+        method='jetspecpp-j1r0-b16', model='qwen3-8b-e6v2-b16', engine='fast-sm80',
+        hardware='a100-pair', benchmark='table3-gsm8k-first32'),
+    ('qwen3-8b', 'j1-r1', 'fast', 'sm100'): dict(
+        method='jetspecpp-j1r1-b16-serve', model='qwen3-8b-e6-b16', engine='fast-sm100',
+        hardware='b200-pair', benchmark='gsm8k-128'),
+    ('qwen3-8b', 'j1-r1', 'fast', 'sm100-aarch64'): dict(
+        method='jetspecpp-j1r1-b16-floor4', model='qwen3-8b-e6-b16', engine='fast-sm100',
+        hardware='gb200-pair', benchmark='gsm8k-128'),
     ('qwen3-8b', 'j1-r1', 'reference', 'sm80'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
     ('qwen3-8b', 'j1-r1', 'reference', 'sm100'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
+    ('qwen3-8b', 'j1-r1', 'reference', 'sm100-aarch64'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
     ('qwen3-8b', 'ar', 'fast', 'sm80'): 'ar-graphed',
     ('qwen3-8b', 'ar', 'fast', 'sm100'): 'ar-graphed',
+    ('qwen3-8b', 'ar', 'fast', 'sm100-aarch64'): 'ar-graphed',
     ('qwen3.8-27b', 'j1-r1', 'fast', 'sm80'): 'jetspecpp-graphed-pair-27b-base800k-cal28-b16-j1r1-sm80',
     ('qwen3.8-27b', 'j1-r1', 'fast', 'sm100'): 'jetspecpp-graphed-pair-27b-drafter6ep-base800k-j1r1-swap-mr-fast',
     ('qwen3.8-27b', 'ar', 'fast', 'sm80'): 'ar-hybrid27b-fast-graphed-sm80',
@@ -23,6 +33,7 @@ RECIPES = {
 }
 # The fastest measured schedule when --schedule is not given.
 DEFAULT_SCHEDULE = {('qwen3-8b', 'sm80'): 'j1-r0', ('qwen3-8b', 'sm100'): 'j1-r1',
+                    ('qwen3-8b', 'sm100-aarch64'): 'j1-r1',
                     ('qwen3.8-27b', 'sm80'): 'j1-r1', ('qwen3.8-27b', 'sm100'): 'j1-r1'}
 MODELS = ('qwen3-8b', 'qwen3.8-27b')
 SCHEDULES = ('j1-r0', 'j1-r1', 'ar')
@@ -63,12 +74,15 @@ def _device_arch(devices):
     return f'{major}.{minor}'
 
 
-def kernel_family(arch):
-    """The kernel family of a compute capability: sm100 for 10.x and newer, else sm80."""
+def kernel_family(arch, machine=None):
+    """The kernel family: sm80 for 8.x, sm100 for 10.x, sm100-aarch64 for 10.x on an Arm host."""
+    import platform
     major = int(str(arch).split('.')[0])
     if major < 8:
         raise SystemExit(f'compute capability {arch} is below the supported 8.0')
-    return 'sm100' if major >= 10 else 'sm80'
+    if major < 10:
+        return 'sm80'
+    return 'sm100-aarch64' if (machine or platform.machine()) == 'aarch64' else 'sm100'
 
 
 def resolve(args):
@@ -76,7 +90,7 @@ def resolve(args):
     host = json.loads(Path(args.host_values).read_text()) if args.host_values else None
     arch = host.get('cuda_arch') if host else None
     arch = arch or _device_arch(args.devices)
-    family = kernel_family(arch)
+    family = kernel_family(arch, host.get('machine') if host else None)
     if args.schedule is None:
         args.schedule = DEFAULT_SCHEDULE[(args.model, family)]
     key = (args.model, args.schedule, args.engine, family)
@@ -85,11 +99,15 @@ def resolve(args):
                            for m, s, e, f in RECIPES if f == family)
         raise SystemExit(f'no validated recipe for {key} on compute capability {arch}; '
                          'supported here: ' + '; '.join(supported))
-    name = RECIPES[key]
+    entry = RECIPES[key]
+    name = entry if isinstance(entry, str) else None
     # Adaptation: artifact paths and byte pins select local files; unread repository labels are neutral.
-    rows = json.loads((ROOT / 'read/recipe-index.json').read_text())['rows']
-    row = next(row for row in rows if row['launch']['name'] == name)
-    autoregressive = row['launch']['method'] == 'ar'
+    if name is None:
+        row = dict(names=dict(entry), overrides=[], launch=None)
+    else:
+        rows = json.loads((ROOT / 'read/recipe-index.json').read_text())['rows']
+        row = next(row for row in rows if row['launch']['name'] == name)
+    autoregressive = args.schedule == 'ar'
     if args.placement is None:
         args.placement = 'one_gpu' if autoregressive else 'pair'
     if autoregressive:
@@ -103,6 +121,7 @@ def resolve(args):
                           launch=row['launch'], output=args.output_json)
     args._record = record
     recipe = record['recipe']
+    name = name or recipe['name']
     host = host if host is not None else {
         'schema': 'jetspec.serve_host_values/1', 'cuda_arch': arch,
         'rendezvous_mode': 'host_port', 'environment': {}, 'artifacts': {}}

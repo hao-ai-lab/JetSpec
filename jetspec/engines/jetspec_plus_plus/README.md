@@ -4,7 +4,19 @@ The serving engine packages the authors' model, draft, verification, scheduling,
 and transport implementation for local inference. It includes dense 8B targets
 and a preview of hybrid 27B serving.
 
-Install `.[jetspec-plus-plus-engine]` with a CUDA 12.8 PyTorch package index.
+Install the exact measured environment, then this package, without dependency
+resolution. A resolved install picks other versions and can change the output
+tokens.
+
+```sh
+# Linux x86_64 (A100, B200)
+python -m pip install --no-deps -r jetspec/engines/jetspec_plus_plus/requirements-x86_64.lock
+# Linux aarch64 (GB200)
+python -m pip install --no-deps -r jetspec/engines/jetspec_plus_plus/requirements-gb200-aarch64.lock \
+  --extra-index-url https://download.pytorch.org/whl/cu128
+python -m pip install --no-deps -e .
+```
+
 Serving requires Linux, two CUDA GPUs with peer access, a CUDA compiler, and
 ninja. The 27B preview also requires the target's hybrid attention dependencies.
 CPU imports defer accelerator dependencies; execution requires the real kernels.
@@ -24,12 +36,13 @@ Choose the target with `--model` (`qwen3-8b`, or `qwen3.8-27b` as a preview), th
 J/R schedule with `--schedule`, and the verification with `--engine` (`fast` uses
 CUDA graphs, `reference` checks every round against plain verification). The
 engine picks its kernels from the GPU compute capability: 8.x uses the sm80
-kernels and 10.x the sm100 kernels.
+kernels and 10.x the sm100 kernels; a 10.x GPU on an Arm host (GB200) uses its
+own serving configuration.
 
 | `--model` | `--schedule` | `--engine` | Compute capability |
 | --- | --- | --- | --- |
 | `qwen3-8b` | `j1-r0` (default on 8.x) | `fast` | 8.x |
-| `qwen3-8b` | `j1-r1` (default on 10.x) | `fast` | 10.x |
+| `qwen3-8b` | `j1-r1` (default on 10.x) | `fast` | 10.x, 10.x on Arm |
 | `qwen3-8b` | `j1-r1` | `reference` | 8.x, 10.x |
 | `qwen3.8-27b` | `j1-r1` (default) | `fast` | 8.x, 10.x |
 | either | `ar` (graphed autoregressive baseline, one GPU) | `fast` | 8.x, 10.x |

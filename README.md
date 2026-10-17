@@ -250,7 +250,7 @@ target, so the output is identical to greedy autoregressive decoding.
 | Path | Code | Install extra | Guide |
 |---|---|---|---|
 | Torch reference method | `jetspec/methods/jetspec_plus_plus/` | `jetspec-plus-plus` | [method README](jetspec/methods/jetspec_plus_plus/README.md) |
-| Serving engine (Qwen3-8B, Qwen3.8-27B preview) | `jetspec/engines/jetspec_plus_plus/` | `jetspec-plus-plus-engine` | [engine README](jetspec/engines/jetspec_plus_plus/README.md) |
+| Serving engine (Qwen3-8B, Qwen3.8-27B preview) | `jetspec/engines/jetspec_plus_plus/` | per-platform lock file | [engine README](jetspec/engines/jetspec_plus_plus/README.md) |
 
 ## Results
 
