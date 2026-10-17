@@ -2500,7 +2500,8 @@
         "allowed": [
           "bf16",
           "fq_w4a16",
-          "fq_w4a4"
+          "fq_w4a4",
+          "nvfp4_w4a4"
         ],
         "reader": "serve",
         "note": "target projection precision"
@@ -2512,7 +2513,8 @@
         "allowed": [
           "bf16",
           "fq_w4a16",
-          "fq_w4a4"
+          "fq_w4a4",
+          "nvfp4_w4a16"
         ],
         "reader": "serve",
         "note": "draft projection precision"
@@ -2524,7 +2526,8 @@
         "allowed": [
           "bf16",
           "fq_w4a16",
-          "fq_w4a4"
+          "fq_w4a4",
+          "nvfp4_w4a16"
         ],
         "reader": "serve",
         "note": "target and draft vocabulary projection precision"

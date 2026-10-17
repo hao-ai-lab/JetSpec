@@ -15,14 +15,14 @@ class ActivationWorkspace:
     partial_amax: torch.Tensor
 
     @classmethod
-    def allocate(cls, rows: int, k: int, device) -> ActivationWorkspace:
+    def allocate(cls, rows: int, k: int, device, *, per_row=False) -> ActivationWorkspace:
         if rows <= 0 or k <= 0 or k % 16:
             raise ValueError("activation workspace needs positive rows and K divisible by 16")
         value = NVFP4Tensor(
             torch.empty((rows, k // 2), dtype=torch.uint8, device=device),
             torch.empty((rows, k // 16), dtype=torch.float8_e4m3fn, device=device),
             torch.empty(scale_shape(rows, k // 16), dtype=torch.float8_e4m3fn, device=device),
-            torch.empty((1,), dtype=torch.float32, device=device),
+            torch.empty((rows if per_row else 1,), dtype=torch.float32, device=device),
         )
         return cls(value, torch.empty(((rows * k + 1023) // 1024,), dtype=torch.float32, device=device))
 
@@ -52,6 +52,28 @@ def quantize_activation(x: torch.Tensor, *, workspace: ActivationWorkspace | Non
                 (reference.data, reference.block_scales, reference.swizzled_scales, reference.global_scale)):
             target.copy_(source)
     return workspace.value
+
+
+@torch.no_grad()
+def quantize_activation_rows(x: torch.Tensor, *, workspace: ActivationWorkspace) -> NVFP4Tensor:
+    """Pack the same independent row rounding as fake_quantize_activation."""
+    _check_matrix(x)
+    value = workspace.value
+    if (not x.is_contiguous() or value.shape != tuple(x.shape)
+            or value.data.device != x.device or value.global_scale.shape != (x.shape[0],)):
+        raise ValueError('per-row activation workspace shape/device/layout mismatch')
+    if x.is_cuda:
+        from .cuda_quant import quantize_rows_into
+        quantize_rows_into(x, workspace)
+    else:
+        from .format import swizzle_scales
+        maximum = x.float().abs().amax(-1)
+        value.global_scale.copy_(torch.where(maximum == 0, 1., maximum / (6 * 448)))
+        data, scales = _quantize_chunk(x, value.global_scale[:, None])
+        value.data.copy_(data)
+        value.block_scales.copy_(scales)
+        value.swizzled_scales.copy_(swizzle_scales(scales))
+    return value
 
 
 @torch.no_grad()

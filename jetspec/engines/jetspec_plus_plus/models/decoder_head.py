@@ -1435,6 +1435,9 @@ class AnchorDecoder(MethodAnchorDecoder):
         rotary = Qwen3RotaryEmbedding(config, device=device).to(device=device)
         if any(buffer.device != device for buffer in rotary.buffers()):
             raise RuntimeError('decoder rotary buffers are not on the runner device')
+        from jetspec.engines.jetspec_plus_plus.models.target_linear import round_nvfp4_weights
+        for module, role in ((layers, 'draft'), (prefix_layers, 'draft'), (lm_head, 'lm_head')):
+            round_nvfp4_weights(module, role)
         if setting(run_config, 'engine', 'engine_settings.heads_fast', None) == '1':
             from jetspec.engines.jetspec_plus_plus.models.fast import read_thresholds
             read_thresholds(run_config)

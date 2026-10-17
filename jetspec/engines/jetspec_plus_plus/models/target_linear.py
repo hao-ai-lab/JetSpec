@@ -34,6 +34,8 @@ class ProjectionPrecision:
     warmed_m_buckets: set[int] = field(default_factory=set)
     _weights: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     _activations: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    _packed_weights: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    _plans: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @classmethod
     def from_config(cls, run_config, role):
@@ -44,33 +46,46 @@ class ProjectionPrecision:
                'lm_head': 'engine_settings.precision_lm_head'}[role]
         mode = setting(run_config, 'engine', key, 'bf16')
         return cls(WeightFormat(mode=mode,
-            activation_scale_policy='per_row' if mode == 'fq_w4a4' else None),
+            activation_scale_policy='per_row' if mode in ('fq_w4a4', 'nvfp4_w4a4') else None),
             fake_quant=mode in ('fq_w4a16', 'fq_w4a4'))
 
-    def _weight(self, weight):
+    def _weight(self, weight, *, dtype=None):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import fake_quantize
         # Slices of packed stacks and KN transposes are recreated by callers.
         # Retain the source to keep its storage alive and key views by layout.
         key = (weight.data_ptr(), tuple(weight.shape), tuple(weight.stride()),
                weight.dtype, weight.device)
-        if key not in self._weights:
+        cache_key = key if dtype is None else (key, dtype)
+        if cache_key not in self._weights:
             if weight.is_cuda and torch.cuda.is_current_stream_capturing():
                 raise RuntimeError('warm the projection weight before CUDA graph capture')
-            self._weights[key] = (weight.detach(), fake_quantize(
-                weight.reshape(-1, weight.shape[-1]).to(torch.bfloat16))
-                .reshape(weight.shape).to(weight.dtype))
-        return self._weights[key][1]
+            if self.weight_format.mode == 'nvfp4_w4a4':
+                from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import dequantize
+                rounded = dequantize(self._packed_weight(weight, key)).to(dtype or weight.dtype)
+            elif self.weight_format.mode == 'nvfp4_w4a16':
+                rounded = _nvfp4_weight_only(self, weight, key)
+            else:
+                rounded = fake_quantize(weight.reshape(-1, weight.shape[-1]).to(torch.bfloat16))
+                rounded = rounded.reshape(weight.shape).to(weight.dtype)
+            self._weights[cache_key] = (weight.detach(), rounded)
+        return self._weights[cache_key][1]
+
+    def _packed_weight(self, weight, key):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import quantize_weight
+        if key not in self._packed_weights:
+            self._packed_weights[key] = (weight.detach(), quantize_weight(weight.to(torch.bfloat16)))
+        return self._packed_weights[key][1]
 
     def _inputs(self, x, weight):
         mode = self.weight_format.mode
-        if mode not in ('fq_w4a16', 'fq_w4a4'):
+        if mode not in ('fq_w4a16', 'fq_w4a4', 'nvfp4_w4a4', 'nvfp4_w4a16'):
             if self.fake_quant:
                 raise NotImplementedError('fake quant requires fq_w4a16 or fq_w4a4')
             if mode != 'bf16':
                 raise NotImplementedError(mode)
             return x, weight
-        weight = self._weight(weight)
-        if mode == 'fq_w4a4':
+        weight = self._weight(weight, dtype=x.dtype) if mode == 'nvfp4_w4a4' else self._weight(weight)
+        if mode in ('fq_w4a4', 'nvfp4_w4a4'):
             from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.activation import fake_quantize_activation
             source = x.reshape(-1, x.shape[-1]).to(torch.bfloat16).contiguous()
             key = (tuple(source.shape), x.dtype, x.device)
@@ -82,12 +97,32 @@ class ProjectionPrecision:
         return x, weight
 
     def linear(self, x, weight, bias, *, implementation=None):
+        if self.weight_format.mode == 'nvfp4_w4a4' and x.numel() // x.shape[-1] <= 80:
+            return self._nvfp4_linear(x, weight, bias)
         x, weight = self._inputs(x, weight)
         if implementation is not None:
             if bias is None:
                 return implementation(x, weight)
             return implementation(x, weight, bias)
         return F.linear(x, weight, bias)
+
+    def _nvfp4_linear(self, x, weight, bias):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4 import K1Plan
+        source = x.reshape(-1, x.shape[-1]).to(torch.bfloat16).contiguous()
+        key = (weight.data_ptr(), tuple(weight.shape), tuple(weight.stride()),
+               weight.dtype, weight.device)
+        plan_key = (key, source.shape[0])
+        if plan_key not in self._plans:
+            if x.is_cuda and torch.cuda.is_current_stream_capturing():
+                raise RuntimeError('warm the NVFP4 projection M bucket before CUDA graph capture')
+            plan = K1Plan(self._packed_weight(weight, key), source.shape[0], per_row_scale=True)
+            plan.warmup(source)
+            self._plans[plan_key] = plan
+            self.warmed_m_buckets.add(source.shape[0])
+        output = self._plans[plan_key](source).reshape(*x.shape[:-1], weight.shape[0])
+        if bias is not None:
+            output = output + bias
+        return output.to(x.dtype)
 
     def bmm(self, x, weight):
         x, weight = self._inputs(x, weight)
@@ -112,9 +147,219 @@ def log_precision_exclusions(engine):
     if modes == ('bf16', 'bf16', 'bf16') or modes in _logged_precision:
         return
     _logged_precision.add(modes)
+    # nvfp4_w4a16 rounds the stored draft-lane weights at load, so every kernel reads them.
+    bypass = [site for site, role in (('c1_native_loop', 1), ('c1_fused_direct_linear', 1),
+              ('packed_qkv_kv', 1), ('drafter_lmhead', 2), ('compact_head', 2))
+              if modes[role] != 'nvfp4_w4a16']
     print(f'PROJECTION_PRECISION target={modes[0]} draft={modes[1]} lm_head={modes[2]} '
-          'bf16_bypass=c1_native_loop,c1_fused_direct_linear,packed_qkv_kv,'
-          'drafter_lmhead,compact_head,comparison_linears,blockhead', flush=True)
+          f'bf16_bypass={",".join(bypass + ["comparison_linears", "blockhead"])}'
+          + (' target_verify_head=bf16' if modes[2] == 'nvfp4_w4a16' else ''), flush=True)
+
+
+class _WeightRows:
+    """Exact row fingerprints of draft-lane weights before and after NVFP4 rounding.
+
+    A row key is an int64 dot product of the row's 16-bit patterns with fixed
+    coefficients below 2**33, so no sum overflows and every copy of a row
+    (packs, stacks, KN transposes) has the same key on any device.
+    """
+
+    def __init__(self):
+        self.original, self.rounded, self.kept, self.names = {}, {}, {}, []
+        self._coefficients = {}
+
+    def keys(self, rows):
+        rows = rows.reshape(-1, rows.shape[-1])
+        width = rows.shape[-1]
+        if (width, rows.device) not in self._coefficients:
+            generator = torch.Generator().manual_seed(689 + width)
+            self._coefficients[width, rows.device] = torch.randint(
+                1, 2 ** 33, (width,), generator=generator, dtype=torch.int64).to(rows.device)
+        coefficients = self._coefficients[width, rows.device]
+        keys = torch.empty(rows.shape[0], dtype=torch.int64, device=rows.device)
+        for start in range(0, rows.shape[0], 1024):
+            bits = rows[start:start + 1024].contiguous().view(torch.int16).long()
+            keys[start:start + 1024] = (bits * coefficients).sum(-1)
+        return keys * 16411 + width
+
+    def add(self, table, weight):
+        table.setdefault(weight.shape[-1], []).append(self.keys(weight.detach()))
+
+    def member(self, table, keys, width):
+        stored = table.get(width)
+        if not stored:
+            return torch.zeros_like(keys, dtype=torch.bool)
+        if len(stored) > 1:
+            stored[:] = [torch.cat([item.to(keys.device) for item in stored]).unique()]
+        return torch.isin(keys, stored[0].to(keys.device))
+
+    def rounded_only(self, weight):
+        """True when every row is a stored rounded row: a pack or view of converted weights."""
+        if weight.dtype not in (torch.bfloat16, torch.float16) or weight.shape[-1] not in self.rounded:
+            return False
+        keys = self.keys(weight.detach())
+        return bool(self.member(self.rounded, keys, weight.shape[-1]).all())
+
+
+_weight_rows = _WeightRows()
+
+
+def _nvfp4_weight_only(precision, weight, key):
+    """Weight-only NVFP4: weights rounded at load pass through; others use a dequantized pack."""
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import dequantize
+    if _weight_rows.rounded_only(weight):
+        return weight.detach()
+    rows = weight.detach().reshape(-1, weight.shape[-1]).to(torch.bfloat16)
+    if key not in precision._packed_weights:
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import quantize_weight
+        precision._packed_weights[key] = (weight.detach(), quantize_weight(rows))
+    return dequantize(precision._packed_weights[key][1]).reshape(weight.shape).to(weight.dtype)
+
+
+@torch.no_grad()
+def round_nvfp4_weights(module, role):
+    """Store NVFP4-rounded weights in place for roles set to nvfp4_w4a16.
+
+    Call after checkpoint load and before any pack, stack or KN copy is built,
+    so every draft-lane kernel (native loops, Triton heads, packed GEMMs) reads
+    the rounded values with its kernel unchanged. Each parameter keeps its pack
+    on its precision. Embeddings, norms and biases are not projections and stay.
+    """
+    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import dequantize, quantize_weight
+    engine = current_engine()
+    if 'nvfp4_w4a16' not in (engine.precision_draft, engine.precision_lm_head):
+        return 0
+    rounded = 0
+    for name, child in module.named_modules():
+        if not isinstance(child, (nn.Linear, TargetLinear)):
+            continue
+        weight = child.weight
+        if (weight.dtype != torch.bfloat16 or weight.ndim != 2 or weight.shape[1] % 16
+                or getattr(weight, '_nvfp4_rounded', False)):
+            continue
+        if isinstance(child, TargetLinear):
+            precision = child.precision
+        else:
+            selected = 'lm_head' if name.rsplit('.', 1)[-1] == 'lm_head' else role
+            precision = bind_weight_role(weight, selected)
+        if precision.weight_format.mode != 'nvfp4_w4a16':
+            _weight_rows.add(_weight_rows.kept, weight)
+            continue
+        if _weight_rows.rounded_only(weight):
+            # A copy of a rounded weight (a decoder head built from the drafter head).
+            weight._nvfp4_rounded = True
+            continue
+        _weight_rows.add(_weight_rows.original, weight)
+        pack = quantize_weight(weight.detach())
+        weight.detach().copy_(dequantize(pack))
+        key = (weight.data_ptr(), tuple(weight.shape), tuple(weight.stride()), weight.dtype, weight.device)
+        precision._packed_weights[key] = (weight.detach(), pack)
+        _weight_rows.add(_weight_rows.rounded, weight)
+        _weight_rows.names.append((name, tuple(weight.shape)))
+        weight._nvfp4_rounded = True
+        rounded += 1
+    return rounded
+
+
+def _named_tensors(roots):
+    """Name tensors reachable from module and object attributes, depth-first."""
+    names, seen = {}, set()
+    stack = [(name, root, 0) for name, root in reversed(list(roots.items()))]
+    while stack:
+        name, value, depth = stack.pop()
+        if id(value) in seen or depth > 6:
+            continue
+        seen.add(id(value))
+        if isinstance(value, torch.Tensor):
+            names.setdefault((value.data_ptr(), tuple(value.shape), tuple(value.stride())), name)
+        elif isinstance(value, (list, tuple)):
+            stack.extend((f'{name}[{index}]', item, depth + 1) for index, item in enumerate(value))
+        elif isinstance(value, dict):
+            stack.extend((f'{name}[{key!r}]', item, depth + 1) for key, item in value.items()
+                         if isinstance(key, (str, int, tuple)))
+        elif isinstance(value, nn.Module) or hasattr(value, '__dict__'):
+            items = dict(vars(value)) if hasattr(value, '__dict__') else {}
+            if isinstance(value, nn.Module):
+                items.update(value._parameters)
+                items.update(value._buffers)
+                items.update(value._modules)
+                for key in ('_parameters', '_buffers', '_modules'):
+                    items.pop(key, None)
+            stack.extend((f'{name}.{key}', item, depth + 1) for key, item in items.items()
+                         if isinstance(item, (torch.Tensor, list, tuple, dict, nn.Module))
+                         or (hasattr(item, '__dict__') and type(item).__module__.startswith('jetspec')))
+    return names
+
+
+@torch.no_grad()
+def nvfp4_census(roots, device=None):
+    """Classify every live 16-bit matrix that holds draft-lane weight rows.
+
+    Scans the process's live tensors (and the named roots) for rows or KN columns
+    of weights seen by round_nvfp4_weights. A tensor is nvfp4 when all its weight
+    rows are rounded rows, bf16_kept when it holds rows of a role set to bf16, and
+    bf16_leftover when it still holds an original row of a rounded weight.
+    """
+    import gc
+    import warnings
+    names = _named_tensors(roots)
+    widths = set(_weight_rows.original) | set(_weight_rows.rounded) | set(_weight_rows.kept)
+    candidates, parameters = {}, set()
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        live = [value for value in gc.get_objects() if isinstance(value, torch.Tensor)]
+    for value in live:
+        try:
+            if value.dtype not in (torch.bfloat16, torch.float16) or value.ndim < 2 or value.is_meta:
+                continue
+            if device is not None and value.device != torch.device(device):
+                continue
+            key = (value.data_ptr(), tuple(value.shape), tuple(value.stride()))
+        except Exception:  # fake and functional tensors carry no storage
+            continue
+        candidates.setdefault(key, value)
+        if isinstance(value, nn.Parameter):
+            parameters.add(key)
+    rows = []
+    for key, value in candidates.items():
+        matched = False
+        for layout, matrix in (('rows', value), ('kn', value.t() if value.ndim == 2 else None)):
+            if matrix is None or matrix.shape[-1] not in widths:
+                continue
+            keys = _weight_rows.keys(matrix.detach())
+            width = matrix.shape[-1]
+            rounded = _weight_rows.member(_weight_rows.rounded, keys, width)
+            original = _weight_rows.member(_weight_rows.original, keys, width) & ~rounded
+            kept = _weight_rows.member(_weight_rows.kept, keys, width) & ~rounded
+            if not bool((rounded | original | kept).any()):
+                continue
+            matched = True
+            label = ('bf16_leftover' if bool(original.any()) else
+                     'bf16_kept' if bool(kept.any()) else 'nvfp4')
+            rows.append(dict(name=names.get(key, 'unnamed'), shape=tuple(value.shape), layout=layout,
+                             precision=label, weight_rows=int((rounded | original | kept).sum()),
+                             rounded_rows=int(rounded.sum()), original_rows=int(original.sum()),
+                             kept_rows=int(kept.sum())))
+        if not matched and key in parameters and value.ndim == 2:
+            # A matrix parameter no rounding pass saw: an embedding, or a GEMM weight to inspect.
+            rows.append(dict(name=names.get(key, 'unnamed'), shape=tuple(value.shape), layout='rows',
+                             precision='unseen_parameter', weight_rows=0, rounded_rows=0,
+                             original_rows=0, kept_rows=0))
+    return rows
+
+
+def report_nvfp4_census(roots, device=None):
+    """Print the census once per process; returns the bf16 leftover count."""
+    rows = nvfp4_census(roots, device)
+    for row in sorted(rows, key=lambda item: (item['precision'], item['name'])):
+        print('DRAFT_PRECISION_CENSUS ' + ' '.join(f'{key}={value}' for key, value in row.items()), flush=True)
+    counts = {label: sum(row['precision'] == label for row in rows)
+              for label in ('nvfp4', 'bf16_kept', 'bf16_leftover', 'unseen_parameter')}
+    print(f'DRAFT_PRECISION_CENSUS_SUMMARY rounded_weights={len(_weight_rows.names)} tensors={len(rows)} '
+          + ' '.join(f'{label}={count}' for label, count in counts.items())
+          + ' excluded=comparison_linears,blockhead,embeddings,norms,biases', flush=True)
+    return counts['bf16_leftover']
 
 
 def _precision_for_role(role):
@@ -123,7 +368,7 @@ def _precision_for_role(role):
         raise ValueError('projection role must be target, draft or lm_head')
     mode = getattr(current_engine(), 'precision_' + role)
     return ProjectionPrecision(WeightFormat(mode=mode,
-        activation_scale_policy='per_row' if mode == 'fq_w4a4' else None),
+        activation_scale_policy='per_row' if mode in ('fq_w4a4', 'nvfp4_w4a4') else None),
         fake_quant=mode in ('fq_w4a16', 'fq_w4a4'))
 
 
@@ -216,6 +461,9 @@ class TargetLinear(LinearBase):
         self.layout = layout
         self.precision_role = precision_role or ('lm_head' if layout == 'head' else 'target')
         self.precision = _precision_for_role(self.precision_role)
+        if layout == 'head' and self.precision.weight_format.mode == 'nvfp4_w4a16':
+            # Weight-only NVFP4 is a draft-lane mode: the target's verify head stays bf16.
+            self.precision = ProjectionPrecision()
         self.fp32_bf16_storage = fp32_bf16_storage
         if layout == 'replicated' and tp_size != 1:
             raise ValueError('replicated target projections currently require TP=1')
@@ -268,7 +516,8 @@ class TargetLinear(LinearBase):
         if self.fp32_bf16_storage:
             if x.dtype != torch.float32:
                 raise ValueError('FP32 projection storage requires FP32 activations')
-            weight = weight.float()
+            if self.precision.weight_format.mode != 'nvfp4_w4a4':
+                weight = weight.float()
             bias = None if bias is None else bias.float()
         return self.precision.linear(x, weight, bias)
 

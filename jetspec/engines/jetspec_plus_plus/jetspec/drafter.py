@@ -4014,6 +4014,10 @@ class FrozenC1H2HAdapter(FrozenH2HAdapter):
             for parameter in module.parameters():
                 parameter.requires_grad_(False)
         self._sealed_state_sha256 = tensor_state_sha256(self.head)
+        from jetspec.engines.jetspec_plus_plus.models.target_linear import round_nvfp4_weights
+        if round_nvfp4_weights(self.head, 'draft'):
+            # The pins cover the checkpoint; the seal then guards the rounded serving bytes.
+            self._sealed_state_sha256 = tensor_state_sha256(self.head)
         if kernel_enabled('fused_qkv', '1'):
             from jetspec.engines.jetspec_plus_plus.kernels.projections import prepare_kv_group
             layers = [layer for index, stream in enumerate(self.head.streams)
@@ -4443,6 +4447,9 @@ class JetSpecDrafter:
         for module_to_freeze in (head, embed_tokens, lm_head):
             for parameter in module_to_freeze.parameters():
                 parameter.requires_grad_(False)
+        from jetspec.engines.jetspec_plus_plus.models.target_linear import round_nvfp4_weights
+        round_nvfp4_weights(head, 'draft')
+        round_nvfp4_weights(lm_head, 'lm_head')
         if kernel_enabled('fused_qkv', '1'):
             from jetspec.engines.jetspec_plus_plus.kernels.projections import prepare_qkv
             for layer in head.layers:
@@ -4467,6 +4474,7 @@ class JetSpecDrafter:
             run_config=run_config)
             digest = adapter.assert_byte_identical()
             print(f"JETSPEC_ADAPTER_STATE_SHA256={digest}", flush=True)
+            round_nvfp4_weights(adapter.head, 'draft')
             check_rotary_agreement(head.rotary_emb.inv_freq, adapter.head.streams[0].rotary_emb.inv_freq,
                                    target_text_config=getattr(adapter.head, "target_text_config", None))
         return cls(

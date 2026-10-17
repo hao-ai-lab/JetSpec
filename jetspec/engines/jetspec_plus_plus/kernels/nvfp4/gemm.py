@@ -46,6 +46,16 @@ def backend_status(backend: str) -> BackendStatus:
         except (ImportError, AttributeError, OSError, ValueError) as error:
             return BackendStatus(False, f"{backend} unavailable: requires FlashInfer >= 0.7.2: {error}")
         return BackendStatus(True)
+    if backend == "k1":
+        try:
+            import cutlass.cute
+            import cuda.bindings.driver
+            from importlib.metadata import version
+            if version("nvidia-cutlass-dsl") != "4.8.0":
+                raise ImportError("K1 is validated against nvidia-cutlass-dsl==4.8.0")
+        except (ImportError, OSError) as error:
+            return BackendStatus(False, f"k1 requires nvidia-cutlass-dsl==4.8.0 and CUDA: {error}")
+        return BackendStatus(True)
     if backend == "torch":
         available = hasattr(torch, "float4_e2m1fn_x2") and hasattr(torch.ops.aten._scaled_mm, "out")
         return BackendStatus(available, "" if available else "requires torch 2.8 FP4 _scaled_mm.out")

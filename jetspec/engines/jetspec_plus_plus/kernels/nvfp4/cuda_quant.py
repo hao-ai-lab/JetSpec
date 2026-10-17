@@ -20,18 +20,28 @@ def _global_scale(Partial, Global, COUNT: tl.constexpr, TILE: tl.constexpr):
 
 @triton.jit
 def _quantize(X, Packed, Scales, Swizzled, Global,
-              ROWS: tl.constexpr, K: tl.constexpr, PAD_BLOCKS: tl.constexpr):
+              ROWS: tl.constexpr, K: tl.constexpr, PAD_BLOCKS: tl.constexpr,
+              PER_ROW: tl.constexpr = False):
     row = tl.program_id(0)
     block = tl.program_id(1) * 32 + tl.arange(0, 32)
     column = block[:, None] * 16 + tl.arange(0, 16)[None, :]
     valid = (row < ROWS) & (column < K)
     x = tl.load(X + row * K + column, valid, other=0).to(tl.float32)
-    global_scale = tl.load(Global)
+    if PER_ROW:
+        global_scale = tl.load(Global + row, row < ROWS, other=1.)
+    else:
+        global_scale = tl.load(Global)
     block_max = tl.max(tl.abs(x), 1)
-    scale = block_max / (6. * global_scale)
+    if PER_ROW:
+        scale = tl.div_rn(block_max, 6. * global_scale)
+    else:
+        scale = block_max / (6. * global_scale)
     scale = tl.where(scale == 0, 1., scale)
     scale = tl.minimum(tl.maximum(scale, 0.001953125), 448.).to(tl.float8e4nv)
-    normalized = x / (scale.to(tl.float32) * global_scale)[:, None]
+    if PER_ROW:
+        normalized = tl.div_rn(x, (scale.to(tl.float32) * global_scale)[:, None])
+    else:
+        normalized = x / (scale.to(tl.float32) * global_scale)[:, None]
     magnitude = tl.abs(normalized)
     code = ((magnitude > .25).to(tl.uint8) + (magnitude >= .75).to(tl.uint8)
             + (magnitude > 1.25).to(tl.uint8) + (magnitude >= 1.75).to(tl.uint8)
@@ -90,3 +100,21 @@ def _fake_quantize_rows(X, Out, K: tl.constexpr, TILE: tl.constexpr):
 def fake_quantize_rows_into(x, out):
     rows, k = x.shape
     _fake_quantize_rows[(rows,)](x, out, k, triton.next_power_of_2(k), enable_fp_fusion=False)
+
+@triton.jit
+def _row_global_scale(X, Global, K: tl.constexpr, TILE: tl.constexpr):
+    row = tl.program_id(0)
+    column = tl.arange(0, TILE)
+    x = tl.load(X + row * K + column, column < K, other=0).to(tl.float32)
+    maximum = tl.max(tl.abs(x), 0)
+    tl.store(Global + row, tl.where(maximum == 0, 1., tl.div_rn(maximum, 2688.)))
+
+
+def quantize_rows_into(x, workspace):
+    value = workspace.value
+    rows, k = x.shape
+    padded_rows, padded_blocks = value.swizzled_scales.shape
+    _row_global_scale[(rows,)](x, value.global_scale, k, triton.next_power_of_2(k), enable_fp_fusion=False)
+    _quantize[(padded_rows, triton.cdiv(padded_blocks, 32))](
+        x, value.data, value.block_scales, value.swizzled_scales, value.global_scale,
+        rows, k, padded_blocks, True, enable_fp_fusion=False)

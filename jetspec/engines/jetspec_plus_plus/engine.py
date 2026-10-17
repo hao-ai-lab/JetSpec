@@ -28,7 +28,8 @@ class Engine:
         if self.kind not in ('fast', 'reference'):
             raise ValueError('engine kind must be fast or reference')
         for role in ('target', 'draft', 'lm_head'):
-            if getattr(self, 'precision_' + role) not in ('bf16', 'fq_w4a16', 'fq_w4a4'):
+            allowed = ('bf16', 'fq_w4a16', 'fq_w4a4') + (('nvfp4_w4a4',) if role == 'target' else ('nvfp4_w4a16',))
+            if getattr(self, 'precision_' + role) not in allowed:
                 raise ValueError('invalid precision_' + role)
 
     @classmethod

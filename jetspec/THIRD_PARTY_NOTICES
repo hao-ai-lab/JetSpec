@@ -78,3 +78,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+FlashInfer low-latency block-scaled GEMM — BSD-3-Clause
+-----------------------------------------------------
+jetspec/engines/jetspec_plus_plus/kernels/nvfp4/_k1_kernel.py forks
+flashinfer/gemm/kernels/cute_dsl/low_latency_blockscaled_gemm.py from FlashInfer
+v0.7.2. The file keeps its copyright line and BSD-3-Clause license text.
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.

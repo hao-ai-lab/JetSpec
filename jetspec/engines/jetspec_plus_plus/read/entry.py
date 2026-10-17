@@ -4253,8 +4253,11 @@ def serving_recipe(config, *, root=ROOT):
     recipe = deepcopy(candidates[0])
     recipe['environment'] = apply_serving_profile(
         {**recipe['environment'], **profile_environment(config)}, config)
-    # A named recipe keeps the passes its sealed launches read; a composed cell takes J + 1.
-    if family == 'jetspecpp' and not config['engine'].get('recipe'):
+    # Current release profiles borrow named metadata, but the method owns their
+    # pass cap. Sealed profiles and recipe replays keep their recorded passes.
+    release = (config['engine'].get('profile', 'current') == 'current'
+               and config['engine'].get('release_finished_requests', False))
+    if family == 'jetspecpp' and (not named or release):
         recipe['passes'] = schedule['j'] + 1
     recipe['cuda_arch'] ={'a100': '8.0', 'b200': '10.0', 'gb200': '10.0'}[hardware['gpu']]
     return recipe

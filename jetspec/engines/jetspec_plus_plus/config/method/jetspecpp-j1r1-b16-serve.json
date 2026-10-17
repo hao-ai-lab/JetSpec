@@ -1,0 +1,8 @@
+{
+  "extends": "jetspecpp-j1r1-b16",
+  "chain_miss_redraft": true,
+  "miss_redraft": false,
+  "method_settings": {
+    "eval_rows": "16"
+  }
+}

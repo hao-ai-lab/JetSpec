@@ -1,0 +1,8 @@
+{
+  "extends": "b200-1gpu",
+  "devices": [
+    0,
+    1
+  ],
+  "placement": "pair"
+}

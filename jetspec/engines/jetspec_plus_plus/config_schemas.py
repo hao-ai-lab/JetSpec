@@ -67,9 +67,9 @@ ENGINE_SCHEMA = Schema({
     'supports_batch': bool, 'max_num_seqs': _positive_int,
     'batch_buckets': batch_buckets, 'max_num_batched_tokens': _positive_int,
     'gpu_memory_utilization': lambda v: type(v) in (int, float) and 0 < v <= 1,
-    _field('engine_settings', 'precision_target'): ('bf16', 'fq_w4a16', 'fq_w4a4'),
-    _field('engine_settings', 'precision_draft'): ('bf16', 'fq_w4a16', 'fq_w4a4'),
-    _field('engine_settings', 'precision_lm_head'): ('bf16', 'fq_w4a16', 'fq_w4a4'),
+    _field('engine_settings', 'precision_target'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a4'),
+    _field('engine_settings', 'precision_draft'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a16'),
+    _field('engine_settings', 'precision_lm_head'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a16'),
 }, required=('kind',), checks=(check_batch_capacity,))
 
 HARDWARE_SCHEMA = Schema({
