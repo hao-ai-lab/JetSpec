@@ -1,0 +1,18 @@
+{
+  "schema": "jetspec.serve_recipe/1",
+  "name": "ar-hybrid27b-fast-graphed-sm80",
+  "method": "ar",
+  "display_name": "Hybrid 27B AR",
+  "regime": "graphed",
+  "passes": 1,
+  "cuda_arch": "8.0",
+  "environment": {
+    "JETSPEC_TARGET_DTYPE": "bf16",
+    "SSD_ATTENTION_BACKEND": "triton",
+    "W240_WARMUP": "0",
+    "JETSPEC_HYBRID_VERIFY_TRITON": "1",
+    "JETSPEC_HYBRID_FUSED_NORM": "1",
+    "JETSPEC_HYBRID_FAST_SNAPSHOT": "1"
+  },
+  "description": "A100 bf16 AR reference for the 27B graphed cal28 qualification."
+}

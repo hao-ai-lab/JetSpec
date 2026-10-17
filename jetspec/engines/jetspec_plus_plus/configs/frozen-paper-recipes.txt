@@ -1,0 +1,35 @@
+{
+  "recipes": {
+    "jetspecpp-eager-1gpu-e6v3-b16-j3r2": {
+      "recipe_sha256": "8e8803e51acdd8b85e64b4216a6f3a1436c27ae120b08fbcf1fcf12665d50f3d",
+      "submission_commit": "376fa1a154e73ccb9101538be9f2aef9fb8f6a6a",
+      "table": "ICLR Table 1"
+    },
+    "jetspecpp-eager-1gpu-e6v3-b32-j3r2": {
+      "recipe_sha256": "19819e81f59c4dbc6ae4b6fceb11baf425fb96ef9a5c8be506ba427eb5d58fd9",
+      "submission_commit": "376fa1a154e73ccb9101538be9f2aef9fb8f6a6a",
+      "table": "ICLR Table 1"
+    },
+    "jetspecpp-eager-pair-e6v3-b16-j3r2": {
+      "recipe_sha256": "9c499b2da4cca498c1a856d425cad6edf29d7e66d257ffc35817082e06c76e56",
+      "submission_commit": "376fa1a154e73ccb9101538be9f2aef9fb8f6a6a",
+      "table": "ICLR Table 1"
+    },
+    "jetspecpp-eager-pair-e6v3-b32-j3r2": {
+      "recipe_sha256": "0a64dd6839c79b39f5b95d2e1df7bb11d60149dbdc23e897e7aec6fe7fdcbb03",
+      "submission_commit": "376fa1a154e73ccb9101538be9f2aef9fb8f6a6a",
+      "table": "ICLR Table 1"
+    },
+    "jetspecpp-graphed-pair-e6-b16-chain-r4-j1": {
+      "recipe_sha256": "bcff87d71c07aad2849cf6442ebd7fafac941612ed45cb4deef2096ab7d3f7ed",
+      "submission_commit": "1470bdbd799cf0b6856eb100b48987ca429215f1",
+      "table": "ICLR Table 2"
+    },
+    "jetspecpp-graphed-pair-e6-b16-chain-r4-j2": {
+      "recipe_sha256": "82da21ed6a40bd850bfc9db6bfb60f6d1d0b16ff95d8a0285e636148f5456462",
+      "submission_commit": "1470bdbd799cf0b6856eb100b48987ca429215f1",
+      "table": "ICLR Table 2"
+    }
+  },
+  "schema": "jetspec.frozen_paper_recipes/1"
+}
