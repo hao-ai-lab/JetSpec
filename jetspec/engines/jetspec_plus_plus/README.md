@@ -11,30 +11,30 @@ CPU imports defer accelerator dependencies; execution requires the real kernels.
 
 ```sh
 python -m jetspec.engines.jetspec_plus_plus \
-  --config reference-j1-r1 \
+  --model qwen3-8b \
   --target /path/to/target --drafter /path/to/drafter \
   --adapter /path/to/adapter --heads-bundle /path/to/heads \
   --target-release /path/to/release \
   --prompts-json /path/to/prompts.json --count 8 --tokens 2048 \
   --devices 0,1 --output-json /path/to/read.json \
-  --cache-root /path/to/compiler-cache \
-  --knob SSD_SHARED_GPU_KV_UTILIZATION=0.1 \
-  --knob JETSPEC_CHAIN_WARM_REACHABLE=1 \
-  --knob JETSPEC_CHAIN_WARM_SINGLE_KEY=1
+  --cache-root /path/to/compiler-cache
 ```
 
-| Configuration | Target | Execution |
-| --- | --- | --- |
-| `a100-j1-r0` | 8B | J1-R0 paired execution on A100 |
-| `reference-j1-r1` | 8B | J1-R1 reference verification, paired GPUs |
-| `b200-j1-r1` | 8B | J1-R1 fast execution on B200 |
-| `ar` | 8B | Graphed autoregressive baseline, one GPU |
-| `a100-27b-j1-r1` | 27B preview | J1-R1 paired execution on A100 |
-| `b200-27b-j1-r1` | 27B preview | J1-R1 paired execution on B200 |
-| `ar-27b` | 27B preview | Graphed autoregressive baseline, one GPU |
+Choose the target with `--model` (`qwen3-8b`, or `qwen3.8-27b` as a preview), the
+J/R schedule with `--schedule`, and the verification with `--engine` (`fast` uses
+CUDA graphs, `reference` checks every round against plain verification). The
+engine picks its kernels from the GPU compute capability: 8.x uses the sm80
+kernels and 10.x the sm100 kernels.
 
-Without a configuration flag, A100 selects `reference-j1-r1` and B200 selects
-`b200-j1-r1`. The 27B AR configuration selects its kernel recipe by architecture.
+| `--model` | `--schedule` | `--engine` | Compute capability |
+| --- | --- | --- | --- |
+| `qwen3-8b` | `j1-r0` (default on 8.x) | `fast` | 8.x |
+| `qwen3-8b` | `j1-r1` (default on 10.x) | `fast` | 10.x |
+| `qwen3-8b` | `j1-r1` | `reference` | 8.x, 10.x |
+| `qwen3.8-27b` | `j1-r1` (default) | `fast` | 8.x, 10.x |
+| either | `ar` (graphed autoregressive baseline, one GPU) | `fast` | 8.x, 10.x |
+
+A combination outside this table stops with the list of supported ones.
 The release directory supplies `target_release_weights.safetensors`; it may be
 omitted when the drafter directory contains the release file. Artifact files
 must match the manifest's pinned hashes.
@@ -56,8 +56,8 @@ entry defaults to the full token budget; use `--stop-at-eos on` to stop at EOS.
 
 Measure speedup with `python bench/jetspec_plus_plus/speedup.py` and the same
 artifact flags. The benchmark stops at EOS by default, runs AR on the first GPU,
-and reports the ratio of measured decode throughput. Select the 27B configuration
-to use its corresponding AR baseline.
+and reports the ratio of measured decode throughput. It takes the same `--model`,
+`--schedule` and `--engine` flags and uses the AR baseline of the same model.
 
 Role folders retain the serving implementation's organization: `serving/`,
 `models/`, `draft/`, `verify/`, `wire/`, `kernels/`, and `read/`. Configuration
