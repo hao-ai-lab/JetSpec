@@ -33,7 +33,8 @@ class BlockManager:
         is_draft: bool = False, 
         speculate_k: int = -1, 
         max_model_len: int = -1,
-        verbose: bool = False
+        verbose: bool = False,
+        has_state: bool = False
     ):
         assert num_blocks > 0
         self.block_size = block_size
@@ -45,6 +46,7 @@ class BlockManager:
         self.speculate_k: int = speculate_k 
         self.verbose: bool = verbose
         self.max_model_len: int = max_model_len
+        self.has_state = has_state
 
         
     @classmethod
@@ -101,7 +103,7 @@ class BlockManager:
         block_table = seq.draft_block_table if self.is_draft else seq.block_table
         assert not block_table 
         h = -1 
-        cache_miss = False
+        cache_miss = self.has_state and not self.is_draft
 
         for i in range(seq.num_blocks):
             token_ids = seq.block(i)

@@ -1,10 +1,12 @@
 """Stable keyed-row scoring and selection, independent of graph capture."""
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import torch
 
 from .ops import reference_op
+from .batching import sequence_slice, sequencewise
 
 GRID = 2.0 ** 32
 
@@ -36,6 +38,7 @@ class DeviceOffers:
     ks: torch.Tensor             # [rows] long, the wire k of each row
 
 @reference_op("rows_floor")
+@sequencewise('score', 2)
 def floor_passing(score, passing, valid, n, *, fill_zero=False):
     """Add the first n valid positive pairs in the joint rule's stable order."""
     if not n:
@@ -75,6 +78,7 @@ def budget_rule(a=1.0, b=1.0, length_weight=False):
     return rule
 
 @reference_op("select_rows")
+@sequencewise('score', 2)
 def select_rows(score, passing, offers, cap, capacity):
     device = score.device
     count = score.numel()
@@ -150,6 +154,7 @@ def blend_features(drafter, decoder, coefficients, *, argmax_eq=None, top=None,
 
 
 @reference_op("hit_lookup")
+@sequencewise('keys', 3, shared=('index',))
 def hit_lookup(keys, true_k, correction, *, pins=None, index=None, legacy=False):
     """First surviving exact row, or None; host indexes share the same key rule."""
     key = (int(true_k), int(correction))
@@ -178,6 +183,19 @@ def hit_lookup(keys, true_k, correction, *, pins=None, index=None, legacy=False)
 
 def after_miss(snapshot, *, round_id, true_k, recovery, eos=False, snapshot_error=RuntimeError):
     """The admission, terminal, negative-key and redraft cache-miss rule."""
+    if isinstance(true_k, torch.Tensor) and true_k.ndim == 1:
+        count = true_k.shape[0]
+        results = []
+        for c in range(count):
+            single = None if snapshot is None else SimpleNamespace(
+                round_id=sequence_slice(snapshot.round_id, c, count),
+                live_keys=sequence_slice(snapshot.live_keys, c, count),
+                legacy_pins=sequence_slice(snapshot.legacy_pins, c, count),
+                redraft=sequence_slice(snapshot.redraft, c, count))
+            results.append(after_miss(single, round_id=sequence_slice(round_id, c, count),
+                                      true_k=true_k[c], recovery=sequence_slice(recovery, c, count),
+                                      eos=sequence_slice(eos, c, count), snapshot_error=snapshot_error))
+        return true_k.new_tensor(results)
     round_id, true_k, recovery = int(round_id), int(true_k), int(recovery)
     if round_id == 0 or eos:
         return 0
@@ -195,6 +213,7 @@ def after_miss(snapshot, *, round_id, true_k, recovery, eos=False, snapshot_erro
 
 
 @reference_op("cache_rows_chain")
+@sequencewise('offers_ids', 3, shared=('tau_table', 'coefficients'))
 def cache_rows_chain(draft_ids, offers_ids, probabilities, pack, logits, p_top1, R, *,
                      coefficients, miss, tau_idx, correction, tau_table, temperature,
                      out, previous_mass16=None, floor=0, fill_zero=False, control=None):

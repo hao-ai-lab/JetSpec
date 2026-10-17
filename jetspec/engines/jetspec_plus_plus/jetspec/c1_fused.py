@@ -1169,13 +1169,15 @@ def lean_q_postprocess(projected, weight, cos, sin, eps, num_heads, head_dim, no
 
 
 def _reference_rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float,
-                        norm_offset=0) -> torch.Tensor:
+                        norm_offset=0, norm_round=None) -> torch.Tensor:
     input_dtype = x.dtype
     values = x.to(torch.float32)
     values = values * torch.rsqrt(values.pow(2).mean(-1, keepdim=True) + eps)
-    if norm_offset:
-        return (values * (norm_offset + weight.float())).to(input_dtype)
-    return weight * values.to(input_dtype)
+    rounding = norm_round or ("after_weight" if norm_offset else "before_weight")
+    weights = weight if norm_offset == 0 else norm_offset + weight.float()
+    if rounding == "after_weight":
+        return (values * weights.float()).to(input_dtype)
+    return (weights if norm_offset == 0 else weights.to(input_dtype)) * values.to(input_dtype)
 
 
 def finish_streams(streams, residual: torch.Tensor, update: torch.Tensor,
@@ -1208,23 +1210,27 @@ def finish_streams(streams, residual: torch.Tensor, update: torch.Tensor,
 
 def ew_pre_norm(u: torch.Tensor, window: torch.Tensor, input_weight: torch.Tensor,
                 kv_weights: torch.Tensor, input_eps: float, kv_eps: float,
-                pending=None, kv_from_state=False, append=None, norm_offset=0, ulp=False):
+                pending=None, kv_from_state=False, append=None, norm_offset=0, ulp=False,
+                norm_round=None):
     """One launch for the next input norm and independent K/V source norms."""
     rows, width = u.shape
-    if u.device.type != "cuda" or u.dtype != torch.bfloat16 or triton is None:
+    rounding = norm_round or ("after_weight" if norm_offset else "before_weight")
+    specialized = rounding == ("after_weight" if norm_offset else "before_weight")
+    if u.device.type != "cuda" or u.dtype != torch.bfloat16 or triton is None or not specialized:
         state = u if pending is None else pending[1] + pending[0]
         kv_input = state if kv_from_state else window
-        sources = (torch.stack([_reference_rms_norm(kv_input, weight, kv_eps, norm_offset)
+        sources = (torch.stack([_reference_rms_norm(kv_input, weight, kv_eps, norm_offset, rounding)
                                 for weight in kv_weights]) if len(kv_weights) else
                    u.new_empty((0, rows, width)))
         if append is not None:
             dirty, streams, first = append
             taps = dirty.reshape(rows, -1, width)
             appended = torch.stack([
-                _reference_rms_norm(taps[:, int(streams[first + block])], weight, kv_eps)
+                _reference_rms_norm(taps[:, int(streams[first + block])], weight, kv_eps,
+                                    norm_offset, rounding)
                 for block, weight in enumerate(kv_weights)])
             sources = torch.cat((appended, sources), dim=1)
-        return _reference_rms_norm(state, input_weight, input_eps, norm_offset), state, sources
+        return _reference_rms_norm(state, input_weight, input_eps, norm_offset, rounding), state, sources
     if norm_offset == 1 and width == 5120 and append is None and not ulp:
         update, residual = (u, u) if pending is None else pending
         return _lean_ops_extension().ew_offset_norm(
@@ -2873,20 +2879,22 @@ if triton is not None:
 
 
 def q_norm_rotary(fused, projected, weight, cos, sin, eps, heads, dim,
-                  norm_offset=0, rotary_dim=None, gated=False, ulp=False):
+                  norm_offset=0, rotary_dim=None, gated=False, ulp=False, norm_round=None):
     """Head norm and RoPE in one BF16 launch for the batched adapter."""
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-    if norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
+    rounding = norm_round or ("after_weight" if norm_offset else "before_weight")
+    specialized = rounding == ("after_weight" if norm_offset else "before_weight")
+    if specialized and norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
         from types import SimpleNamespace
         from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
         query = projected.view(*projected.shape[:2], heads, dim * (2 if gated else 1))[..., :dim]
         if gluon_block.available(query):
             return gluon_block.norm_rotary(
                 query, SimpleNamespace(weight=weight, variance_epsilon=eps), cos, sin)
-    if projected.device.type != "cuda" or projected.dtype != torch.bfloat16 or triton is None:
-        if norm_offset or gated or (rotary_dim is not None and rotary_dim != dim):
+    if projected.device.type != "cuda" or projected.dtype != torch.bfloat16 or triton is None or not specialized:
+        if norm_offset or gated or not specialized or (rotary_dim is not None and rotary_dim != dim):
             q = projected.view(*projected.shape[:2], heads, dim * (2 if gated else 1))[..., :dim]
-            return _reference_rotary(_reference_rms_norm(q, weight, eps, norm_offset).transpose(1, 2), cos, sin)
+            return _reference_rotary(_reference_rms_norm(q, weight, eps, norm_offset, rounding).transpose(1, 2), cos, sin)
         return fused.fast_q_postprocess(projected, weight, cos, sin, eps, heads, dim)
     batch, tokens = projected.shape[:2]
     output = projected.new_empty(batch, heads, tokens, dim)
@@ -2901,10 +2909,12 @@ def q_norm_rotary(fused, projected, weight, cos, sin, eps, heads, dim,
 
 
 def kv_norm_rotary_cache(key, value, weight, cos, sin, eps, heads, groups, dim,
-                         cache, slots, norm_offset=0, rotary_dim=None, ulp=False):
+                         cache, slots, norm_offset=0, rotary_dim=None, ulp=False, norm_round=None):
     """Head norm, partial/full rotary and broadcast cache writes in one launch."""
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-    if norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
+    rounding = norm_round or ("after_weight" if norm_offset else "before_weight")
+    specialized = rounding == ("after_weight" if norm_offset else "before_weight")
+    if specialized and norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
         from types import SimpleNamespace
         from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
         shaped_key = key.view(*key.shape[:2], heads, dim)
@@ -2915,11 +2925,13 @@ def kv_norm_rotary_cache(key, value, weight, cos, sin, eps, heads, groups, dim,
                 cache, slots, groups)
     k, v = cache
     tokens = key.shape[1]
-    if key.device.type != "cuda" or key.dtype != torch.bfloat16 or triton is None:
-        normalized = _reference_rms_norm(key.view(1, tokens, heads, dim), weight, eps, norm_offset)
+    if (key.device.type != "cuda" or key.dtype != torch.bfloat16 or triton is None
+            or not specialized or key.shape[0] != 1):
+        batch = key.shape[0]
+        normalized = _reference_rms_norm(key.view(batch, tokens, heads, dim), weight, eps, norm_offset, rounding)
         rotated = _reference_rotary(normalized.transpose(1, 2), cos, sin)
         k.index_copy_(2, slots, rotated.repeat_interleave(groups, dim=1))
-        v.index_copy_(2, slots, value.view(1, tokens, heads, dim).transpose(1, 2).repeat_interleave(groups, dim=1))
+        v.index_copy_(2, slots, value.view(batch, tokens, heads, dim).transpose(1, 2).repeat_interleave(groups, dim=1))
         return
     launch_cached(_q_norm_rotary, (tokens * heads,),
                   (key, weight, cos.contiguous(), sin.contiguous(), k,
@@ -2943,26 +2955,29 @@ def mlp_epilogue(fused, mlp, rows, packed=None):
     return mlp.down_proj(activated)
 
 
-def lean_variant_query(head, embeddings, cos, sin, mask, length, window_slots=None,
+def adapter_query(head, embeddings, cos, sin, mask, length, window_slots=None,
                         stop_before_attention=False, resume=None):
     """Execute the dense bound-weight plan with per-block norm/rotary/gate geometry.
 
     Query and refresh use the same executor. The legacy dense specializations
     retain their default dispatch; this executor also supports their parameters.
     """
+    if embeddings.shape[0] != 1:
+        return head._adapter_cache_query(embeddings, cos, sin, mask, length, window_slots)
     plan = getattr(head, "_d1_variant_plan", None)
     if plan is None:
         layers = [layer for index, stream in enumerate(head.streams)
                   for layer in (stream, *head.extra_stream_layers[index])]
         plan = []
         for bound, layer in zip(head._d1_lean_plan(), layers):
-            offset = int(layer.hybrid_target)
+            offset = layer.attention_spec.norm_offset
             rotary = int(layer.rotary_emb.inv_freq.numel() * 2)
             kv = getattr(layer, "_fused_kv", None)
             if kv is None:
                 kv = (torch.cat((bound[8], bound[11])), None,
                       (bound[8].shape[0], bound[11].shape[0]))
             plan.append(dict(bound=bound, offset=offset, rotary=rotary,
+                             norm_round=layer.attention_spec.norm_round,
                              gated=layer.attn_output_gate, kv=kv,
                              gate_up=torch.cat((bound[15], bound[16]))))
         head._d1_variant_plan = plan
@@ -3000,7 +3015,8 @@ def lean_variant_query(head, embeddings, cos, sin, mask, length, window_slots=No
                 item["kv_norms"] = weights
             kv_first = block
         normed, u, sources = ew_pre_norm(u, window, in_w, weights, in_eps, kvn_eps,
-            pending, kv_from_state=index != current, norm_offset=offset, ulp=bool(offset))
+            pending, kv_from_state=index != current, norm_offset=offset, ulp=bool(offset),
+            norm_round=item["norm_round"])
         if new_group:
             kv_sources = sources
         if index != current:
@@ -3009,13 +3025,13 @@ def lean_variant_query(head, embeddings, cos, sin, mask, length, window_slots=No
         projected_q = F.linear(normed, q_w)[None]
         gate = (projected_q.view(1, count, heads, dim * 2)[..., dim:] if gated else None)
         q = q_norm_rotary(head._c1_fused_module(), projected_q, qn_w, cos, sin,
-                          qn_eps, heads, dim, offset, rotary, gated)
+                          qn_eps, heads, dim, offset, rotary, gated, norm_round=item["norm_round"])
         if causal:
             key, value = F.linear(kv_sources[block - kv_first], *item["kv"][:2]).split(
                 item["kv"][2], dim=-1)
             kv_norm_rotary_cache(key[None], value[None], kn_w, cos, sin, kn_eps,
                                  kv_heads, groups, dim, head._c1_kv[block], slots,
-                                 offset, rotary)
+                                 offset, rotary, norm_round=item["norm_round"])
         k, v = head._c1_kv[block]
         attended = F.scaled_dot_product_attention(q, k[:, :, :total], v[:, :, :total],
                                                   attn_mask=mask, scale=scaling)
@@ -3025,7 +3041,8 @@ def lean_variant_query(head, embeddings, cos, sin, mask, length, window_slots=No
             attended = gate_mul(attended, gate, heads, dim)
         projected = F.linear(attended[0], o_w)
         post, state, _ = ew_pre_norm(u, window, post_w, empty, post_eps, kvn_eps,
-                                     pending=(projected, u), norm_offset=offset, ulp=bool(offset))
+                                     pending=(projected, u), norm_offset=offset, ulp=bool(offset),
+                                     norm_round=item["norm_round"])
         gate_rows, up_rows = F.linear(post, item["gate_up"]).chunk(2, dim=-1)
         if u.device.type == "cuda" and u.dtype == torch.bfloat16:
             activated = (ulp_silu_mul(gate_rows, up_rows) if offset else
@@ -3037,7 +3054,7 @@ def lean_variant_query(head, embeddings, cos, sin, mask, length, window_slots=No
     return torch.cat(outputs, dim=-1)[None]
 
 
-def hybrid_cache_extend(head, dirty, cos, sin, slots):
+def adapter_cache_extend(head, dirty, cos, sin, slots):
     """Fuse hybrid prefix norms, rotary and repeated-head writes into live slots."""
     tokens = dirty.shape[1]
     empty = dirty.new_empty((0, head.hidden_size))
@@ -3046,13 +3063,20 @@ def hybrid_cache_extend(head, dirty, cos, sin, slots):
         normalized, _, _ = ew_pre_norm(
             rows, rows, layer.kv_norm.weight, empty,
             layer.kv_norm.variance_epsilon, layer.kv_norm.variance_epsilon,
-            norm_offset=1, ulp=True)
+            norm_offset=layer.attention_spec.norm_offset, ulp=True,
+            norm_round=layer.attention_spec.norm_round)
         key, value = layer.project_kv(normalized[None])
         kv_norm_rotary_cache(
             key, value, layer.k_norm.weight, cos, sin,
             layer.k_norm.variance_epsilon, layer.num_key_value_heads,
             layer.num_key_value_groups, layer.head_dim, head._c1_kv[block],
-            slots, norm_offset=1, rotary_dim=cos.shape[-1])
+            slots, norm_offset=layer.attention_spec.norm_offset, rotary_dim=cos.shape[-1],
+            norm_round=layer.attention_spec.norm_round)
+
+
+# Compatibility imports for existing qualification tools.
+lean_variant_query = adapter_query
+hybrid_cache_extend = adapter_cache_extend
 
 
 if triton is not None:

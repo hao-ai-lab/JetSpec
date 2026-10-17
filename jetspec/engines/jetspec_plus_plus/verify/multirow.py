@@ -16,8 +16,6 @@ from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculateR
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifyResult
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculatorBase
 from jetspec.engines.jetspec_plus_plus.serving.runner_helpers import prepare_prefill_payload
-from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import OutcomeWire
-from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import OutcomeWireRing
 from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import admission_outcome
 from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import announce_chain_command
 from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import await_chain_receive
@@ -224,13 +222,22 @@ class SpeculatorAsync(SpeculatorBase):
             self._outcome_sync_audit = setting(self, 'engine.engine_settings.jetspec_verify_sync_audit', '0') == "1"
         self.metrics = metrics
         self._verify_stage_runner = target_model_runner
-        self._hybrid_pair_layout = None
-        if setting(self, 'engine.engine_settings.hybrid_pair', '0') == "1":
+        self._outcome_layout = None
+        if jetspec_taps and target_model_runner is not None:
+            from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeLayout
+            from jetspec.engines.jetspec_plus_plus.wire.hybrid import target_wire_spec
+            spec = target_wire_spec(target_model_runner)
+            self._outcome_layout = OutcomeLayout.from_spec(spec, lanes=self.K + 1,
+                tap_dtype=target_model_runner.hf_config.torch_dtype, sequence_count=1)
+            self.jetspec_tap_hidden_size = spec.hidden_size
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state, pair_enabled
+        self._pair_layout = None
+        if pair_enabled(self):
             from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridPairLayout
-            if (target_model_runner is None or not target_model_runner.hybrid_target
+            if (target_model_runner is None or not has_state(target_model_runner)
                     or self.max_num_seqs != 1 or self.K not in (15, 31)):
                 raise ValueError("hybrid pair transfer requires the N=1 hybrid b16/b32 target")
-            self._hybrid_pair_layout = HybridPairLayout.from_config(
+            self._pair_layout = HybridPairLayout.from_config(
                 target_model_runner.hf_config, lanes=self.K + 1)
         if self._outcome_pack_presync and not self._outcome_wire_ring_enabled:
             raise ValueError("JETSPEC_OUTCOME_PACK_PRESYNC requires JETSPEC_OUTCOME_WIRE_RING")
@@ -323,12 +330,13 @@ class SpeculatorAsync(SpeculatorBase):
             warmup_id = announce_chain_command(self.jetspec_mailbox_store, "warmup", run_config=getattr(self, 'run_config', None))
             if getattr(self, "_pair_outcome_push", False):
                 start_command_ids(self.jetspec_mailbox_store, warmup_id)
+                from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import outcome_layout
+                layout = outcome_layout(self)
                 self._pair_transport = PairOutcomeTransport(
                     store=self.jetspec_mailbox_store, group=self.jetspec_request_pg,
                     device=self.device, lanes=self.K + 1,
-                    hidden=self.jetspec_tap_hidden_size, tap_dtype=self.draft_dtype,
-                    envelope_bytes=(None if self._hybrid_pair_layout is None else
-                                    self._hybrid_pair_layout.outcome_bytes))
+                    hidden=layout.hidden, tap_dtype=layout.tap_dtype,
+                    envelope_bytes=layout.outcome_bytes)
         else:
             dist.send(torch.tensor([3],dtype=torch.int64,device=self.device),
                       dst=self.draft_runner_rank,group=self.jetspec_request_pg)
@@ -629,8 +637,8 @@ class SpeculatorAsync(SpeculatorBase):
         borrowed_wire = (chain_command == "outcome" and
                          getattr(self, "_outcome_wire_ring_enabled", False) and
                          self._jetspec_outcome_wire_ring is not None)
-        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_hybrid_pair
-        eager_outcome = (eager_hybrid_pair(getattr(self, '_verify_stage_runner', None))
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
+        eager_outcome = (eager_pair(getattr(self, '_verify_stage_runner', None))
                          and len(tensors) == 2 and tensors[1].dtype == torch.uint8)
         snapshots = (tensors if control is not None or borrowed_wire else
                      ([tensors[0], tensors[1].detach().clone().contiguous()]
@@ -804,26 +812,24 @@ class SpeculatorAsync(SpeculatorBase):
                 prompt_indices,
                 recovery_tokens,
             )
+            from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import outcome_layout
+            layout = outcome_layout(self)
             tap_lengths, tap_payload = pack_jetspec_taps(
                 seqs,
                 device=self.device,
-                tap_shape=(5, self.jetspec_tap_hidden_size),
-                dtype=self.draft_dtype,
+                tap_shape=(layout.tap_count, layout.hidden),
+                dtype=layout.tap_dtype,
             )
             dist.send(tap_lengths, dst=self.draft_runner_rank, group=request_pg)
             if tap_payload.shape[0] > 0:
                 dist.send(tap_payload, dst=self.draft_runner_rank, group=request_pg)
-            if getattr(self, "_hybrid_pair_layout", None) is not None:
-                from jetspec.engines.jetspec_plus_plus.wire.hybrid import target_prefix_kv
-                from jetspec.engines.jetspec_plus_plus.wire.hybrid import target_tail
+            if layout.sections:
+                from jetspec.engines.jetspec_plus_plus.wire.hybrid import target_prefill_tensors
                 if len(seqs) != 1:
                     raise ValueError("hybrid pair admission requires N=1")
-                gdn, _ = target_tail(self._verify_stage_runner)
                 positions = torch.arange(int(tap_lengths[0]), device=self.device)
-                keys, values = target_prefix_kv(
-                    self._verify_stage_runner, seqs[0], positions)
-                for payload in (gdn.committed_recurrent, gdn.committed_conv,
-                                keys, values):
+                for payload in target_prefill_tensors(
+                        self._verify_stage_runner, seqs[0], positions, layout):
                     dist.send(payload.contiguous(), dst=self.draft_runner_rank,
                               group=request_pg)
             for seq, length in zip(seqs, tap_lengths.tolist()):
@@ -945,33 +951,18 @@ class SpeculatorAsync(SpeculatorBase):
             )
 
     def _new_outcome_wire(self):
-        layout = getattr(self, "_hybrid_pair_layout", None)
-        if layout is not None:
-            from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridOutcomeWire
-            return HybridOutcomeWire(layout, self.device)
-        return OutcomeWire(self.K + 1, self.jetspec_tap_hidden_size,
-                           self.draft_dtype, self.device)
+        from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import make_outcome_wire
+        return make_outcome_wire(self)
 
     def _new_outcome_wire_ring(self):
-        layout = getattr(self, "_hybrid_pair_layout", None)
-        if layout is not None:
-            from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridOutcomeWireRing
-            return HybridOutcomeWireRing(layout, self.device)
-        return OutcomeWireRing(self.K + 1, self.jetspec_tap_hidden_size,
-                               self.draft_dtype, self.device)
+        from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import make_outcome_wire
+        return make_outcome_wire(self, ring=True)
 
     def _pack_outcome_wire(self, wire, seq, *, skip_full_zero=False, prepared_taps=False):
-        if getattr(self, "_hybrid_pair_layout", None) is not None:
-            from jetspec.engines.jetspec_plus_plus.wire.hybrid import pack_target_hybrid_outcome
-            return pack_target_hybrid_outcome(
-                self._verify_stage_runner, seq, wire,
-                seq._jetspec_device_outcome, seq._jetspec_tap_candidate_block,
-                prepared_taps=prepared_taps)
-        if prepared_taps:
-            return wire.pack_prepared_header(seq._jetspec_device_outcome)
-        return wire.pack(seq._jetspec_device_outcome,
-                         seq._jetspec_tap_candidate_block,
-                         skip_full_zero=skip_full_zero)
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import pack_target_outcome
+        return pack_target_outcome(getattr(self, '_verify_stage_runner', None), seq, wire,
+            seq._jetspec_device_outcome, seq._jetspec_tap_candidate_block,
+            skip_full_zero=skip_full_zero, prepared_taps=prepared_taps)
 
     def _pack_jetspec_request(self, seqs):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
@@ -980,9 +971,9 @@ class SpeculatorAsync(SpeculatorBase):
         verify_device = getattr(self, "_verify_device_enabled", None)
         if verify_device is None:
             verify_device = setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
-        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_hybrid_pair
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if ((verify_device or current_engine().kind == 'reference'
-             or eager_hybrid_pair(getattr(self, '_verify_stage_runner', None)))
+             or eager_pair(getattr(self, '_verify_stage_runner', None)))
                 and not getattr(self, "_verify_device_legacy", False) and len(seqs) == 1
                 and hasattr(seqs[0], "_jetspec_device_outcome")):
             seq = seqs[0]
@@ -990,10 +981,7 @@ class SpeculatorAsync(SpeculatorBase):
                 raise RuntimeError("device outcome requires async JetSpec taps")
             if self._jetspec_outcome_wire is None:
                 if not ring_enabled:
-                    self._jetspec_outcome_wire = (self._new_outcome_wire()
-                        if getattr(self, "_hybrid_pair_layout", None) is not None else
-                        OutcomeWire(self.K + 1, self.jetspec_tap_hidden_size,
-                                    self.draft_dtype, self.device))
+                    self._jetspec_outcome_wire = self._new_outcome_wire()
             if getattr(self, "_reference_tap_prepare", False):
                 prepared = self._reference_prepared_outcome
                 if (prepared is None or prepared[0] is not seq or prepared[1] != seq.jetspec_round
@@ -1011,19 +999,12 @@ class SpeculatorAsync(SpeculatorBase):
                 message = None
             if ring_enabled and message is None:
                 if self._jetspec_outcome_wire_ring is None:
-                    self._jetspec_outcome_wire_ring = (self._new_outcome_wire_ring()
-                        if getattr(self, "_hybrid_pair_layout", None) is not None else
-                        OutcomeWireRing(self.K + 1, self.jetspec_tap_hidden_size,
-                                        self.draft_dtype, self.device))
+                    self._jetspec_outcome_wire_ring = self._new_outcome_wire_ring()
                 wire = self._jetspec_outcome_wire_ring.acquire()
             elif not ring_enabled:
                 wire = self._jetspec_outcome_wire
             if message is None:
-                message = (self._pack_outcome_wire(wire, seq, skip_full_zero=ring_enabled)
-                           if getattr(self, "_hybrid_pair_layout", None) is not None else
-                           wire.pack(seq._jetspec_device_outcome,
-                                     seq._jetspec_tap_candidate_block,
-                                     skip_full_zero=ring_enabled))
+                message = self._pack_outcome_wire(wire, seq, skip_full_zero=ring_enabled)
             if (getattr(self, "_pair_outcome_push", False)
                     and not getattr(self, "_outcome_pack_presync", False)
                     and current_engine().kind == 'reference'):
@@ -1035,13 +1016,15 @@ class SpeculatorAsync(SpeculatorBase):
             self.metrics["jetspec_tap_payload_bytes"].append(message.numel())
             # The eager command loop still consumes its existing int64 command
             # before receiving the fixed outcome envelope. Chain intake does not.
-            return None, ([self._cmd, message] if eager_hybrid_pair(
+            return None, ([self._cmd, message] if eager_pair(
                 getattr(self, '_verify_stage_runner', None)) else [message])
         if current_engine().kind == 'reference':
             raise RuntimeError("reference chain request requires a published outcome envelope")
         tap_started = time.perf_counter()
         lengths, pending = [], []
-        shape = (5, self.jetspec_tap_hidden_size)
+        from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import outcome_layout
+        layout = outcome_layout(self)
+        shape = (layout.tap_count, layout.hidden)
         for seq in seqs:
             suffix = None if seq.jetspec_taps is None else seq.jetspec_taps[seq.jetspec_taps_sent:]
             length = 0 if suffix is None else len(suffix)
@@ -1049,7 +1032,7 @@ class SpeculatorAsync(SpeculatorBase):
             if length:
                 if tuple(suffix.shape[1:]) != shape:
                     raise ValueError("tap suffix does not match the configured tap shape")
-                pending.append(suffix.to(device=self.device, dtype=self.draft_dtype))
+                pending.append(suffix.to(device=self.device, dtype=layout.tap_dtype))
         # Committed taps are append-only via fresh storage. Keep a sole suffix
         # alive through the request queue instead of copying it into a new cat.
         if len(pending) == 1:
@@ -1057,7 +1040,7 @@ class SpeculatorAsync(SpeculatorBase):
         elif pending:
             taps = torch.cat(pending, dim=0).contiguous()
         else:
-            taps = torch.empty((0, *shape), dtype=self.draft_dtype, device=self.device)
+            taps = torch.empty((0, *shape), dtype=layout.tap_dtype, device=self.device)
         self.metrics["jetspec_tap_send_ms"].append((time.perf_counter() - tap_started) * 1000)
         self.metrics["jetspec_tap_payload_bytes"].append(
             len(seqs) * 8 + taps.numel() * taps.element_size())
@@ -1090,17 +1073,11 @@ class SpeculatorAsync(SpeculatorBase):
         if self._presync_packed_outcome is not None:
             raise RuntimeError("previous pre-sync outcome was not published")
         if self._jetspec_outcome_wire_ring is None:
-            self._jetspec_outcome_wire_ring = (self._new_outcome_wire_ring()
-                if getattr(self, "_hybrid_pair_layout", None) is not None else
-                OutcomeWireRing(self.K + 1, self.jetspec_tap_hidden_size,
-                                self.draft_dtype, self.device))
+            self._jetspec_outcome_wire_ring = self._new_outcome_wire_ring()
         # A future local command counter belongs to announce, not this early pack:
         # read it without consuming it if the 6c command-id condition lands.
         wire = self._jetspec_outcome_wire_ring.acquire()
-        message = (self._pack_outcome_wire(wire, seq, skip_full_zero=True)
-                   if getattr(self, "_hybrid_pair_layout", None) is not None else
-                   wire.pack(seq._jetspec_device_outcome,
-                             seq._jetspec_tap_candidate_block, skip_full_zero=True))
+        message = self._pack_outcome_wire(wire, seq, skip_full_zero=True)
         self._presync_packed_outcome = (seq, seq._jetspec_device_outcome, message)
         if getattr(self, "_pair_outcome_push", False):
             if self._pair_transport is None or self._pair_pending_id is not None:
@@ -1117,14 +1094,8 @@ class SpeculatorAsync(SpeculatorBase):
         packed = self._presync_packed_outcome
         if packed is None or packed[0] is not seq:
             raise RuntimeError("pre-sync outcome check has no staged packet")
-        scratch = (self._new_outcome_wire()
-                   if getattr(self, "_hybrid_pair_layout", None) is not None else
-                   OutcomeWire(self.K + 1, self.jetspec_tap_hidden_size,
-                               self.draft_dtype, self.device))
-        expected = (self._pack_outcome_wire(scratch, seq)
-                    if getattr(self, "_hybrid_pair_layout", None) is not None else
-                    scratch.pack(seq._jetspec_device_outcome,
-                                 seq._jetspec_tap_candidate_block))
+        scratch = self._new_outcome_wire()
+        expected = self._pack_outcome_wire(scratch, seq)
         self._presync_pack_rounds += 1
         self._presync_pack_mismatches += int(not torch.equal(packed[2], expected))
         print("OUTCOME_PACK_PRESYNC_CHECK "
@@ -1212,9 +1183,9 @@ class SpeculatorAsync(SpeculatorBase):
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         ring_enabled = getattr(self, "_outcome_wire_ring_enabled", False)
-        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_hybrid_pair
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if (self._verify_device_legacy or
-                eager_hybrid_pair(getattr(self, '_verify_stage_runner', None))):
+                eager_pair(getattr(self, '_verify_stage_runner', None))):
             # The legacy request wire is packed after postprocess updates the
             # sequence metadata, just as it is with verify-device disabled.
             return
@@ -1294,17 +1265,11 @@ class SpeculatorAsync(SpeculatorBase):
         ring_enabled = getattr(self, "_outcome_wire_ring_enabled", False)
         if ring_enabled:
             if self._jetspec_outcome_wire_ring is None:
-                self._jetspec_outcome_wire_ring = (self._new_outcome_wire_ring()
-                    if getattr(self, "_hybrid_pair_layout", None) is not None else
-                    OutcomeWireRing(self.K + 1, self.jetspec_tap_hidden_size,
-                                    self.draft_dtype, self.device))
+                self._jetspec_outcome_wire_ring = self._new_outcome_wire_ring()
             wire = self._jetspec_outcome_wire_ring.acquire()
         else:
             if self._jetspec_outcome_wire is None:
-                self._jetspec_outcome_wire = (self._new_outcome_wire()
-                    if getattr(self, "_hybrid_pair_layout", None) is not None else
-                    OutcomeWire(self.K + 1, self.jetspec_tap_hidden_size,
-                                self.draft_dtype, self.device))
+                self._jetspec_outcome_wire = self._new_outcome_wire()
             wire = self._jetspec_outcome_wire
         weights = getattr(self, "_jetspec_hash16_weights", None)
         if weights is None:
@@ -1313,17 +1278,10 @@ class SpeculatorAsync(SpeculatorBase):
         packet = admission_outcome(
             seq, capacity=self.max_model_len + self.K + 2,
             device=self.device, weights=weights)
-        empty_taps = torch.empty(0, 5, self.jetspec_tap_hidden_size,
-                                 dtype=self.draft_dtype, device=self.device)
-        if getattr(self, "_hybrid_pair_layout", None) is None:
-            message = wire.pack(packet, empty_taps)
-        else:
-            from jetspec.engines.jetspec_plus_plus.wire.hybrid import target_tail
-            gdn, _ = target_tail(self._verify_stage_runner)
-            wire.keys.zero_()
-            wire.values.zero_()
-            message = wire.pack(packet, empty_taps, gdn.committed_recurrent,
-                                gdn.committed_conv, wire.keys, wire.values)
+        empty_taps = wire.taps[:0]
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import pack_target_outcome
+        message = pack_target_outcome(getattr(self, '_verify_stage_runner', None), seq,
+                                      wire, packet, empty_taps, admission=True)
         if getattr(self, "_pair_outcome_push", False):
             if self._pair_transport is None or self._pair_pending_id is not None:
                 raise RuntimeError("pair outcome transport is not ready for admission")
@@ -1474,11 +1432,13 @@ class SpeculatorAsync(SpeculatorBase):
 
             if self.jetspec_taps:
                 tap_started = time.perf_counter()
+                from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import outcome_layout
+                layout = outcome_layout(self)
                 tap_lengths, tap_payload = pack_jetspec_taps(
                     seqs,
                     device=self.device,
-                    tap_shape=(5, self.jetspec_tap_hidden_size),
-                    dtype=self.draft_dtype,
+                    tap_shape=(layout.tap_count, layout.hidden),
+                    dtype=layout.tap_dtype,
                 )
                 request_tensors.append(tap_lengths)
                 if tap_payload.shape[0] > 0:

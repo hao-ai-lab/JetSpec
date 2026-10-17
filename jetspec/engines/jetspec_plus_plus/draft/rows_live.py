@@ -27,6 +27,7 @@ import os
 from types import SimpleNamespace
 
 import torch
+from jetspec.engines.jetspec_plus_plus.models.target_linear import draft_linear, draft_mm, draft_precision
 
 from jetspec.engines.jetspec_plus_plus.jetspec.rows import RowDraftHead
 from jetspec.engines.jetspec_plus_plus.jetspec.rows import _rotary
@@ -108,9 +109,8 @@ class SharedOutLinear(torch.nn.Module):
 
     def forward(self, x):
         out = self.out[:x.shape[0]]
-        if self.bias is None:
-            return torch.mm(x, self.weight.t(), out=out)
-        return torch.addmm(self.bias, x, self.weight.t(), out=out)
+        return draft_mm(x, self.weight.t(), self.bias, out=out,
+                        precision=draft_precision(self.weight))
 
 
 class _DrafterView:
@@ -275,7 +275,7 @@ class CompactRowHead(torch.nn.Module):
             normalized = layer.input_layernorm(hidden)
             if hasattr(attn, '_fused_qkv'):
                 weight, bias, widths = attn._fused_qkv
-                qp, kp, vp = torch.nn.functional.linear(normalized, weight, bias).split(widths, dim=-1)
+                qp, kp, vp = draft_linear(normalized, weight, bias).split(widths, dim=-1)
             else:
                 qp, kp, vp = attn.q_proj(normalized), attn.k_proj(normalized), attn.v_proj(normalized)
             q = attn.q_norm(qp.reshape(-1, attn.config.num_attention_heads, attn.head_dim))
@@ -317,7 +317,7 @@ class CompactRowHead(torch.nn.Module):
             residual = hidden
             if hasattr(attn, '_fused_qkv'):
                 weight, bias, widths = attn._fused_qkv
-                qp, kp, vp = torch.nn.functional.linear(normalized, weight, bias).split(widths, dim=-1)
+                qp, kp, vp = draft_linear(normalized, weight, bias).split(widths, dim=-1)
                 projected_kv = (kp, vp.contiguous())
             else:
                 qp, projected_kv = attn.q_proj(normalized), None

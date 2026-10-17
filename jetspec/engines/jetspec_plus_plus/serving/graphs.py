@@ -18,9 +18,31 @@ from time import perf_counter
 _FA2_PLAN_OPTIONS = (-1, False) if version("flashinfer-python") == "0.5.2" else (-1, False, 0, 0)
 
 
+def stage_state_slots(model_runner, graph_vars, count):
+    """Keep padded rows private while copying live ids into captured storage."""
+    from jetspec.engines.jetspec_plus_plus.models.state import stage_state_slots as stage
+    stage(model_runner, graph_vars, count)
+
+
+@torch.inference_mode()
+def capture_commit_graphs(model_runner):
+    """Capture static slot vectors and accepted counts for each state C bucket."""
+    graphs = {}
+    for count in graph_capture_buckets(model_runner, verify=True):
+        slots = model_runner.state.graph_slots(count)
+        counts = torch.zeros(() if count == 1 else (count,), dtype=torch.int64,
+                             device=model_runner.device)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            model_runner.state.commit(slots, counts)
+        graphs[count] = graph, slots, counts
+    return graphs
+
+
 ## RUN CUDAGRAPHS
 @torch.inference_mode()
 def run_verify_cudagraph(model_runner, input_ids, positions, last_only, graph_vars):
+    from jetspec.engines.jetspec_plus_plus.models.state import has_state
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     from jetspec.engines.jetspec_plus_plus.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.verify.verify_plan_helpers import verify_plan_signature
@@ -31,6 +53,9 @@ def run_verify_cudagraph(model_runner, input_ids, positions, last_only, graph_va
     wrapper_bs = next(
         x for x in model_runner.graph_bs_list["verify"] if x >= orig_bs)
     graph = model_runner.graphs["verify"][wrapper_bs]
+    if has_state(model_runner):
+        stage_state_slots(model_runner, graph_vars, orig_bs)
+        model_runner.state.prepare_verify(model_runner._state_slots, k_plus_1)
 
     if (orig_bs > 1 and model_runner.jetspec_paged_flashinfer
             and model_runner._staged_verify is not None):
@@ -87,7 +112,7 @@ def run_verify_cudagraph(model_runner, input_ids, positions, last_only, graph_va
         return logits
 
     for k, v in graph_vars.items():
-        if k != "outputs":
+        if k not in {"outputs", "state_slots"}:
             v.zero_()
 
     # Pad to graph bucket size if needed (fixes B>=6 crash from non-monotonic cu_seqlens_q)
@@ -201,6 +226,7 @@ def run_verify_cudagraph(model_runner, input_ids, positions, last_only, graph_va
 
 @torch.inference_mode()
 def run_decode_cudagraph(model_runner, input_ids, positions, last_only, graph_vars, hidden_states=None):
+    from jetspec.engines.jetspec_plus_plus.models.state import has_state
     context = get_context()
 
     flat_batch_size = input_ids.size(0)
@@ -209,8 +235,10 @@ def run_decode_cudagraph(model_runner, input_ids, positions, last_only, graph_va
     graph = model_runner.graphs["decode"][wrapper_bs]
 
     for k, v in graph_vars.items():
-            if k != "outputs":
+            if k not in {"outputs", "state_slots"}:
                 v.zero_()
+    if has_state(model_runner):
+        stage_state_slots(model_runner, graph_vars, flat_batch_size)
 
     graph_vars["input_ids"][:flat_batch_size] = input_ids
     graph_vars["positions"][:flat_batch_size] = positions
@@ -295,17 +323,39 @@ def flush_draft_profile():
 
 
 ## CAPTURE CUDAGRAPHS
+def graph_capture_buckets(model_runner, *, verify=False):
+    """Stateful targets take C buckets from engine capacity, defaulting to C=1."""
+    config = model_runner.config
+    capacity = min(config.max_num_seqs, 512)
+    spec = getattr(model_runner, 'model_spec', None)
+    if spec is not None and spec.has_state and not model_runner.is_draft:
+        record = getattr(model_runner, 'run_config', None)
+        buckets = list(getattr(record, 'batch_capacity', {}).get('batch_buckets', [1]))
+        if (not buckets or any(type(c) is not int or not 0 < c <= capacity for c in buckets)
+                or buckets != sorted(set(buckets))):
+            raise ValueError('graph C buckets must be positive, sorted, unique and within capacity')
+        return buckets
+    if verify:
+        maximum = capacity
+        buckets = [1, 2, 4, 8] + list(range(16, maximum + 1, 16))
+    else:
+        jit = config.speculate and config.draft_async and model_runner.is_draft
+        maximum = capacity if jit else capacity + 1
+        buckets = [1, 2, 4, 8]
+    if maximum not in buckets:
+        buckets.append(maximum)
+    return sorted(c for c in buckets if c <= maximum)
+
+
 @torch.inference_mode()
 def capture_cudagraph(model_runner):
+    from jetspec.engines.jetspec_plus_plus.models.state import has_state
+    stateful = has_state(model_runner)
+    model_forward = model_runner.state_model_forward if stateful else model_runner.model
     config = model_runner.config
     hf_config = config.hf_config
-    max_seqs = min(model_runner.config.max_num_seqs, 512)
-    if getattr(model_runner, "hybrid_target", False):
-        max_bs = 1
-    elif model_runner.config.speculate and model_runner.config.draft_async and model_runner.is_draft:
-        max_bs = max_seqs  # JIT recovery is single-token B; tree decode has its own graphs.
-    else:
-        max_bs = max_seqs + 1
+    graph_bs_list = graph_capture_buckets(model_runner)
+    max_bs = max(graph_bs_list)
     max_num_blocks = (config.max_model_len +
                       model_runner.block_size - 1) // model_runner.block_size
     input_ids = torch.zeros(max_bs, dtype=torch.int64)
@@ -314,10 +364,7 @@ def capture_cudagraph(model_runner):
     context_lens = torch.zeros(max_bs, dtype=torch.int32)
     block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
     outputs = torch.zeros(max_bs, hf_config.hidden_size)
-
-    graph_bs_list = [bs for bs in [1, 2, 4, 8] if bs <= max_bs]
-    if max_bs not in graph_bs_list:
-        graph_bs_list.append(max_bs)
+    state_slots = model_runner.state.graph_slots(max_bs) if stateful else None
 
     graphs = {}
     graph_pool = None
@@ -342,6 +389,8 @@ def capture_cudagraph(model_runner):
         )
 
     for bs in reversed(graph_bs_list):
+        if stateful:
+            model_runner._state_slots = state_slots[:bs]
         graph = torch.cuda.CUDAGraph()
         if ATTENTION_BACKEND == "flashinfer" or model_runner.jetspec_paged_flashinfer:
             context_lens[:bs].fill_(1)
@@ -357,35 +406,35 @@ def capture_cudagraph(model_runner):
                 graph_batch_size=bs,
             )
         if is_eagle_draft:
-            outputs[:bs] = model_runner.model(
+            outputs[:bs] = model_forward(
                 input_ids[:bs], positions[:bs], hidden_states[:bs])    # warmup
         elif is_eagle_target:
-            out, _ = model_runner.model(
+            out, _ = model_forward(
                 input_ids[:bs], positions[:bs])    # warmup
             outputs[:bs] = out
         elif is_jetspec_target:
-            out, taps = model_runner.model(
+            out, taps = model_forward(
                 input_ids[:bs], positions[:bs])
             outputs[:bs] = out
             jetspec_taps[:bs] = taps
         else:
-            outputs[:bs] = model_runner.model(
+            outputs[:bs] = model_forward(
                 input_ids[:bs], positions[:bs])    # warmup
         with torch.cuda.graph(graph, graph_pool):
             if is_eagle_draft:
-                outputs[:bs] = model_runner.model(
+                outputs[:bs] = model_forward(
                     input_ids[:bs], positions[:bs], hidden_states[:bs])    # capture
             elif is_eagle_target:
-                out, _ = model_runner.model(
+                out, _ = model_forward(
                     input_ids[:bs], positions[:bs])    # capture
                 outputs[:bs] = out
             elif is_jetspec_target:
-                out, taps = model_runner.model(
+                out, taps = model_forward(
                     input_ids[:bs], positions[:bs])
                 outputs[:bs] = out
                 jetspec_taps[:bs] = taps
             else:
-                outputs[:bs] = model_runner.model(
+                outputs[:bs] = model_forward(
                     input_ids[:bs], positions[:bs])    # capture
         if graph_pool is None:
             graph_pool = graph.pool()
@@ -401,6 +450,8 @@ def capture_cudagraph(model_runner):
         block_tables=block_tables,
         outputs=outputs,
     )
+    if stateful:
+        graph_vars["state_slots"] = state_slots
     if hidden_states is not None:
         graph_vars["hidden_states"] = hidden_states
     if jetspec_taps is not None:
@@ -413,10 +464,14 @@ def capture_cudagraph(model_runner):
 def capture_verify_cudagraph(model_runner):
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.models.state import has_state
+    stateful = has_state(model_runner)
+    model_forward = model_runner.state_model_forward if stateful else model_runner.model
     config = model_runner.config
     # assert not model_runner.is_draft, "ERROR in capture_verify_cudagraph: verify path only supported for target model"
     hf_config = config.hf_config
-    max_bs = min(model_runner.config.max_num_seqs, 512)
+    all_N = graph_capture_buckets(model_runner, verify=True)
+    max_bs = max(all_N)
     k_plus_1 = model_runner.config.speculate_k + 1
 
     is_eagle_target = config.use_eagle and not model_runner.is_draft
@@ -431,6 +486,7 @@ def capture_verify_cudagraph(model_runner):
         max_bs, model_runner.max_num_blocks, dtype=torch.int32)
     outputs = torch.zeros(max_bs * k_plus_1, hf_config.hidden_size)
     cu_seqlens_q = torch.zeros(max_bs + 1, dtype=torch.int32)
+    state_slots = model_runner.state.graph_slots(max_bs) if stateful else None
 
     # Eagle target: also capture eagle_acts from model forward
     eagle_acts = None
@@ -445,18 +501,12 @@ def capture_verify_cudagraph(model_runner):
             dtype=hf_config.torch_dtype,
         )
 
-    base = [1, 2, 4, 8]
-    dynamic = list(range(16, max_bs+1, 16))
-    all_b = base + dynamic
-    if max_bs not in all_b:
-        all_b.append(max_bs)
-    all_b.sort()
-    all_N = [b for b in all_b if b <= max_bs]
-
     graphs = {}
     graph_pool = None
 
     for bs in reversed(all_N):
+        if stateful:
+            model_runner._state_slots = state_slots[:bs]
         graph = torch.cuda.CUDAGraph()
         # For verify, each sequence is length K+1, so seqlen_q is [K+1]*bs
         seqlen_q = torch.full((bs,), k_plus_1, dtype=torch.int32)
@@ -496,7 +546,7 @@ def capture_verify_cudagraph(model_runner):
             )
 
         # warmup
-        model_out = model_runner.model(
+        model_out = model_forward(
             input_ids[:bs * k_plus_1], positions[:bs * k_plus_1])
         if isinstance(model_out, tuple):
             outputs[:bs * k_plus_1] = model_out[0]
@@ -508,7 +558,7 @@ def capture_verify_cudagraph(model_runner):
             outputs[:bs * k_plus_1] = model_out
         with torch.cuda.graph(graph, graph_pool):
             # capture
-            model_out = model_runner.model(
+            model_out = model_forward(
                 input_ids[:bs * k_plus_1], positions[:bs * k_plus_1])
             if isinstance(model_out, tuple):
                 outputs[:bs * k_plus_1] = model_out[0]
@@ -530,10 +580,10 @@ def capture_verify_cudagraph(model_runner):
                     context_lens[:bs], block_tables[:bs], qo_indptr=cu,
                     graph_batch_size=bs, custom_mask=mask)
                 masked_outputs = torch.empty_like(outputs[:bs * k_plus_1])
-                model_runner.model(input_ids[:bs * k_plus_1], positions[:bs * k_plus_1])
+                model_forward(input_ids[:bs * k_plus_1], positions[:bs * k_plus_1])
                 masked_graph = torch.cuda.CUDAGraph()
                 with torch.cuda.graph(masked_graph, graph.pool()):
-                    masked_result = model_runner.model(
+                    masked_result = model_forward(
                         input_ids[:bs * k_plus_1], positions[:bs * k_plus_1])
                     masked_outputs.copy_(masked_result[0] if isinstance(masked_result, tuple)
                                          else masked_result)
@@ -560,6 +610,8 @@ def capture_verify_cudagraph(model_runner):
         cu_seqlens_q=cu_seqlens_q,
         outputs=outputs,
     )
+    if stateful:
+        graph_vars["state_slots"] = state_slots
     if eagle_acts is not None:
         graph_vars["eagle_acts"] = eagle_acts
     if jetspec_taps is not None:

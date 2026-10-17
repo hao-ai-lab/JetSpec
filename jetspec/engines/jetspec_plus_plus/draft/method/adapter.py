@@ -14,6 +14,8 @@ import torch.utils.checkpoint
 import torch.nn.functional as F
 from torch import nn
 
+from jetspec.engines.jetspec_plus_plus.draft.method.model_spec import AttentionSpec, ModelSpec
+
 
 CTXKV_HEAD_KEY = "ctxkv_head"
 
@@ -221,6 +223,19 @@ def _resolve_training_config(config, validate) -> dict:
             "'l1_attention_h2h', 'l1_attention_mlp', or 'l0_mlp'."
         )
     resolved = dict(raw)
+    if "target_text_config" in resolved:
+        target = resolved["target_text_config"]
+        if not isinstance(target, dict):
+            raise ValueError("target_text_config must describe attention geometry")
+        if resolved.get("hybrid_attention_source", "nearest_full_at_or_below") != "nearest_full_at_or_below":
+            raise ValueError("unsupported hybrid_attention_source")
+        for key in ("hidden_size", "intermediate_size", "num_attention_heads",
+                    "num_key_value_heads", "head_dim", "num_hidden_layers",
+                    "rope_parameters"):
+            if key not in target:
+                raise ValueError(f"target_text_config missing {key}")
+    elif "hybrid_attention_source" in resolved:
+        raise ValueError("hybrid_attention_source requires target_text_config")
     if "stream_depths" in resolved:
         stream_depths = resolved["stream_depths"]
         if (
@@ -434,7 +449,8 @@ def _resolve_training_config(config, validate) -> dict:
             if mode in {"l1_attention", "l1_attention_h2h", "l1_attention_mlp"}
             else "none_prefix_blind"
         )
-    validate(resolved, dflash_config)
+    if validate is not None:
+        validate(resolved, dflash_config)
     return resolved
 
 def resolve_ctxkv_head_config(config, *, training=False, validate=None) -> dict:
@@ -460,12 +476,12 @@ def resolve_ctxkv_head_config(config, *, training=False, validate=None) -> dict:
         raise ValueError(f"ctxkv_head carries keys serve does not read: {sorted(unread)}")
     if "target_text_config" in raw:
         target = raw["target_text_config"]
-        if (not isinstance(target, dict) or target.get("model_type") != "qwen3_5_text"
-                or raw.get("hybrid_attention_source") != "nearest_full_at_or_below"):
-            raise ValueError("qwen3_5_text requires hybrid_attention_source=nearest_full_at_or_below")
+        if not isinstance(target, dict):
+            raise ValueError("target_text_config must describe attention geometry")
+        if raw.get("hybrid_attention_source", "nearest_full_at_or_below") != "nearest_full_at_or_below":
+            raise ValueError("unsupported hybrid_attention_source")
         for key in ("hidden_size", "intermediate_size", "num_attention_heads",
-                    "num_key_value_heads", "head_dim", "num_hidden_layers",
-                    "full_attention_interval"):
+                    "num_key_value_heads", "head_dim", "num_hidden_layers"):
             value = target.get(key)
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ValueError(f"target_text_config.{key} must be a positive integer")
@@ -473,9 +489,11 @@ def resolve_ctxkv_head_config(config, *, training=False, validate=None) -> dict:
             raise ValueError("target and drafter hidden sizes must match for tap-aligned H-to-H")
         if target["num_attention_heads"] % target["num_key_value_heads"]:
             raise ValueError("target q heads must be divisible by kv heads")
-        if not isinstance(target.get("attn_output_gate"), bool):
+        if not isinstance(target.get("attn_output_gate", False), bool):
             raise ValueError("target_text_config.attn_output_gate must be boolean")
-        rope = target.get("rope_parameters")
+        rope = target.get("rope_parameters") or dict(
+            rope_type="default", rope_theta=target.get("rope_theta", config.rope_theta),
+            partial_rotary_factor=target.get("partial_rotary_factor", 1.0))
         if not isinstance(rope, dict) or rope.get("rope_type") != "default":
             raise ValueError("target_text_config requires default rope_parameters")
         theta, factor = rope.get("rope_theta"), rope.get("partial_rotary_factor", 1.0)
@@ -499,6 +517,9 @@ def resolve_ctxkv_head_config(config, *, training=False, validate=None) -> dict:
             raise ValueError("target rms_norm_eps must be finite and positive")
         if not isinstance(target.get("attention_bias", False), bool):
             raise ValueError("target attention_bias must be boolean")
+        if (target.get("norm_offset", 0) not in (0, 1)
+                or target.get("norm_round", "before_weight") not in {"before_weight", "after_weight"}):
+            raise ValueError("unsupported target norm parameters")
     elif "hybrid_attention_source" in raw:
         raise ValueError("hybrid_attention_source requires target_text_config")
     # These three published fields affected weight initialization or training loss only.
@@ -550,17 +571,24 @@ def resolve_ctxkv_head_config(config, *, training=False, validate=None) -> dict:
     return resolved
 
 class RMSNorm(nn.Module):
-    """Qwen3 arithmetic: fp32 statistics, weight multiply after the input-dtype cast."""
+    """Block norm with independent checkpoint offset and rounding order."""
 
-    def __init__(self, dim, eps=1e-6):
+    def __init__(self, dim, eps=1e-6, *, norm_offset=0, norm_round="before_weight"):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(dim))
+        if norm_round not in {"before_weight", "after_weight"}:
+            raise ValueError("unsupported norm rounding order")
+        self.norm_offset = norm_offset
+        self.norm_round = norm_round
+        self.weight = nn.Parameter(torch.zeros(dim) if norm_offset else torch.ones(dim))
         self.variance_epsilon = eps
 
     def forward(self, x):
         value = x.float()
         value = value * torch.rsqrt(value.pow(2).mean(-1, keepdim=True) + self.variance_epsilon)
-        return self.weight * value.to(x.dtype)
+        weight = self.weight if self.norm_offset == 0 else self.norm_offset + self.weight.float()
+        if self.norm_round == "after_weight":
+            return (value * weight.float()).to(x.dtype)
+        return (weight if self.norm_offset == 0 else weight.to(x.dtype)) * value.to(x.dtype)
 
 
 class MLP(nn.Module):
@@ -589,7 +617,10 @@ class RotaryEmbedding(nn.Module):
         if rope_type not in {"default", "linear"}:
             raise ValueError(f"unsupported adapter rope_type {rope_type!r}")
         width = int(getattr(config, "head_dim", config.hidden_size // config.num_attention_heads))
-        inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, width, 2).float() / width))
+        theta = getattr(config, "rope_theta", None)
+        if theta is None:
+            theta = config.rope_parameters["rope_theta"]
+        inv_freq = 1.0 / (theta ** (torch.arange(0, width, 2).float() / width))
         if rope_type == "linear":
             inv_freq = inv_freq / scaling["factor"]
         self.register_buffer("inv_freq", inv_freq, persistent=False)
@@ -615,22 +646,15 @@ def _is_block_mask(mask):
     return isinstance(mask, BlockMask)
 
 
-def _attention(q, k, v, *, attention_mask, scale):
+def _attention(q, k, v, *, attention_mask, scale, window_causal=False, prefix_count=None):
     return F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask, scale=scale)
 
 
-class HybridC1RMSNorm(nn.Module):
-    """Qwen3.5's offset weight and fp32 multiply, including the final dtype cast."""
+class HybridC1RMSNorm(RMSNorm):
+    """Compatibility constructor for checkpoints using offset norms."""
 
     def __init__(self, dim, eps):
-        super().__init__()
-        self.weight = nn.Parameter(torch.zeros(dim))
-        self.variance_epsilon = eps
-
-    def forward(self, x):
-        value = x.float()
-        value = value * torch.rsqrt(value.pow(2).mean(-1, keepdim=True) + self.variance_epsilon)
-        return (value * (1.0 + self.weight.float())).to(x.dtype)
+        super().__init__(dim, eps, norm_offset=1, norm_round="after_weight")
 
 def _c1_rotary(x, cos, sin):
     """Rotate only the C1 query or key, preserving the pinned L1 helper."""
@@ -697,26 +721,37 @@ class CtxKVC1Stream(nn.Module):
                  target_text_config=None, ffn_source=None, attention_fn=None):
         super().__init__()
         self._attention_fn = attention_fn or _attention
-        self.hybrid_target = target_text_config is not None
-        self.attn_output_gate = bool((target_text_config or {}).get("attn_output_gate", False))
-        rotary_config = config
-        norm_class = RMSNorm
-        if self.hybrid_target:
-            config = copy.deepcopy(config)
-            for key in ("hidden_size", "intermediate_size", "num_attention_heads",
-                        "num_key_value_heads", "head_dim", "rms_norm_eps",
-                        "hidden_act", "attention_bias"):
-                setattr(config, key, target_text_config.get(key, getattr(config, key)))
-            norm_class = HybridC1RMSNorm
-            # Text positions are identical in all three MRoPE axes. Their interleave
-            # therefore equals ordinary RoPE on just the selected rotary channels.
-            rotary_config = copy.deepcopy(config)
-            rope = target_text_config["rope_parameters"]
-            rotary_config.head_dim = int(config.head_dim * rope.get("partial_rotary_factor", 1.0))
-            rotary_config.rope_theta = rope["rope_theta"]
-            rotary_config.rope_scaling = None
-            if hasattr(rotary_config, "rope_parameters"):
-                rotary_config.rope_parameters = dict(rope_type="default", rope_theta=rope["rope_theta"])
+        target = target_text_config or {}
+        config = copy.deepcopy(config)
+        config.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        for key in ("hidden_size", "intermediate_size", "num_attention_heads",
+                    "num_key_value_heads", "head_dim", "rms_norm_eps",
+                    "hidden_act", "attention_bias"):
+            setattr(config, key, target.get(key, getattr(config, key)))
+        # Normalize checkpoint metadata once. Execution reads AttentionSpec.
+        spec_config = dict(vars(config))
+        spec_config.update(target)
+        spec_config["model_type"] = target.get("model_type", getattr(config, "model_type", "qwen3"))
+        # A block-only synthetic config need not describe a vocabulary or depth.
+        spec_config.setdefault("vocab_size", 1)
+        spec_config.setdefault("num_hidden_layers", 1)
+        depth = int(spec_config["num_hidden_layers"])
+        spec_config["layer_types"] = target.get("layer_types", ["full_attention"] * depth)
+        attention = ModelSpec.from_configs(spec_config).attention
+        self.attention_spec = AttentionSpec(
+            attention.q_heads, attention.kv_heads, attention.head_dim, attention.rotary_dim,
+            target.get("attn_output_gate", attention.output_gate),
+            target.get("norm_offset", attention.norm_offset),
+            target.get("norm_round", attention.norm_round))
+        self.attn_output_gate = self.attention_spec.output_gate
+        rotary_config = copy.deepcopy(config)
+        rope = target.get("rope_parameters", {})
+        rotary_config.head_dim = self.attention_spec.rotary_dim
+        rotary_config.rope_theta = target.get("rope_theta", rope.get("rope_theta", config.rope_theta))
+        rotary_config.rope_scaling = None if rope else getattr(config, "rope_scaling", None)
+        def norm_class(dim, eps):
+            return RMSNorm(dim, eps, norm_offset=self.attention_spec.norm_offset,
+                           norm_round=self.attention_spec.norm_round)
         self.hidden_size = int(config.hidden_size)
         self.num_heads = int(config.num_attention_heads)
         self.num_key_value_heads = int(config.num_key_value_heads)
@@ -769,6 +804,19 @@ class CtxKVC1Stream(nn.Module):
                 for piece, _ in TARGET_FFN_PIECES:
                     _freeze_weight_as_target_buffer(self.get_submodule(piece))
             self.ffn_source = ffn_source
+
+    @property
+    def dense_shape(self):
+        """Capability of the D128-only bound-weight specializations."""
+        spec = self.attention_spec
+        return (spec.head_dim == spec.rotary_dim == 128 and not spec.output_gate
+                and spec.norm_offset == 0 and spec.norm_round == "before_weight"
+                and self.q_proj.bias is None and isinstance(self.mlp.act_fn, nn.SiLU))
+
+    @property
+    def hybrid_target(self):
+        """Compatibility for older callers; execution uses AttentionSpec."""
+        return self.attention_spec.norm_offset == 1
 
     def project_kv(self, source):
         packed = getattr(self, "_fused_kv", None)
@@ -833,7 +881,9 @@ class CtxKVC1Stream(nn.Module):
             v = v.repeat_interleave(self.num_key_value_groups, dim=1)
 
         attended = self._attention_fn(
-            q, k, v, attention_mask=attention_mask, scale=self.scaling
+            q, k, v, attention_mask=attention_mask, scale=self.scaling,
+            window_causal=window_keys is not None and prefix_kv is None,
+            prefix_count=prefix_tap.shape[1],
         )
         attended = attended.transpose(1, 2).reshape(
             batch_size, query_count, self.num_heads * self.head_dim
@@ -857,11 +907,13 @@ class CtxKVC1Head(nn.Module):
     target_ffn_report = None
     checkpoint_blocks = 0
 
-    def __init__(self, config, *, resolved_config=None, training=False, attention_fn=None):
+    def __init__(self, config, *, resolved_config=None, training=False, attention_fn=None,
+                 stream_factory=None):
         super().__init__()
         self.resolved_config = (resolve_ctxkv_head_config(config)
                                 if resolved_config is None else resolved_config)
-        self.target_text_config = None if training else self.resolved_config.get("target_text_config")
+        self.target_text_config = self.resolved_config.get("target_text_config")
+        stream_factory = stream_factory or CtxKVC1Stream
         self.hidden_size = int(config.hidden_size)
         dflash_config = getattr(config, "dflash_config", None) or {}
         self.target_layer_ids = list(dflash_config.get("target_layer_ids", []))
@@ -891,14 +943,14 @@ class CtxKVC1Head(nn.Module):
                          "attention_fn": attention_fn}
         ffn_source = self.resolved_config.get("ffn_source")
         if training and ffn_source is not None:
-            if widths is not None or any(
-                    intermediate != base_intermediate for intermediate in self.mlp_intermediates):
+            if (widths is not None and ffn_source != "target_init") or any(
+                    intermediate < base_intermediate for intermediate in self.mlp_intermediates):
                 raise ValueError(
                     f"ffn_source={ffn_source} requires the target's own MLP width; "
-                    "per_tap_width_multiplier must be absent.")
+                    "unless target_init explicitly widens it.")
             stream_kwargs["ffn_source"] = ffn_source
         self.streams = nn.ModuleList(
-            CtxKVC1Stream(config, mlp_intermediate=intermediate, **stream_kwargs)
+            stream_factory(config, mlp_intermediate=intermediate, **stream_kwargs)
             for intermediate in self.mlp_intermediates
         )
         # C5's depth form. Kept ALONGSIDE `streams` rather than nesting them, so the
@@ -926,7 +978,7 @@ class CtxKVC1Head(nn.Module):
             raise ValueError("C1 serving supports ffn_source absent or target_init only")
         self.extra_stream_layers = nn.ModuleList(
             nn.ModuleList(
-                CtxKVC1Stream(config, mlp_intermediate=intermediate, **stream_kwargs)
+                stream_factory(config, mlp_intermediate=intermediate, **stream_kwargs)
                 for _ in range(self.stream_depths[index] - 1)
             )
             for index, intermediate in enumerate(self.mlp_intermediates)

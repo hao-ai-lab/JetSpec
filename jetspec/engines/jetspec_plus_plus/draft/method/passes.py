@@ -6,6 +6,7 @@ from typing import NamedTuple
 import torch
 
 from .ops import reference_op
+from .batching import prefix_lengths, sequence_slice, sequencewise
 from .schedule import normalized_label, completed_label, resolve_tau
 
 
@@ -17,6 +18,7 @@ class PassValues:
 
 
 @reference_op("jacobi_tokens")
+@sequencewise('logits', 4)
 def jacobi_tokens(logits, pinned_first=None, pinned_second=None, pins=None):
     """Argmax and token constraints, independent of pass bookkeeping."""
     tokens = logits.argmax(dim=-1)
@@ -30,6 +32,7 @@ def jacobi_tokens(logits, pinned_first=None, pinned_second=None, pins=None):
 
 
 @reference_op("apply_pins")
+@sequencewise('tokens', 3)
 def apply_pins(tokens, pins):
     if pins[0].ndim == 2:
         return torch.where(pins[0], pins[1], tokens)
@@ -43,6 +46,7 @@ def jacobi_converged(tokens, inputs):
 
 
 @reference_op("jacobi_pass")
+@sequencewise('input_tokens', 3, shared=('head_weight',))
 def reference_pass(logits, input_tokens, pinned_first=None, pinned_second=None, pins=None,
                    *, p_top1=None, head_weight=None, partials=None):
     """Argmax, pins, convergence and float32 softmax in served order."""
@@ -59,12 +63,30 @@ def reference_pass(logits, input_tokens, pinned_first=None, pinned_second=None, 
 def j0_fill(context_ids=None, *, block_size, seed=None, prompt_index=0,
             init_window=None, indices=None, pinned_first=None, gather_vec=False,
             noise_key=None, rows=1, vocab=None, mask_token=None,
-            out=None, active=None, finished=None, passes=None, err=None):
+            out=None, active=None, finished=None, passes=None, err=None, context_lengths=None):
     """J0 draws: reader CPU RNG, captured context indices, or keyed lab noise.
 
     These draw policies retain their original generators and draw geometry.
     The captured path receives already drawn indices and never reads a device scalar.
     """
+    if context_lengths is not None:
+        lengths = prefix_lengths(context_ids, context_lengths)
+        count = len(lengths)
+        outputs = []
+        for c, length in enumerate(lengths):
+            context = context_ids[c, :length]
+            if indices is None:
+                context = context[None]
+            outputs.append(j0_fill(
+                context, block_size=block_size, seed=sequence_slice(seed, c, count),
+                prompt_index=sequence_slice(prompt_index, c, count), init_window=init_window,
+                indices=indices if indices is None or indices.ndim == 1 else indices[c],
+                pinned_first=sequence_slice(pinned_first, c, count), gather_vec=gather_vec,
+                noise_key=noise_key, rows=rows, vocab=vocab, mask_token=mask_token,
+                out=sequence_slice(out, c, count), active=sequence_slice(active, c, count),
+                finished=sequence_slice(finished, c, count), passes=sequence_slice(passes, c, count),
+                err=sequence_slice(err, c, count)))
+        return out if out is not None else torch.stack(outputs)
     if noise_key is not None:
         draws = []
         inside = 0 <= mask_token < vocab

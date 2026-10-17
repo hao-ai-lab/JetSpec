@@ -362,15 +362,73 @@ _HISTORICAL_FIELDS = {
     ),
 }
 
+# Execution qualifications travel with the layer whose facts they depend on.
+# The engine lowers these closed defaults to its existing runtime fields.
+MODEL_EXECUTION_FIELDS = frozenset((
+    'adapter_gemm_tune', 'adapter_query_layout_fused', 'attention_backend', 'attn_sm100', 'attn_sm80',
+    'c1_append_fold', 'c1_attn_len', 'c1_gateup_packed', 'c1_gluon', 'c1_kv_split_lean',
+    'c1_qk_fused', 'c1_qk_warps', 'c1_span_kv_fused', 'candidate_decode_lean',
+    'chain_admit_host_lean', 'chain_post_lean', 'chain_refresh_key_bucket',
+    'ctx_kv_append', 'ctx_kv_direct', 'ctx_kv_fused',
+    'decoder_attn_len', 'decoder_gqa_view', 'decoder_lmhead_kn', 'decoder_prefix_merge',
+    'decoder_qkv_fused', 'decoder_select_radix', 'decoder_single_gateup_packed',
+    'decoder_slot_write', 'draft_streams', 'hybrid_c1_fused', 'hybrid_c1_gluon', 'hybrid_c1_lean',
+    'hybrid_decoder_refresh_state_lean', 'hybrid_fast_snapshot', 'hybrid_fused_norm',
+    'hybrid_pair', 'hybrid_verify_flashinfer', 'hybrid_verify_triton', 'j0_lmhead_kn',
+    'jpass_attn_len', 'k3_hazard_split', 'refresh_attn_lean', 'refresh_attn_tune',
+    'refresh_gateup_packed', 'refresh_inject_inclusive', 'refresh_inject_lean2',
+    'refresh_inject_mask_fused', 'refresh_kv_pack', 'refresh_prep_lean', 'refresh_qk_fused',
+    'refresh_streams', 'refresh_swap_glue', 'verify_outcome_fused', 'verify_plan_lean', 'verify_plan_reuse',
+    'verify_post_lean', 'verify_select_host', 'verify_select_lean',
+))
+METHOD_EXECUTION_DEFAULTS = {'refresh_swap': '1', 'refresh_fixed': '1',
+                             'chain_miss_redraft': '1', 'refresh_swap_lean': '1'}
+
+
+def _execution_defaults(value, fields, *, model=False):
+    groups = {'defaults', 'legacy', 'sm80', 'sm100'}
+    if not isinstance(value, dict) or not value or set(value) - (groups | {'capabilities', 'release_recipes'}):
+        return False
+    for group, settings in value.items():
+        if group == 'capabilities':
+            if (not model or not isinstance(settings, dict) or set(settings) != {'stateful'}
+                    or type(settings['stateful']) is not bool):
+                return False
+        elif group == 'release_recipes':
+            if (not model or not isinstance(settings, list) or not settings
+                    or not all(_record(row, {
+                        'architecture': lambda v: v in ('sm80', 'sm100'),
+                        'block_size': _positive_int,
+                        'schedule': lambda v: _record(v, {'j': _nonnegative_int, 'r': _nonnegative_int},
+                                                    ('j', 'r')),
+                        'recipe': _safe_file,
+                    }, ('architecture', 'block_size', 'schedule', 'recipe')) for row in settings)):
+                return False
+        elif (not isinstance(settings, dict) or not settings or set(settings) - fields
+              or any(item is not None and not isinstance(item, str) for item in settings.values())):
+            return False
+    return True
+
+
+def _model_execution(value):
+    return _execution_defaults(value, MODEL_EXECUTION_FIELDS, model=True)
+
+
+def _method_execution(value):
+    return _execution_defaults(value, set(METHOD_EXECUTION_DEFAULTS) | {
+        'chain_refresh_key_bucket', 'refresh_attn_lean', 'refresh_inject_inclusive',
+        'refresh_inject_lean2', 'refresh_kv_pack', 'refresh_prep_lean', 'refresh_swap_glue'})
+
+
 METHOD_SCHEMA = Schema(
     {**METHOD_SCHEMA.fields, **dict.fromkeys(_HISTORICAL_FIELDS['method'],
-        lambda value: value is None or isinstance(value, str))},
-    METHOD_SCHEMA.required, METHOD_SCHEMA.checks, METHOD_SCHEMA.atomic)
+        lambda value: value is None or isinstance(value, str)), 'method_execution': _method_execution},
+    METHOD_SCHEMA.required, METHOD_SCHEMA.checks, METHOD_SCHEMA.atomic + ('method_execution',))
 
 MODEL_SCHEMA = Schema(
     {**MODEL_SCHEMA.fields, **dict.fromkeys(_HISTORICAL_FIELDS['model'],
-        lambda value: value is None or isinstance(value, str))},
-    MODEL_SCHEMA.required, MODEL_SCHEMA.checks, MODEL_SCHEMA.atomic)
+        lambda value: value is None or isinstance(value, str)), 'model_execution': _model_execution},
+    MODEL_SCHEMA.required, MODEL_SCHEMA.checks, MODEL_SCHEMA.atomic + ('model_execution',))
 
 
 RANK_CONFIG_FIELDS = {

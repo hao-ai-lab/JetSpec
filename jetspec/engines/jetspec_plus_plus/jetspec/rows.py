@@ -21,6 +21,7 @@ from jetspec.engines.jetspec_plus_plus.legacy_env import environment_name
 try:
     import torch
     from torch import nn
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import DraftLinear, draft_linear
     from transformers.integrations.sdpa_attention import sdpa_attention_forward
 except ImportError:
     class _MissingTorch:
@@ -625,7 +626,7 @@ class RowDraftHead(nn.Module):
         self.run_config = run_config
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         super().__init__()
-        self.head = head
+        self.head = DraftLinear.bind(head)
         self.backend = backend
         self.workspace_bytes_per_row = int(workspace_bytes_per_row)
         self.layout = None
@@ -776,7 +777,7 @@ class RowDraftHead(nn.Module):
                 and config_values(run_config).get('engine.engine_settings.hybrid_context_dirty', '0') != '1') or packed is None:
             return False
         weight, bias, norms, width = packed
-        projected = torch.nn.functional.linear(hidden, weight, bias)
+        projected = draft_linear(hidden, weight, bias)
         if source_rows is not None:
             projected = projected.index_select(0, source_rows)
             hidden = hidden.index_select(0, source_rows)
@@ -825,7 +826,7 @@ class RowDraftHead(nn.Module):
             normalized = layer.input_layernorm(hidden)
             if hasattr(attn, '_fused_qkv'):
                 weight, bias, widths = attn._fused_qkv
-                qp, kp, vp = torch.nn.functional.linear(normalized, weight, bias).split(widths, dim=-1)
+                qp, kp, vp = draft_linear(normalized, weight, bias).split(widths, dim=-1)
             else:
                 qp, kp, vp = attn.q_proj(normalized), attn.k_proj(normalized), attn.v_proj(normalized)
             q = attn.q_norm(qp.reshape(-1, attn.config.num_attention_heads, attn.head_dim))
@@ -911,7 +912,7 @@ class RowDraftHead(nn.Module):
             residual = hidden
             if hasattr(attn, '_fused_qkv'):
                 weight, bias, widths = attn._fused_qkv
-                packed = torch.nn.functional.linear(normalized, weight, bias)
+                packed = draft_linear(normalized, weight, bias)
                 qp, kp, vp = packed.split(widths, dim=-1)
                 projected_kv = (kp, vp if lean else vp.contiguous())
             else:
@@ -943,7 +944,7 @@ class RowDraftHead(nn.Module):
                     mlp = layer.mlp
                     if gate_up_pack:
                         weight, bias, widths = mlp._j0_gate_up_packed
-                        gate, up = torch.nn.functional.linear(normalized, weight, bias).split(widths, dim=-1)
+                        gate, up = draft_linear(normalized, weight, bias).split(widths, dim=-1)
                     else:
                         gate = mlp.gate_proj(normalized)
                         up = mlp.up_proj(normalized)
@@ -961,7 +962,7 @@ class RowDraftHead(nn.Module):
 
 def project_row_logits(lm_head, hidden):
     """Project all r*16 block positions through one two-dimensional GEMM."""
-    logits = lm_head(hidden.reshape(-1, hidden.shape[-1]))
+    logits = DraftLinear.bind(lm_head, precision_role='lm_head')(hidden.reshape(-1, hidden.shape[-1]))
     return logits.reshape(*hidden.shape[:-1], logits.shape[-1])
 
 

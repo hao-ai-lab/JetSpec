@@ -360,6 +360,9 @@
       "JETSPEC_ROWS": "engine_settings.rows",
       "JETSPEC_ROWS_ASSEMBLY": "engine_settings.rows_assembly",
       "JETSPEC_ROWS_CAP": "engine_settings.rows_cap",
+      "JETSPEC_PRECISION_TARGET": "engine_settings.precision_target",
+      "JETSPEC_PRECISION_DRAFT": "engine_settings.precision_draft",
+      "JETSPEC_PRECISION_LM_HEAD": "engine_settings.precision_lm_head",
       "JETSPEC_ROWS_CTX_EARLY": "engine_settings.rows_ctx_early",
       "JETSPEC_ROWS_CTX_INCR": "engine_settings.rows_ctx_incr",
       "JETSPEC_ROWS_DEFER_HOME": "engine_settings.rows_defer_home",
@@ -575,6 +578,10 @@
     "engine": "JETSPEC_ENGINE",
     "verify_reference": "JETSPEC_VERIFY_REFERENCE",
     "serve_policy": "JETSPEC_SERVE_POLICY"
+  },
+  "execution_layers": {
+    "model": "model_execution",
+    "method": "method_execution"
   },
   "profiles": {
     "hybrid": {
@@ -2485,6 +2492,42 @@
         "allowed": null,
         "reader": "serve",
         "note": ""
+      },
+      "JETSPEC_PRECISION_TARGET": {
+        "name": "JETSPEC_PRECISION_TARGET",
+        "kind": "enum",
+        "default": "bf16",
+        "allowed": [
+          "bf16",
+          "fq_w4a16",
+          "fq_w4a4"
+        ],
+        "reader": "serve",
+        "note": "target projection precision"
+      },
+      "JETSPEC_PRECISION_DRAFT": {
+        "name": "JETSPEC_PRECISION_DRAFT",
+        "kind": "enum",
+        "default": "bf16",
+        "allowed": [
+          "bf16",
+          "fq_w4a16",
+          "fq_w4a4"
+        ],
+        "reader": "serve",
+        "note": "draft projection precision"
+      },
+      "JETSPEC_PRECISION_LM_HEAD": {
+        "name": "JETSPEC_PRECISION_LM_HEAD",
+        "kind": "enum",
+        "default": "bf16",
+        "allowed": [
+          "bf16",
+          "fq_w4a16",
+          "fq_w4a4"
+        ],
+        "reader": "serve",
+        "note": "target and draft vocabulary projection precision"
       },
       "JETSPEC_ROWS_CTX_EARLY": {
         "name": "JETSPEC_ROWS_CTX_EARLY",

@@ -77,6 +77,16 @@ def _point_mass_logits_q(logits_q, speculations, temperatures_target, temperatur
 
 class TargetRunner(ModelRunner):
 
+    @property
+    def hybrid_target(self):
+        """Keep the frozen reference verifier's capability read unchanged."""
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        return has_state(self)
+
+    def commit_hybrid_state(self, accepted):
+        """Route the frozen reference verifier's commit through the protocol."""
+        self.commit_state(accepted)
+
     def _capture_target_graphs(self):
         self._capture_jetspec_mixed_graphs()
 
@@ -139,10 +149,13 @@ class TargetRunner(ModelRunner):
 
     @torch.inference_mode()
     def prepare_staged_verify(self, seqs: list[Sequence]):
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
         staged = self._staged_verify
         if staged is None or staged[0] != tuple((id(seq), len(seq)) for seq in seqs):
             self._staged_verify = None
             return None
+        if has_state(self):
+            self.prepare_state(seqs)
         width = self.config.speculate_k + 1
         bucket = staged[1]
         gv = self.graph_vars["verify"]
@@ -172,7 +185,14 @@ class TargetRunner(ModelRunner):
     def _capture_jetspec_mixed_graphs(self):
         """Warm exact mixed shapes before serving, sharing one replay buffer/pool."""
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        from jetspec.engines.jetspec_plus_plus.serving.graphs import graph_capture_buckets
+        stateful = has_state(self)
+        model_forward = self.state_model_forward if stateful else self.model
         max_bs = self.config.max_num_seqs
+        batches = (graph_capture_buckets(self, verify=True) if stateful
+                   else list(range(1, max_bs + 1)))
+        max_bs = max(batches)
         width = self.config.speculate_k + 1
         rows = max_bs * width
         if self._verify_stage_blob_enabled:
@@ -212,6 +232,8 @@ class TargetRunner(ModelRunner):
             outputs=torch.empty(rows, self.hf_config.hidden_size,
                                 dtype=self.hf_config.torch_dtype, device=self.device),
         )
+        if stateful:
+            gv["state_slots"] = self.state.graph_slots(max_bs)
         if self._verify_stage_blob_enabled:
             for key in ("positions", "slot_mapping", "context_lens", "cu_seqlens_q"):
                 gv[key] = device_views[key]
@@ -232,7 +254,7 @@ class TargetRunner(ModelRunner):
             }
         self._jetspec_mixed_graphs = {}
         pool = None
-        shapes = ([(bs, full) for bs in range(max_bs, 1, -1)
+        shapes = ([(bs, full) for bs in reversed(batches) if bs > 1
                    for full in range(bs - 1, 0, -1)]
                   if ATTENTION_BACKEND == "flashinfer" else [])
         if (setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
@@ -265,10 +287,14 @@ class TargetRunner(ModelRunner):
                         static_q_len=count if bs == 1 else None,
                         static_kv_pages=1 if bs == 1 else None, causal_only=True)
                 try:
-                    self.model(gv["input_ids"][:count], gv["positions"][:count])
+                    if stateful:
+                        self._state_slots = gv['state_slots'][:bs]
+                    state_options = (dict(verify=True, query_lengths=(width,) * full + (1,) * (bs - full))
+                                     if stateful else {})
+                    model_forward(gv["input_ids"][:count], gv["positions"][:count], **state_options)
                     graph = torch.cuda.CUDAGraph()
                     with torch.cuda.graph(graph, pool=pool):
-                        result = self.model(gv["input_ids"][:count], gv["positions"][:count])
+                        result = model_forward(gv["input_ids"][:count], gv["positions"][:count], **state_options)
                         if self.config.jetspec_taps:
                             gv["outputs"][:count].copy_(result[0])
                             gv["taps"][:count].copy_(result[1])
@@ -410,6 +436,7 @@ class TargetRunner(ModelRunner):
     def _run_hybrid_mixed_eager(self, seq, proposals, width, prefix_len):
         """Stage an N=1 hybrid verify block through the eager target forward."""
         started = time.perf_counter()
+        self.prepare_state([seq])
         positions = torch.arange(prefix_len, prefix_len + width,
                                  dtype=torch.int64, device=self.device)
         kv_len = prefix_len + width
@@ -439,10 +466,11 @@ class TargetRunner(ModelRunner):
     @torch.inference_mode()
     def run_jetspec_mixed_device(self, seq: Sequence, proposals: torch.Tensor, full: bool):
         """Replay the N=1 mixed graph from device proposal IDs and static widths."""
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
-        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_hybrid_pair
-        if eager_hybrid_pair(self):
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
+        if eager_pair(self):
             # The same incremental pair protocol, with an uncaptured target
             # forward. All widths use the existing scratch-state commit below.
             if self.is_draft or not self.config.jetspec:
@@ -476,7 +504,7 @@ class TargetRunner(ModelRunner):
         prefix_len = getattr(seq, "_jetspec_last_packet_l", seq.num_cached_tokens)
         if prefix_len != seq.num_cached_tokens:
             raise RuntimeError("verify packet length differs from sequence metadata")
-        if (getattr(self, "hybrid_target", False)
+        if (has_state(self)
                 and getattr(self, "enforce_eager", False) and ssd_verify_device):
             return self._run_hybrid_mixed_eager(seq, proposals, width, prefix_len)
         graph = getattr(self, "_jetspec_mixed_graphs", {}).get((1, int(full)))
@@ -484,6 +512,11 @@ class TargetRunner(ModelRunner):
             raise RuntimeError("N=1 device mixed verify graph was not captured")
         stage_started = time.perf_counter()
         gv = self._jetspec_mixed_vars
+        if has_state(self):
+            from jetspec.engines.jetspec_plus_plus.models.state import stage_state_slots
+            self.prepare_state([seq])
+            stage_state_slots(self, gv, 1)
+            self.state.prepare_verify(self._state_slots, width)
         plan_host = self._jetspec_n1_plan_host[width]
         kv_len = prefix_len + width
         pages = (kv_len + self.block_size - 1) // self.block_size
@@ -713,8 +746,8 @@ class Verifier(VerifierBase):
     def prefill(self, seqs: list[Sequence], eagle: bool = False) -> VerifyResult:
         if self.hybrid_verify_audit and any(seq.temperature > 0 for seq in seqs):
             raise ValueError("JETSPEC_HYBRID_VERIFY_AUDIT only supports T=0 argmax auditing")
-        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_hybrid_pair
-        if (self._jetspec_verify_device or eager_hybrid_pair(self.target_model_runner)) and self._hash16_weights is None:
+        from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
+        if (self._jetspec_verify_device or eager_pair(self.target_model_runner)) and self._hash16_weights is None:
             self._hash16_weights = make_hash16_weights(self.device)
         if (self.lossless_dumper is not None or self.hybrid_verify_audit) and (not eagle or self.dump_eagle_prefill):
             result = self.target_model_runner.call("run", seqs, True, True, True)
@@ -769,6 +802,7 @@ class Verifier(VerifierBase):
 
     def verify(self, seqs: list[Sequence], speculate_result: SpeculateResult, eagle: bool = False) -> VerifyResult:
         """Verify speculative tokens using the target model."""
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         if speculate_result.jetspec_verify_mask is not None:
             return self._verify_jetspec(seqs, speculate_result)
@@ -789,7 +823,7 @@ class Verifier(VerifierBase):
                         for warning in seen))
                 return result
             return self._verify_jetspec_device(seqs[0], speculate_result)
-        if getattr(self.target_model_runner, "hybrid_target", False):
+        if has_state(self.target_model_runner):
             raise RuntimeError("hybrid speculative verify requires SSD_VERIFY_DEVICE=1")
         _prof = setting(self, 'engine.engine_settings.profile', '0') == "1"
         batch_size = len(seqs)
@@ -1237,6 +1271,7 @@ class Verifier(VerifierBase):
 
     def _verify_jetspec_device(self, seq: Sequence, speculate_result: SpeculateResult) -> VerifyResult:
         """N=1 verify with one small host outcome read after device commit."""
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled as profile_enabled
         # Recovery is staged for the next suffix, not accepted in this one.
@@ -1288,8 +1323,8 @@ class Verifier(VerifierBase):
         _census_mark("accept", run_config=getattr(self, 'run_config', None))
         count, recovery = counts[0], recoveries[0]
         suffix_len = count + 1
-        if getattr(self.target_model_runner, "hybrid_target", False):
-            self.target_model_runner.commit_hybrid_state(suffix_len)
+        if has_state(self.target_model_runner):
+            self.target_model_runner.commit_state(suffix_len)
         outcome_fused = getattr(self, "_jetspec_verify_outcome_fused", False)
         if outcome_fused:
             if blockhead or self.device.type != "cuda" or not self._jetspec_verify_device:

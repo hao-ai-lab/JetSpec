@@ -265,8 +265,8 @@ class PairOutcomeTransport:
         if dist.get_world_size(group) != 2 or self.rank not in (0, 1):
             raise ValueError("pair outcome transport requires exactly two ranks")
         self.device = torch.device(device)
-        dense_bytes = 16 * 8 + lanes * 5 * hidden * torch.empty(
-            (), dtype=tap_dtype).element_size()
+        from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeLayout
+        dense_bytes = OutcomeLayout(lanes, hidden, tap_dtype).outcome_bytes
         if envelope_bytes is not None and envelope_bytes < dense_bytes:
             raise ValueError("pair envelope cannot truncate the dense packet and taps")
         self.envelope_bytes = dense_bytes if envelope_bytes is None else envelope_bytes

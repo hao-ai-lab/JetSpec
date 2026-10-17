@@ -779,8 +779,7 @@ def resolve_max_model_len(prompts_json, count, tokens, method, environment, targ
                 f"{length} prompt tokens + --tokens {tokens} + lookahead {lookahead} = "
                 f"{length + tokens + lookahead}")
     target_config = json.loads((Path(target) / "config.json").read_text(encoding="utf-8"))
-    if target_config.get("model_type") == "qwen3_5":
-        target_config = target_config["text_config"]
+    target_config = target_config.get("text_config", target_config)
     # The engine's position and batch limits bound the served value (Config.__post_init__ would
     # silently clamp it); a drafter's fixed context cache bounds the context it must hold.
     ceilings = [("target max_position_embeddings", value,
@@ -1113,11 +1112,47 @@ def _artifact_files(artifact):
     return result
 
 
-def _resolve_hybrid_placeholder(recipe, target, host, artifacts_dir, artifacts,
-                                sources, bundle_override, bundle_pin):
-    """Resolve pinned hybrid bundles, including the config-selected trained adapter."""
-    if (bundle_override is None) != (bundle_pin is None):
-        raise ValueError("BUNDLE_PIN_REQUIRED: hybrid override and pin must be paired")
+def _resolve_head_thresholds(bundle, declared_sha256, *, pin=None):
+    """Resolve every served head's threshold pin through one model-independent path."""
+    if pin is None:
+        return declared_sha256
+    if not isinstance(pin, dict) or pin.get('schema') not in (
+            'jetspec.hybrid_thresholds_pin/1', 'eng04.ablation_bundle_pin/1'):
+        raise ValueError('thresholds override requires a thresholds pin receipt')
+    digest = pin.get('thresholds_sha256')
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise ValueError('thresholds pin requires thresholds_sha256')
+    if _sha256(Path(bundle) / 'thresholds.json') != digest:
+        raise ValueError('thresholds override SHA256 mismatch')
+    return digest
+
+
+def _apply_head_thresholds(resolved, recipe, override, bundle_pin):
+    """Apply the same threshold-only overlay to published or generated heads."""
+    paths, expected, pins, sources = resolved
+    override = Path(override)
+    digest = _resolve_head_thresholds(override, recipe['thresholds_sha256'], pin=bundle_pin)
+    # The override directory supplies only new thresholds. Its decoder must
+    # remain byte-identical to the recipe's verified target-slice manifest.
+    if _sha256(override / "decoder/manifest.json") != expected["heads/decoder_manifest"]:
+        raise ValueError("thresholds override decoder manifest SHA256 mismatch")
+    expected["heads/thresholds"] = digest
+    pins["thresholds_override"] = {
+        "directory": str(override), "sha256": digest,
+        "base_directory": str(paths["bundle"]),
+        "base_sha256": recipe["thresholds_sha256"],
+    }
+    pins["checkpoints"]["served_heads"] = {
+        "directory": str(override), "files": {
+            "thresholds.json": {"sha256": digest},
+            "decoder/manifest.json": {"sha256": expected["heads/decoder_manifest"]}}}
+    paths["bundle"] = override
+    sources["bundle"] = "explicit_thresholds_override"
+    return paths, expected, pins, sources
+
+
+def _resolve_generated_heads(recipe, target, host, artifacts_dir, artifacts, sources):
+    """Resolve the generated artifact layout, including trained adapter views."""
     keys = {"adapter": recipe["adapter_artifact"],
             "drafter": recipe["drafter_artifact"],
             "target_release": recipe["target_release_artifact"],
@@ -1129,7 +1164,7 @@ def _resolve_hybrid_placeholder(recipe, target, host, artifacts_dir, artifacts,
                and artifacts[keys["drafter"]]["kind"] == "published")
     release_name = "target_release_weights.safetensors" if trained else "model.safetensors"
     paths = {"target": target, "compile_pin": None, "blockhead": None}
-    expected = {"heads/thresholds": recipe["thresholds_sha256"]}
+    expected = {"heads/thresholds": _resolve_head_thresholds(None, recipe["thresholds_sha256"])}
     checkpoints = {}
     for role, key in keys.items():
         if trained and role == "target_release":
@@ -1172,32 +1207,6 @@ def _resolve_hybrid_placeholder(recipe, target, host, artifacts_dir, artifacts,
             raise ValueError(f"hybrid placeholder target SHA256 mismatch: {name}")
         expected[f"heads/decoder_target/{name}"] = sha
     pins = {"checkpoints": checkpoints}
-    if bundle_override is not None:
-        if (not isinstance(bundle_pin, dict) or bundle_pin.get("schema") not in
-                ("jetspec.hybrid_thresholds_pin/1", "eng04.ablation_bundle_pin/1")):
-            raise ValueError("hybrid thresholds override requires a thresholds pin receipt")
-        override = Path(bundle_override)
-        digest = bundle_pin.get("thresholds_sha256")
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise ValueError("hybrid thresholds pin requires thresholds_sha256")
-        if _sha256(override / "thresholds.json") != digest:
-            raise ValueError("hybrid thresholds override SHA256 mismatch")
-        # The override directory supplies only new thresholds. Its decoder must
-        # remain byte-identical to the recipe's verified target-slice manifest.
-        if _sha256(override / "decoder/manifest.json") != expected["heads/decoder_manifest"]:
-            raise ValueError("hybrid thresholds override decoder manifest SHA256 mismatch")
-        expected["heads/thresholds"] = digest
-        pins["thresholds_override"] = {
-            "directory": str(override), "sha256": digest,
-            "base_directory": str(paths["bundle"]),
-            "base_sha256": recipe["thresholds_sha256"],
-        }
-        checkpoints["served_heads"] = {
-            "directory": str(override), "files": {
-                "thresholds.json": {"sha256": digest},
-                "decoder/manifest.json": {"sha256": expected["heads/decoder_manifest"]}}}
-        paths["bundle"] = override
-        sources["bundle"] = "explicit_thresholds_override"
     return paths, expected, pins, sources
 
 
@@ -1262,9 +1271,18 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
             "adapter": None, "drafter": None, "bundle": None,
             "target": target, "compile_pin": None, "blockhead": checkpoint,
         }, {f"blockhead/{name}": sha for name, sha in declared.items()}, None, sources
-    if recipe.get("environment", {}).get(environment_name('engine', 'engine_settings.hybrid_pair')) == "1":
-        return _resolve_hybrid_placeholder(recipe, target, host, artifacts_dir,
-                                           artifacts, sources, bundle_override, bundle_pin)
+    generated = artifacts.get(recipe['bundle_artifact'], {}).get('kind') == 'generated'
+    if (bundle_override is None) != (bundle_pin is None):
+        raise ValueError('BUNDLE_PIN_REQUIRED: override and pin must be paired')
+    threshold_only = generated or (isinstance(bundle_pin, dict)
+        and bundle_pin.get('schema') == 'jetspec.hybrid_thresholds_pin/1')
+    if generated:
+        resolved = _resolve_generated_heads(recipe, target, host, artifacts_dir, artifacts, sources)
+        return (_apply_head_thresholds(resolved, recipe, bundle_override, bundle_pin)
+                if bundle_override is not None else resolved)
+    if bundle_override is not None and threshold_only:
+        resolved = _resolve_artifacts(recipe, host, artifacts_dir, artifacts)
+        return _apply_head_thresholds(resolved, recipe, bundle_override, bundle_pin)
     drafter_key = recipe["drafter_artifact"]
     adapter_key = recipe.get("adapter_artifact", "adapter_head")
     release_key = recipe["target_release_artifact"]
@@ -1330,7 +1348,7 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
                          ("decoder/checkpoint-0.pt", bundle_pin.get("decoder_sha256")),
                          ("decoder/manifest.json", bundle_pin.get("decoder_manifest_sha256"))) if target_slice else (
                              ("decoder/checkpoint-final-model.pt", bundle_pin.get("decoder_sha256")),)
-        for name, digest in (*decoder_files, ("thresholds.json", bundle_pin.get("thresholds_sha256"))):
+        for name, digest in decoder_files:
             if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
                 raise ValueError(f"BUNDLE_PIN_INVALID: {name}")
             if _sha256(bundle / name) != digest:
@@ -1351,7 +1369,7 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
     expected = {
         "adapter/config": _artifact_files(artifacts[adapter_key])["config.json"],
         "adapter/head": _artifact_files(artifacts[adapter_key])["head.safetensors"],
-        "heads/thresholds": recipe["thresholds_sha256"],
+        "heads/thresholds": _resolve_head_thresholds(bundle, recipe["thresholds_sha256"]),
     }
     drafter_files = _artifact_files(artifacts[drafter_key])
     for name in ("config.json", "dflash.py", "model.safetensors"):
@@ -1398,7 +1416,8 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
                 expected[f"heads/decoder_target/{name}"] = digest
         else:
             expected["heads/decoder"] = bundle_pin["decoder_sha256"]
-        expected["heads/thresholds"] = bundle_pin["thresholds_sha256"]
+        expected["heads/thresholds"] = _resolve_head_thresholds(
+            bundle, recipe["thresholds_sha256"], pin=bundle_pin)
     pin_payload = {"checkpoints": {
         "adapter_head": {"directory": str(adapter), "files": {
             name: {"sha256": value} for name, value in _artifact_files(
@@ -2743,6 +2762,8 @@ def _plan_model_paths(plan):
 def _child(plan_path, *, resident=None, run_config=None):
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     run_config, _ = child_run_config(plan, os.environ)
+    from jetspec.engines.jetspec_plus_plus.run_config import apply_child_concurrency
+    apply_child_concurrency(plan, run_config)
     _install_roundtrace(run_config)
     _startup_stamp("child_start")
     sys.path.insert(0, str(ROOT / "engine"))
@@ -3075,6 +3096,8 @@ def _main_sync(args):
             plan_path = scratch / f"plan-{index}.json"
             from jetspec.engines.jetspec_plus_plus.run_config import launch_overlay, child_environment
             plan['launch_overlay'] = launch_overlay(environment)
+            from jetspec.engines.jetspec_plus_plus.run_config import config_batch_overlay
+            plan['launch_overlay'].update(config_batch_overlay(args))
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
             command = [sys.executable, str(Path(__file__).resolve()),
                        "--internal-plan", str(plan_path)]
@@ -3215,6 +3238,8 @@ def prepare_wire_records(method, mode, output, child_environment):
 def _main(args, *, resident=None):
     pin_environment = compile_pin_environment(args)
     args.batch = getattr(args, "batch", 1)
+    from jetspec.engines.jetspec_plus_plus.run_config import config_concurrency
+    args.batch = config_concurrency(args, args.batch)
     if str(ROOT / "engine") not in sys.path:
         sys.path.insert(0, str(ROOT / "engine"))
     from jetspec.engines.jetspec_plus_plus.jetspec.env import require_recipe_launch
@@ -3571,6 +3596,8 @@ def _main(args, *, resident=None):
                 if plan.get('chain_warm_read'):
                     child_environment[environment_name('engine', 'engine_settings.chain_warm_read')] = json.dumps(plan['chain_warm_read'])
                 plan['launch_overlay'] = launch_overlay(child_environment)
+                from jetspec.engines.jetspec_plus_plus.run_config import config_batch_overlay as batch_overlay
+                plan['launch_overlay'].update(batch_overlay(args))
                 plan_path.write_text(json.dumps(plan), encoding='utf-8')
                 child_environment = process_environment(child_environment)
                 done = (_run_child_with_rank_watch if resident is None else resident.read)(

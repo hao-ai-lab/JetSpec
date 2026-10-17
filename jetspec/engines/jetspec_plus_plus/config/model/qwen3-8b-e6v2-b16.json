@@ -1,4 +1,70 @@
 {
+  "model_execution": {
+    "release_recipes": [
+      {
+        "architecture": "sm80",
+        "block_size": 16,
+        "schedule": {
+          "j": 1,
+          "r": 0
+        },
+        "recipe": "jetspecpp-graphed-pair-e6-b16-chain-r4-j1-lean-sm80"
+      }
+    ],
+    "defaults": {
+      "adapter_gemm_tune": "1",
+      "adapter_query_layout_fused": "1",
+      "attention_backend": "flashinfer",
+      "attn_sm100": "1",
+      "c1_append_fold": "1",
+      "c1_attn_len": "1",
+      "c1_gateup_packed": "1",
+      "c1_gluon": "1",
+      "c1_kv_split_lean": "1",
+      "c1_qk_fused": "1",
+      "c1_qk_warps": "4",
+      "c1_span_kv_fused": "1",
+      "candidate_decode_lean": "1",
+      "chain_admit_host_lean": "1",
+      "chain_post_lean": "1",
+      "ctx_kv_append": "1",
+      "ctx_kv_fused": "1",
+      "decoder_attn_len": "1",
+      "decoder_gqa_view": "1",
+      "decoder_lmhead_kn": "1",
+      "decoder_prefix_merge": "1",
+      "decoder_qkv_fused": "1",
+      "decoder_select_radix": "1",
+      "decoder_single_gateup_packed": "1",
+      "decoder_slot_write": "1",
+      "j0_lmhead_kn": "1",
+      "jpass_attn_len": "1",
+      "k3_hazard_split": "1",
+      "refresh_attn_lean": "1",
+      "refresh_attn_tune": "1",
+      "refresh_gateup_packed": "1",
+      "refresh_inject_inclusive": "1",
+      "refresh_inject_lean2": "1",
+      "refresh_inject_mask_fused": "1",
+      "refresh_kv_pack": "1",
+      "refresh_prep_lean": "1",
+      "refresh_qk_fused": "1",
+      "refresh_swap_glue": "1",
+      "verify_outcome_fused": "1",
+      "verify_plan_lean": "1",
+      "verify_post_lean": "1",
+      "verify_select_lean": "1",
+      "ctx_kv_direct": "1",
+      "draft_streams": "1",
+      "refresh_streams": "1",
+      "verify_select_host": "1",
+      "verify_plan_reuse": "1",
+      "chain_refresh_key_bucket": "1"
+    },
+    "capabilities": {
+      "stateful": false
+    }
+  },
   "adapter": {
     "artifact": "jetspecpp_e6_adapter",
     "config_sha256": "893b04ba54b9be76fee4754ea59338d87d340f68562e636637d5e7f8e093eb4d",

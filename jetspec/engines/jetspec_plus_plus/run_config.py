@@ -6,7 +6,7 @@ import re
 from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, config_hash, flatten, validate, validate_fields
 from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import METHOD_SCHEMA, MODEL_SCHEMA
 from jetspec.engines.jetspec_plus_plus.config_schemas import (ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA,
-                                          RANK_CONFIG_FIELDS)
+                                          RANK_CONFIG_FIELDS, BATCH_DEFAULTS, check_batch_capacity)
 from jetspec.engines.jetspec_plus_plus.legacy_env import ENV_FIELDS, serving_environment, environment_name
 
 
@@ -186,6 +186,9 @@ def _project(resolved, environment=None):
             for parent in parents:
                 cursor = cursor.setdefault(parent, {})
             cursor[key] = value
+        for (owner, key), default in BATCH_DEFAULTS.items():
+            if owner == category and key in leaves and leaves[key] != default:
+                section[key] = leaves[key]
         validate_fields(section, schema.fields, (), category, atomic=schema.atomic)
         sections[category] = FrozenMapping.from_mapping(section)
     return sections
@@ -201,6 +204,21 @@ class RunConfig:
     config_sha256: str | None = field(default=None, compare=False)
     provided_values: FrozenMapping = field(default_factory=lambda: FrozenMapping(()), compare=False)
 
+    @property
+    def concurrency(self):
+        return self.benchmark.get('concurrency', BATCH_DEFAULTS[('benchmark', 'concurrency')])
+
+    @property
+    def batch_capacity(self):
+        return FrozenMapping.from_mapping({key: self.engine.get(key, default)
+            for (owner, key), default in BATCH_DEFAULTS.items() if owner == 'engine'})
+
+    def batch_overlay(self):
+        """Typed launch values; defaults are effective without entering config identity."""
+        return {_dotted(('benchmark', 'concurrency')): self.concurrency,
+                **{_dotted(('engine', key)): list(value) if isinstance(value, tuple) else value
+                   for key, value in self.batch_capacity.items()}}
+
     @classmethod
     def from_overlay(cls, overlay, resolved=None, *, model_entry=None):
         """Read a complete launch overlay without consulting the process environment."""
@@ -208,7 +226,7 @@ class RunConfig:
                     for name, path in fields.items()}
         if not isinstance(overlay, Mapping):
             raise ValueError('missing launch_overlay section')
-        unknown = overlay.keys() - bindings.keys()
+        unknown = overlay.keys() - bindings.keys() - {_dotted(path) for path in BATCH_DEFAULTS}
         missing = bindings.keys() - overlay.keys()
         if unknown:
             raise ValueError(f'launch_overlay keys without a RunConfig binding: {sorted(unknown)}')
@@ -219,9 +237,25 @@ class RunConfig:
             if model_entry is None:
                 model_entry = resolved['model']
         record = cls.from_environment({bindings[path]: value for path, value in overlay.items()
-                                       if value is not None}, model_entry=model_entry)
-        return cls(record.method, record.model, record.engine, record.hardware, record.benchmark,
-                   config_hash(resolved) if resolved is not None else None, record.provided_values)
+                                       if path in bindings and value is not None}, model_entry=model_entry)
+        native = {category: {} for category in CATEGORIES}
+        for (category, key), default in BATCH_DEFAULTS.items():
+            path = _dotted((category, key))
+            expected = resolved[category].get(key, default) if resolved is not None else default
+            value = overlay.get(path, default)
+            if resolved is not None and value != expected:
+                raise ValueError(f'launch_overlay {path} disagrees with resolved config')
+            native[category][key] = value
+        for category in ('engine', 'benchmark'):
+            schema = _SCHEMAS[category]
+            validate_fields(native[category], schema.fields, (), category, atomic=schema.atomic)
+        check_batch_capacity(native)
+        sections = {category: FrozenMapping.from_mapping({**getattr(record, category),
+                        **{key: value for key, value in native[category].items()
+                           if value != BATCH_DEFAULTS[(category, key)]}})
+                    for category in CATEGORIES}
+        return cls(**sections, config_sha256=config_hash(resolved) if resolved is not None else None,
+                   provided_values=record.provided_values)
 
     @classmethod
     def from_config(cls, resolved, *, launch_environment=None):
@@ -268,3 +302,38 @@ class RunConfig:
         return cls(**_project(resolved), provided_values=FrozenMapping.from_mapping({
             f'{bindings[name][0]}.{bindings[name][1]}': value
             for name, value in environ.items() if value is not None}))
+
+
+def _dotted(path):
+    """Join a (category, field) pair into its launch-overlay key."""
+    return '.'.join(path)
+
+
+def child_bench_arguments(plan, run_config):
+    """Five-entry children derive C from the immutable rank record."""
+    arguments = list(plan['bench_arguments'])
+    if plan.get('config_read') is not None:
+        if '--b' in arguments:
+            index = arguments.index('--b')
+            arguments[index + 1] = str(run_config.concurrency)
+        else:
+            arguments.extend(['--b', str(run_config.concurrency)])
+    return arguments
+
+
+def apply_child_concurrency(plan, run_config):
+    """Set a five-entry child's C from RunConfig; recipe-only plans keep their arguments."""
+    plan['bench_arguments'] = child_bench_arguments(plan, run_config)
+    if plan.get('config_read') is not None:
+        plan['batch'] = run_config.concurrency
+
+
+def config_batch_overlay(args):
+    """The typed batch overlay of a five-entry read; empty for recipe-only launches."""
+    return dict((getattr(args, 'config_read', None) or {}).get('launch_overlay', {}))
+
+
+def config_concurrency(args, default):
+    """C for the parent launcher: from the resolved config when present, else the argv default."""
+    record = getattr(args, 'config_read', None)
+    return default if record is None else RunConfig.from_config(record['config']).concurrency
