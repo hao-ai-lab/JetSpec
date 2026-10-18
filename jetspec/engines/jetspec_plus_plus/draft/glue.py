@@ -77,9 +77,19 @@ def mask_token_guard(ids: torch.Tensor, active: torch.Tensor,
 
 
 def j0_prep(committed, rp, keys, active, ids, finished, passes, err,
-            *, owns_err: bool) -> None:
+            *, owns_err: bool, pin_slot=None, pin_mask=None) -> None:
     """Fill J0 ids and reset pass outputs with device-side RNG indices."""
     lanes = ids.shape[1]
+    if pin_slot is not None:
+        if ids.is_cuda and triton is not None:
+            _j0_prep[(1,)](committed, rp[Offset.RNG_IDX:], keys[:, 1], active,
+                ids, finished, passes, err, ids.shape[0], lanes, owns_err,
+                triton.next_power_of_2(ids.numel()), PIN_SLOT=pin_slot,
+                PIN_MASK=pin_mask, RESET_PINS=True, DENSE_PINS=pin_mask is not None)
+            return
+        pin_slot.fill_(-1)
+        if pin_mask is not None:
+            pin_mask.zero_()
     j0_fill(committed, block_size=lanes,
             indices=rp[Offset.RNG_IDX:Offset.RNG_IDX + lanes - 1],
             pinned_first=keys[:, 1:2], out=ids, active=active,
@@ -155,3 +165,47 @@ def context_copy_mark(length: torch.Tensor, prefix: torch.Tensor,
         block = 256
         _context_copy_mark[(triton.cdiv((p + t) * hidden, block),)](
             length, prefix, tail, embedding, context, p, t, hidden, block)
+
+
+def context_gather_mark(old_length, length, prefix, tail, embedding, context,
+                        cos_table, sin_table, ccos, csin, hidden, cos, sin,
+                        source, slots, previous) -> None:
+    """T9: stage fixed-width dirty inputs and update only appended/tail context rows.
+
+    Inactive append lanes gather prefix row zero and write to private noise KV
+    slots, exactly as chain_context_dirty_rows. Keep the touched context and tail
+    rotary rows current for the independent context-KV audit and T11 geometry.
+    The caller advances old_length after this launch; writing it here would race
+    other CTAs reading the old length.
+    """
+    p, width = prefix.shape
+    t, dim = tail.shape[1], cos.shape[1]
+    block = source.numel() - t
+    if length.is_cuda and triton is not None:
+        from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import _context_gather_mark
+        _context_gather_mark[(block + t, triton.cdiv(width, 256))](
+            old_length, length, prefix, tail, embedding, context,
+            cos_table, sin_table, ccos, csin, hidden, cos, sin, source, slots, previous,
+            p, t, width, block, dim, cos_table.stride(0), cos_table.stride(1),
+            sin_table.stride(0), sin_table.stride(1), 256, triton.next_power_of_2(dim),
+            enable_fp_fusion=False)
+        return
+    from jetspec.engines.jetspec_plus_plus.jetspec.rows import chain_context_dirty_rows
+    selected, destinations = chain_context_dirty_rows(
+        old_length, length, prefix=p, tail=t, block=block, noise_start=p + t)
+    previous.copy_(old_length)
+    source.copy_(selected)
+    slots.copy_(destinations)
+    prefix_rows = selected[:block]
+    base = prefix.index_select(0, prefix_rows)
+    base = torch.where((prefix_rows < length)[:, None], base, 0)
+    hidden[:block].copy_(base + embedding[0])
+    hidden[block:].copy_(tail[0] + embedding[1])
+    live = destinations[:block] < p
+    context[0, destinations[:block][live]] = hidden[:block][live]
+    context[0, p:].copy_(hidden[block:])
+    positions = torch.where(selected < p, selected, length + selected - p)
+    cos.copy_(cos_table.index_select(0, positions))
+    sin.copy_(sin_table.index_select(0, positions))
+    ccos[p:].copy_(cos[block:])
+    csin[p:].copy_(sin[block:])

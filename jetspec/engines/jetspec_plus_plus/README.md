@@ -21,12 +21,20 @@ Serving requires Linux, two CUDA GPUs with peer access, a CUDA compiler, and
 ninja. The 27B preview also requires the target's hybrid attention dependencies.
 CPU imports defer accelerator dependencies; execution requires the real kernels.
 
+Each model has one checkpoint repository. The drafter is at its root, the
+adapter is in `adapter/`, and the calibration (the heads bundle) is in
+`calibration/`:
+
+```sh
+hf download JetSpec/jetspec-plus-plus-qwen3-8b --local-dir jspp-8b
+hf download JetSpec/jetspec-plus-plus-qwen3p8-27b --local-dir jspp-27b
+```
+
 ```sh
 python -m jetspec.engines.jetspec_plus_plus \
   --model qwen3-8b \
-  --target /path/to/target --drafter /path/to/drafter \
-  --adapter /path/to/adapter --heads-bundle /path/to/heads \
-  --target-release /path/to/release \
+  --target /path/to/Qwen3-8B --drafter jspp-8b \
+  --adapter jspp-8b/adapter --heads-bundle jspp-8b/calibration \
   --prompts-json /path/to/prompts.json --count 8 --tokens 2048 \
   --devices 0,1 --output-json /path/to/read.json \
   --cache-root /path/to/compiler-cache
@@ -48,9 +56,9 @@ own serving configuration.
 | either | `ar` (graphed autoregressive baseline, one GPU) | `fast` | 8.x, 10.x |
 
 A combination outside this table stops with the list of supported ones.
-The release directory supplies `target_release_weights.safetensors`; it may be
-omitted when the drafter directory contains the release file. Artifact files
-must match the manifest's pinned hashes.
+The engine takes the drafter's embedding and LM head from the target. Only the
+`reference` engine still reads a separate release file through `--target-release`.
+Artifact files must match the manifest's pinned hashes.
 
 Prompts are exported JSON rows with `index` and `token_ids`. Temperature is zero,
 the default dataset is `gsm8k`, and the default count is two. Outputs retain the

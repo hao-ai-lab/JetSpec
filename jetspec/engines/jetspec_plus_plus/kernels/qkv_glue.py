@@ -18,6 +18,12 @@ def qkv_norm_rotary_cache(query, key, value, q_weight, k_weight, cos, sin,
             or cache.shape[1:] != (2, 1, kv_heads, dim) or cache.stride(-1) != 1):
         raise ValueError('QKV glue requires dense BF16 CUDA head columns and paged KV')
     output = query.new_empty(rows, q_heads, dim)
+    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    if kernel_enabled('draft_fuse_t6'):
+        from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t6 import qkv_into
+        qkv_into(query, key, value, q_weight, k_weight, cos, sin, output,
+                 cache, slots, span, q_eps, k_eps, q_heads, kv_heads, dim)
+        return output
     global _postprocess
     if _postprocess is None:
         _postprocess = _kernel()

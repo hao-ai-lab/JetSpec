@@ -102,11 +102,21 @@ class ModelState:
                          else self.slots.alloc(capacity))
         if self.stateful and capacity == 1:
             self.reserved.zero_()
+        # A verify holds at most one row per live sequence, so snapshots need C rows.
+        # Reserved/probe slots need committed state but no extra snapshot rows.
         for mixer in self.kinds:
-            mixer.configure_slots(capacity if capacity == 1 else 2 * capacity)
+            if capacity == 1:
+                mixer.configure_slots(1)
+            else:
+                mixer.configure_slots(2 * capacity, verify_rows=capacity)
             mixer._slots = SlotAllocator(capacity, device=device)
         if not self.kinds:
             self.kinds = [self.slots]
+        # verify_cut_commit27b: the pointer table and kernel are built here, before graph capture.
+        self._commit_all = None
+        if self.stateful and any(getattr(mixer, 'verify_cut_commit27b', False) for mixer in self.kinds):
+            from jetspec.engines.jetspec_plus_plus.kernels.verify_commit27b import LayerCommit
+            self._commit_all = LayerCommit(self.kinds)
 
     def alloc(self, n):
         slots = self.slots.alloc(n)
@@ -124,6 +134,9 @@ class ModelState:
             mixer.prepare_verify(slot_ids, width)
 
     def commit(self, slot_ids, accepted_counts):
+        commit_all = getattr(self, '_commit_all', None)
+        if commit_all is not None and commit_all(accepted_counts):
+            return
         for mixer in self.kinds:
             mixer.commit(slot_ids, accepted_counts)
 

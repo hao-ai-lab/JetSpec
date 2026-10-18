@@ -151,7 +151,8 @@ if triton is not None:
               R: tl.constexpr, LANES: tl.constexpr, STRIDE: tl.constexpr,
               TEMPERATURE: tl.constexpr, HAS_PREVIOUS: tl.constexpr,
               STORE_SCORES: tl.constexpr, FLOOR: tl.constexpr,
-              FILL_ZERO: tl.constexpr = False):
+              FILL_ZERO: tl.constexpr = False, INTAKE_ERR=None,
+              FOLD_INTAKE: tl.constexpr = False):
         pair_count: tl.constexpr = LANES * 32
         order_bits: tl.constexpr = 9 if LANES == 16 else 10
         k = tl.arange(0, LANES)
@@ -239,7 +240,10 @@ if triton is not None:
                  ((offer_missing & ~miss).to(tl.int64) << 3) |
                  ((flag4 & ~miss).to(tl.int64) << 4) |
                  (flag5.to(tl.int64) << 5) | (flag6.to(tl.int64) << 6))
-        tl.store(Err, error)
+        if FOLD_INTAKE:
+            tl.store(Err, error | tl.load(INTAKE_ERR))
+        else:
+            tl.store(Err, error)
         tl.store(Home + 1 + 2 * R + 5 * LANES + LANES + 1, error)
 
 
@@ -294,7 +298,17 @@ def _cache_rows_k3(draft_ids, offers_ids, offers_p64, offers_pack, dec_logits,
     if scores is not None and (scores.shape != (lanes, 32) or scores.dtype != torch.float64):
         raise ValueError('K3 score probe must be float64 [lanes,32]')
     stride = offers_p64.shape[1]
-    if kernel_enabled('k3_hazard_split', '1'):
+    stats = out.get('select_stats') if (kernel_value('draft_fuse_t4', '0') == '2'
+                                      or kernel_enabled('draft_fuse_t5', '1')) else None
+    if stats is not None:
+        # Unit T4 level 2: the select kernel's unfiltered max, argmax and sum-exp replace
+        # the two hazard scans; the finish reads them as one part per row.
+        _hazard_finish_tiles[(lanes - 1,)](
+            dec_logits, draft_ids, p_top1_prev, offers_p64, offers_pack,
+            hazard, stats[0], out['select_argmax'], stats[1], dec_logits.shape[1], stride,
+            lanes, blend_dec, *constants, 1, 2,
+            num_warps=8, enable_fp_fusion=False)
+    elif kernel_enabled('k3_hazard_split', '1'):
         vocab = dec_logits.shape[1]
         block_v = 4096
         parts = triton.cdiv(vocab, block_v)
@@ -326,6 +340,8 @@ def _cache_rows_k3(draft_ids, offers_ids, offers_p64, offers_pack, dec_logits,
         scores if scores is not None else hazard,
         R, lanes, stride, temperature, previous_mass16 is not None,
         scores is not None, floor, fill_zero,
+        **(dict(INTAKE_ERR=out['_t14_intake_err'], FOLD_INTAKE=True)
+           if '_t14_intake_err' in out else {}),
         num_warps=8, enable_fp_fusion=False)
     return out['keys'], out['active'], out['requested'], out['row_home'], out['err']
 

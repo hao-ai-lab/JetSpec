@@ -109,6 +109,14 @@
       "JETSPEC_ADAPTER_EW_FUSED": "engine_settings.adapter_ew_fused",
       "JETSPEC_ADAPTER_FUSE_CHECK": "engine_settings.adapter_fuse_check",
       "JETSPEC_ADAPTER_GEMM_TUNE": "engine_settings.adapter_gemm_tune",
+      "JETSPEC_DRAFT_FUSE_T1": "engine_settings.draft_fuse_t1",
+      "JETSPEC_DRAFT_FUSE_SKV": "engine_settings.draft_fuse_skv",
+      "JETSPEC_DRAFT_FUSE_T13": "engine_settings.draft_fuse_t13",
+      "JETSPEC_DRAFT_FUSE_T15": "engine_settings.draft_fuse_t15",
+      "JETSPEC_DRAFT_FUSE_W5": "engine_settings.draft_fuse_w5",
+      "JETSPEC_DRAFT_FUSE_W1": "engine_settings.draft_fuse_w1",
+      "JETSPEC_DRAFT_VOCAB_K": "engine_settings.draft_vocab_k",
+      "JETSPEC_DRAFT_VOCAB_PATH": "engine_settings.draft_vocab_path",
       "JETSPEC_ADAPTER_GRAPH_DUMP": "engine_settings.adapter_graph_dump",
       "JETSPEC_ADAPTER_QUERY_LAYOUT_FUSED": "engine_settings.adapter_query_layout_fused",
       "JETSPEC_ALLOW_UNREGISTERED_ENV": "engine_settings.allow_unregistered_env",
@@ -195,6 +203,7 @@
       "JETSPEC_CHAIN_HOST_LEAN": "engine_settings.chain_host_lean",
       "JETSPEC_CHAIN_INTAKE_FUSED": "engine_settings.chain_intake_fused",
       "JETSPEC_CHAIN_J_SWITCH_L": "engine_settings.chain_j_switch_l",
+      "JETSPEC_CHAIN_SINGLE_KEY": "engine_settings.chain_single_key",
       "JETSPEC_CHAIN_KERNEL_PROFILE": "engine_settings.chain_kernel_profile",
       "JETSPEC_CHAIN_KERNEL_PROFILE_EVERY": "engine_settings.chain_kernel_profile_every",
       "JETSPEC_CHAIN_MISS_REDRAFT": "engine_settings.chain_miss_redraft",
@@ -249,6 +258,16 @@
       "JETSPEC_DEVICE_SPLIT": "engine_settings.device_split",
       "JETSPEC_DRAFT_DEADLINE": "engine_settings.draft_deadline",
       "JETSPEC_DRAFT_DEADLINE_MARGIN_MS": "engine_settings.draft_deadline_margin_ms",
+      "JETSPEC_DRAFT_FUSE_T10": "engine_settings.draft_fuse_t10",
+      "JETSPEC_DRAFT_FUSE_T11": "engine_settings.draft_fuse_t11",
+      "JETSPEC_DRAFT_FUSE_T14": "engine_settings.draft_fuse_t14",
+      "JETSPEC_DRAFT_FUSE_T17": "engine_settings.draft_fuse_t17",
+      "JETSPEC_DRAFT_FUSE_GM": "engine_settings.draft_fuse_gm",
+      "JETSPEC_DRAFT_FUSE_T3": "engine_settings.draft_fuse_t3",
+      "JETSPEC_DRAFT_FUSE_T4": "engine_settings.draft_fuse_t4",
+      "JETSPEC_DRAFT_FUSE_T9": "engine_settings.draft_fuse_t9",
+      "JETSPEC_DRAFT_FUSE_T5": "engine_settings.draft_fuse_t5",
+      "JETSPEC_DRAFT_FUSE_T12": "engine_settings.draft_fuse_t12",
       "JETSPEC_DRAFT_PIN_CHECK": "engine_settings.draft_pin_check",
       "JETSPEC_DRAFT_STREAMS": "engine_settings.draft_streams",
       "JETSPEC_E04_LEAN": "engine_settings.e04_lean",
@@ -280,6 +299,7 @@
       "JETSPEC_HYBRID_VERIFY_TRITON": "engine_settings.hybrid_verify_triton",
       "JETSPEC_J0_GATEUP_PACKED": "engine_settings.j0_gateup_packed",
       "JETSPEC_J0_LMHEAD_KN": "engine_settings.j0_lmhead_kn",
+      "JETSPEC_DRAFT_FUSE_T6": "engine_settings.draft_fuse_t6",
       "JETSPEC_J0_QKV_GLUE_FUSED": "engine_settings.j0_qkv_glue_fused",
       "JETSPEC_JPASS_ATTN_LEN": "engine_settings.jpass_attn_len",
       "JETSPEC_JPASS_GLUE_LEAN": "engine_settings.jpass_glue_lean",
@@ -363,6 +383,7 @@
       "JETSPEC_PRECISION_TARGET": "engine_settings.precision_target",
       "JETSPEC_PRECISION_DRAFT": "engine_settings.precision_draft",
       "JETSPEC_PRECISION_LM_HEAD": "engine_settings.precision_lm_head",
+      "JETSPEC_PRECISION_TARGET_HEAD": "engine_settings.precision_target_head",
       "JETSPEC_ROWS_CTX_EARLY": "engine_settings.rows_ctx_early",
       "JETSPEC_ROWS_CTX_INCR": "engine_settings.rows_ctx_incr",
       "JETSPEC_ROWS_DEFER_HOME": "engine_settings.rows_defer_home",
@@ -388,7 +409,27 @@
       "JETSPEC_TAIL_LEAN": "engine_settings.tail_lean",
       "JETSPEC_TAIL_PREISSUE": "engine_settings.tail_preissue",
       "JETSPEC_TAIL_PUBLISH": "engine_settings.tail_publish",
+      "JETSPEC_VERIFY_CUT_MLPGLUE": "engine_settings.verify_cut_mlpglue",
       "JETSPEC_VERIFY_DEVICE": "engine_settings.jetspec_verify_device",
+      "JETSPEC_VERIFY_CUT_LEAN27B": "engine_settings.verify_cut_lean27b",
+      "JETSPEC_VERIFY_CUT_PACK27B": "engine_settings.verify_cut_pack27b",
+      "JETSPEC_VERIFY_CUT_GROPE": "engine_settings.verify_cut_grope",
+      "JETSPEC_VERIFY_CUT_CONVSNAP": "engine_settings.verify_cut_convsnap",
+      "JETSPEC_VERIFY_CUT_GBETA": "engine_settings.verify_cut_gbeta",
+      "JETSPEC_VERIFY_CUT_GDNLAZY": "engine_settings.verify_cut_gdnlazy",
+      "JETSPEC_VERIFY_CUT_GDNREPEAT": "engine_settings.verify_cut_gdnrepeat",
+      "JETSPEC_VERIFY_CUT_GDNCOMMIT": "engine_settings.verify_cut_gdncommit",
+      "JETSPEC_VERIFY_CUT_GDNCONV": "engine_settings.verify_cut_gdnconv",
+      "JETSPEC_VERIFY_CUT_ATTN27B": "engine_settings.verify_cut_attn27b",
+      "JETSPEC_VERIFY_CUT_NORM27B": "engine_settings.verify_cut_norm27b",
+      "JETSPEC_VERIFY_CUT_W1PROD27B": "engine_settings.verify_cut_w1prod27b",
+      "JETSPEC_VERIFY_CUT_COMMIT27B": "engine_settings.verify_cut_commit27b",
+      "JETSPEC_VERIFY_CUT_GDNREC27B": "engine_settings.verify_cut_gdnrec27b",
+      "JETSPEC_VERIFY_CUT_PACK27B2": "engine_settings.verify_cut_pack27b2",
+      "JETSPEC_VERIFY_CUT_BAFOLD27B": "engine_settings.verify_cut_bafold27b",
+      "JETSPEC_VERIFY_CUT_GLUE8B": "engine_settings.verify_cut_glue8b",
+      "JETSPEC_VERIFY_CUT_PERSIST8B": "engine_settings.verify_cut_persist8b",
+      "JETSPEC_VERIFY_CUT_W1PROD8B": "engine_settings.verify_cut_w1prod8b",
       "JETSPEC_VERIFY_DEVICE_TRANSPORT": "engine_settings.verify_device_transport",
       "JETSPEC_VERIFY_HOST_CENSUS": "engine_settings.verify_host_census",
       "JETSPEC_VERIFY_INPUT_DIRECT": "engine_settings.verify_input_direct",
@@ -619,6 +660,28 @@
   "contract": {
     "schema": "jetspec.retired_environment/1",
     "registry": {
+      "JETSPEC_CHAIN_SINGLE_KEY": {
+        "name": "JETSPEC_CHAIN_SINGLE_KEY",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in ceiling-key capture for fixed multi-refresh schedules without a length switch"
+      },
+      "JETSPEC_DRAFT_FUSE_T6": {
+        "name": "JETSPEC_DRAFT_FUSE_T6",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in bitwise SiLU, grouped QKV and single-launch Jacobi pass tuning"
+      },
       "CRUCIBLE_TOOLCHAIN_KEY": {
         "name": "CRUCIBLE_TOOLCHAIN_KEY",
         "kind": "str",
@@ -1750,6 +1813,29 @@
         "reader": "serve",
         "note": "N=1 BF16 chain decoder selects via an original-probability radix cutoff"
       },
+      "JETSPEC_DRAFT_FUSE_T4": {
+        "name": "JETSPEC_DRAFT_FUSE_T4",
+        "kind": "enum",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1",
+          "2"
+        ],
+        "reader": "serve",
+        "note": "draft-lane fusion unit T4: 1 writes the chain select outputs in place, 2 adds the one-read select stats kernel"
+      },
+      "JETSPEC_DRAFT_FUSE_T5": {
+        "name": "JETSPEC_DRAFT_FUSE_T5",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "draft-lane fusion unit T5: six-launch BF16 radix select with on-the-fly probabilities and fused tie merge"
+      },
       "JETSPEC_HOST_FAST": {
         "name": "JETSPEC_HOST_FAST",
         "kind": "flag",
@@ -1917,6 +2003,17 @@
         "reader": "serve",
         "note": "prepare full reference tap payload before host acceptance"
       },
+      "JETSPEC_VERIFY_CUT_PACK27B": {
+        "name": "JETSPEC_VERIFY_CUT_PACK27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "27B outcome pack: persistent tail-slot table and one-gather K/V, bitwise"
+      },
       "JETSPEC_VERIFY_OUTCOME_FUSED": {
         "name": "JETSPEC_VERIFY_OUTCOME_FUSED",
         "kind": "flag",
@@ -1961,6 +2058,207 @@
         "reader": "serve",
         "note": "count host/device synchronizations in block-head device verify"
       },
+      "JETSPEC_VERIFY_CUT_LEAN27B": {
+        "name": "JETSPEC_VERIFY_CUT_LEAN27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in verify outcome fused, post lean and plan reuse for the recurrent 27B target"
+      },
+      "JETSPEC_VERIFY_CUT_GROPE": {
+        "name": "JETSPEC_VERIFY_CUT_GROPE",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "27B gated RoPE as one launch with a load-time cos/sin table"
+      },
+      "JETSPEC_VERIFY_CUT_CONVSNAP": {
+        "name": "JETSPEC_VERIFY_CUT_CONVSNAP",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in single-copy hybrid GDN verify conv snapshots"
+      },
+      "JETSPEC_VERIFY_CUT_GBETA": {
+        "name": "JETSPEC_VERIFY_CUT_GBETA",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "class A verify cut: GDN gate decay once per A_log value and one fused g and beta launch"
+      },
+      "JETSPEC_VERIFY_CUT_GDNLAZY": {
+        "name": "JETSPEC_VERIFY_CUT_GDNLAZY",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "class A verify cut: keep the GDN verify inputs and write only the accepted recurrent state at commit"
+      },
+      "JETSPEC_VERIFY_CUT_GDNREPEAT": {
+        "name": "JETSPEC_VERIFY_CUT_GDNREPEAT",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "class A verify cut: fla GVA heads instead of the GDN q/k repeat_interleave, one split launch"
+      },
+      "JETSPEC_VERIFY_CUT_GDNCOMMIT": {
+        "name": "JETSPEC_VERIFY_CUT_GDNCOMMIT",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "class A verify cut: GDN conv commit as one gather launch; no recurrent scratch under the C=1 lazy commit"
+      },
+      "JETSPEC_VERIFY_CUT_GDNCONV": {
+        "name": "JETSPEC_VERIFY_CUT_GDNCONV",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut (class B): GDN conv1d, SiLU, q/k/v split, lazy keep and conv snapshots in one launch"
+      },
+      "JETSPEC_VERIFY_CUT_ATTN27B": {
+        "name": "JETSPEC_VERIFY_CUT_ATTN27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut (class B): split-KV paged attention at head_dim 256 with the output gate in the merge"
+      },
+      "JETSPEC_VERIFY_CUT_NORM27B": {
+        "name": "JETSPEC_VERIFY_CUT_NORM27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut (class B): each after-weight RMSNorm as one launch, residual adds fused into the next norm"
+      },
+      "JETSPEC_VERIFY_CUT_COMMIT27B": {
+        "name": "JETSPEC_VERIFY_CUT_COMMIT27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut: commit every lazy C=1 GDN layer in one launch"
+      },
+      "JETSPEC_VERIFY_CUT_GDNREC27B": {
+        "name": "JETSPEC_VERIFY_CUT_GDNREC27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut (class B): the gdnconv GDN verify recurrence as one chunk (WY) launch, FP32 dots"
+      },
+      "JETSPEC_VERIFY_CUT_PACK27B2": {
+        "name": "JETSPEC_VERIFY_CUT_PACK27B2",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "class B verify cut: the 27B GDN in_proj, gated q|k|v and MLP gate|up each as one packed GEMM"
+      },
+      "JETSPEC_VERIFY_CUT_BAFOLD27B": {
+        "name": "JETSPEC_VERIFY_CUT_BAFOLD27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut: fold b/a into the padded W4A8 input projection; requires pack27b2"
+      },
+      "JETSPEC_VERIFY_CUT_GLUE8B": {
+        "name": "JETSPEC_VERIFY_CUT_GLUE8B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in bitwise 8B verify glue cuts: next-residual taps, one tap stage"
+      },
+      "JETSPEC_VERIFY_CUT_PERSIST8B": {
+        "name": "JETSPEC_VERIFY_CUT_PERSIST8B",
+        "kind": "enum",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        "reader": "serve",
+        "note": "opt-in 8B verify glue (class B): 1 fused q/k norm, RoPE and K/V write; 2 also PDL add+norm and SiLU-mul; 3 also split-KV attention with the glue inside; 4 fixed-tile attention and grouped merge"
+      },
+      "JETSPEC_VERIFY_CUT_W1PROD27B": {
+        "name": "JETSPEC_VERIFY_CUT_W1PROD27B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 27B verify cut: norm27b, SiLU-mul and the GDN gated norm emit FP8 plus scales for the W4A8 GEMMs (needs norm27b and precision_target=mxfp4_w4a8)"
+      },
+      "JETSPEC_VERIFY_CUT_W1PROD8B": {
+        "name": "JETSPEC_VERIFY_CUT_W1PROD8B",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in 8B verify cut: add+norm and SiLU-mul emit FP8 plus scales for the W4A8 GEMMs (needs persist8b>=3 and precision_target=mxfp4_w4a8)"
+      },
       "JETSPEC_VERIFY_DEVICE_TRANSPORT": {
         "name": "JETSPEC_VERIFY_DEVICE_TRANSPORT",
         "kind": "enum",
@@ -1993,6 +2291,17 @@
         ],
         "reader": "serve",
         "note": "a47: per-round host segment stamps of the N=1 device-verify round (verify_host_census)"
+      },
+      "JETSPEC_VERIFY_CUT_MLPGLUE": {
+        "name": "JETSPEC_VERIFY_CUT_MLPGLUE",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in bitwise 27B gated-attention gate and MLP SiLU glue launches"
       },
       "JETSPEC_VERIFY_STAGE_HOST": {
         "name": "JETSPEC_VERIFY_STAGE_HOST",
@@ -2501,7 +2810,8 @@
           "bf16",
           "fq_w4a16",
           "fq_w4a4",
-          "nvfp4_w4a4"
+          "nvfp4_w4a4",
+          "mxfp4_w4a8"
         ],
         "reader": "serve",
         "note": "target projection precision"
@@ -2514,7 +2824,8 @@
           "bf16",
           "fq_w4a16",
           "fq_w4a4",
-          "nvfp4_w4a16"
+          "nvfp4_w4a16",
+          "mxfp4_w4a8"
         ],
         "reader": "serve",
         "note": "draft projection precision"
@@ -2527,10 +2838,22 @@
           "bf16",
           "fq_w4a16",
           "fq_w4a4",
-          "nvfp4_w4a16"
+          "nvfp4_w4a16",
+          "mxfp4_w4a8"
         ],
         "reader": "serve",
         "note": "target and draft vocabulary projection precision"
+      },
+      "JETSPEC_PRECISION_TARGET_HEAD": {
+        "name": "JETSPEC_PRECISION_TARGET_HEAD",
+        "kind": "enum",
+        "default": "bf16",
+        "allowed": [
+          "bf16",
+          "mxfp4_w4a8"
+        ],
+        "reader": "serve",
+        "note": "target verify head precision"
       },
       "JETSPEC_ROWS_CTX_EARLY": {
         "name": "JETSPEC_ROWS_CTX_EARLY",
@@ -3771,6 +4094,94 @@
         "reader": "serve",
         "note": ""
       },
+      "JETSPEC_DRAFT_FUSE_T10": {
+        "name": "JETSPEC_DRAFT_FUSE_T10",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in compact swap finish and intake true taps"
+      },
+      "JETSPEC_DRAFT_FUSE_T14": {
+        "name": "JETSPEC_DRAFT_FUSE_T14",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in bitwise J entry and round glue fusion"
+      },
+      "JETSPEC_DRAFT_FUSE_T17": {
+        "name": "JETSPEC_DRAFT_FUSE_T17",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in J0 fp64 refresh bookkeeping and embedding gather"
+      },
+      "JETSPEC_DRAFT_FUSE_GM": {
+        "name": "JETSPEC_DRAFT_FUSE_GM",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "opt-in grouped adapter K/V GEMMs"
+      },
+      "JETSPEC_DRAFT_FUSE_T11": {
+        "name": "JETSPEC_DRAFT_FUSE_T11",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "T11: one-launch post-join chain mask and rotary geometry"
+      },
+      "JETSPEC_DRAFT_FUSE_T9": {
+        "name": "JETSPEC_DRAFT_FUSE_T9",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "T9: gather and mark only appended and staged-tail context rows on A_inc"
+      },
+      "JETSPEC_DRAFT_FUSE_T3": {
+        "name": "JETSPEC_DRAFT_FUSE_T3",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "decoder read: prefix and window rows in one merged length attention"
+      },
+      "JETSPEC_DRAFT_FUSE_T12": {
+        "name": "JETSPEC_DRAFT_FUSE_T12",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "decoder combined staging, Q/K postprocess and final refresh row trim"
+      },
       "JETSPEC_TAIL_LEAN": {
         "name": "JETSPEC_TAIL_LEAN",
         "kind": "flag",
@@ -4243,6 +4654,89 @@
         ],
         "reader": "serve",
         "note": "SM100 BF16 M64 packed adapter gate/up graph-tuned cuBLASLt plan"
+      },
+      "JETSPEC_DRAFT_FUSE_T1": {
+        "name": "JETSPEC_DRAFT_FUSE_T1",
+        "kind": "enum",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1",
+          "dense",
+          "len",
+          "fused_len"
+        ],
+        "reader": "serve",
+        "note": "SM100 BF16 adapter query attention arm and residual norms (fusion unit T1)"
+      },
+      "JETSPEC_DRAFT_FUSE_SKV": {
+        "name": "JETSPEC_DRAFT_FUSE_SKV",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "SM100 BF16 draft attention split-KV with deterministic merge"
+      },
+      "JETSPEC_DRAFT_FUSE_T13": {
+        "name": "JETSPEC_DRAFT_FUSE_T13",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "bitwise adapter front, rotary lookup and output glue (fusion unit T13)"
+      },
+      "JETSPEC_DRAFT_FUSE_T15": {
+        "name": "JETSPEC_DRAFT_FUSE_T15",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "refresh stream-span K/V norms and batched projections (fusion unit T15)"
+      },
+      "JETSPEC_DRAFT_FUSE_W5": {
+        "name": "JETSPEC_DRAFT_FUSE_W5",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "gamma-folded Q and stream-span K/V merged at load (fusion unit W5)"
+      },
+      "JETSPEC_DRAFT_FUSE_W1": {
+        "name": "JETSPEC_DRAFT_FUSE_W1",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": "norm and SiLU producers emit draft W4A8 FP8 activations and scale atoms"
+      },
+      "JETSPEC_DRAFT_VOCAB_K": {
+        "name": "JETSPEC_DRAFT_VOCAB_K",
+        "kind": "int",
+        "default": "0",
+        "reader": "serve",
+        "note": "fixed frequent-token draft vocabulary size; zero retains the full head"
+      },
+      "JETSPEC_DRAFT_VOCAB_PATH": {
+        "name": "JETSPEC_DRAFT_VOCAB_PATH",
+        "kind": "path",
+        "default": "",
+        "reader": "serve",
+        "note": "external target-token frequency table"
       },
       "JETSPEC_ATTN_SM80": {
         "name": "JETSPEC_ATTN_SM80",
@@ -6025,6 +6519,31 @@
           "1"
         ],
         "why": "radix selection uses the N=1 chain's existing probability and tie kernels",
+        "always": false
+      },
+      {
+        "name": "JETSPEC_DRAFT_FUSE_T4",
+        "flag": "JETSPEC_DECODER_SELECT_RADIX",
+        "values": [
+          "1"
+        ],
+        "when": [
+          "1",
+          "2"
+        ],
+        "why": "unit T4 fuses the N=1 chain radix select",
+        "always": false
+      },
+      {
+        "name": "JETSPEC_DRAFT_FUSE_T5",
+        "flag": "JETSPEC_DECODER_SELECT_RADIX",
+        "values": [
+          "1"
+        ],
+        "when": [
+          "1"
+        ],
+        "why": "unit T5 restructures the N=1 chain radix select",
         "always": false
       },
       {

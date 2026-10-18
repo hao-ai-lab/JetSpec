@@ -139,8 +139,12 @@ def allocate_compact(rows, slots, vocab, device):
 
 
 def compact_head(hidden, weight, ids, storage=None, *, persistent=False):
-    """BF16 vocab tiles emit only six partial scalars; no vocab-logit tensor exists."""
+    """Emit six partial scalars per tile, with W4A8 scratch logits in head mode."""
     if not hidden.is_cuda or storage is None:
+        if getattr(weight, '_draft_vocab', None) is not None:
+            from jetspec.engines.jetspec_plus_plus.models.target_linear import draft_linear
+            logits = draft_linear(hidden, weight).reshape(ids.shape[0], ids.shape[1] - 1, -1)
+            return compact_logits(logits, ids)
         from jetspec.engines.jetspec_plus_plus.draft.method.ops import reference
         return reference('refresh_compact_head')(hidden, weight, ids, storage, persistent=persistent)
     if triton is None or hidden.dtype != torch.bfloat16:
@@ -153,9 +157,12 @@ def compact_head(hidden, weight, ids, storage=None, *, persistent=False):
     grid = (triton.cdiv(rows, 64), chunks)
     if persistent:
         grid = (min(grid[0] * chunks, 2 * torch.cuda.get_device_properties(hidden.device).multi_processor_count),)
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import w4a8_head_logits
+    logits = w4a8_head_logits(hidden, weight)
     _compact_head[grid](
-        hidden, weight, ids, *partials, rows, vocab, width, *weight.stride(),
-        slots, chunks, 64, 128, 64, PERSISTENT=persistent, num_warps=4, num_stages=4)
+        hidden if logits is None else logits, weight, ids, *partials, rows, vocab, width, *weight.stride(),
+        slots, chunks, 64, 128, 64, PERSISTENT=persistent,
+        FROM_LOGITS=logits is not None, num_warps=4, num_stages=4)
     _compact_merge[(rows,)](*partials, *outputs, chunks,
                            triton.next_power_of_2(chunks), num_warps=4)
     return outputs
@@ -217,6 +224,10 @@ class RefreshSwap:
         if self.states_only:
             self.eval_effects = torch.zeros(2, dtype=torch.long, device=device)
         self.true_lane = torch.arange(4, device=device, dtype=torch.long) - 4
+        self.true_taps = None
+        if (config_values(run_config).get('engine.engine_settings.draft_fuse_t10', '0') == '1'
+                and front.decoder_prefix_taps.is_cuda and kernel_enabled('chain_intake_fused', '1')):
+            self.true_taps = front.decoder_prefix_taps.new_empty(4, decoder.hidden_size)
         self.window = decoder.refresh_window_state(
             front.decoder_prefix_kv, front.decoder_bucket, rows=rows, lanes=lanes,
             like=front.decoder_prefix_taps)
@@ -247,6 +258,8 @@ class RefreshSwap:
         """The mutable state, for the chain's buffers (T0 shadow checkpoint and recording)."""
         state = {'refresh_swap_pin_slot': self.pin_slot,
                  'refresh_swap_pin_token': self.pin_token}
+        if getattr(self, 'true_taps', None) is not None:
+            state['refresh_swap_true_taps'] = self.true_taps
         if self.states_only:
             state['eval_refresh_effects'] = self.eval_effects
         if self.dense_pins:
@@ -282,7 +295,8 @@ class RefreshSwap:
             return self.pin_mask, self.pin_values
         return self.pin_slot, self.pin_token
 
-    def apply(self, *, length, ids, khat, slot_counts, tail_counts, active, block, finished):
+    def apply(self, *, length, ids, khat, slot_counts, tail_counts, active, block, finished,
+              inclusive=False):
         """At the refresh, after the adapter's refreshed rows ``block`` [R, W, 5H] exist and before
         they are injected: swap ``ids`` in place, pin the swaps, reopen swapped rows in
         ``finished``, and return the fixed-layout inject count (entries 0..khat_used; 0 on an
@@ -290,8 +304,11 @@ class RefreshSwap:
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         hidden = self.decoder.hidden_size
         legacy_write = not self.dense_pins
-        positions = (length + self.true_lane).clamp_min(0)
-        true_taps = self.tap_store.storage.index_select(0, positions)[:, -1]
+        if getattr(self, 'true_taps', None) is not None:
+            true_taps = self.true_taps
+        else:
+            positions = (length + self.true_lane).clamp_min(0)
+            true_taps = self.tap_store.storage.index_select(0, positions)[:, -1]
         read = (self.decoder.refresh_window_compact if self.lean
                 else self.decoder.refresh_window_logits)
         result = read(
@@ -305,7 +322,14 @@ class RefreshSwap:
             used = torch.minimum(khat, rule_f(top, ids, slot_counts))
             pins = self.pin_mask.sum() if self.dense_pins else (self.pin_slot >= 0).sum()
             self.eval_effects[1].add_(pins)
-            return torch.where(active, used + 1, torch.zeros_like(used))
+            count = torch.where(active, used + 1, torch.zeros_like(used))
+            return count - 1 if inclusive else count
+        if (config_values(getattr(self, 'run_config', None)).get(
+                'engine.engine_settings.draft_fuse_t10', '0') == '1'
+                and legacy_write and self.lean and not self.check and not self.multi_refresh):
+            from jetspec.engines.jetspec_plus_plus.draft.swap_write import decide_and_finish
+            return decide_and_finish(result, ids, khat, slot_counts, active,
+                                     self.pin_slot, self.pin_token, finished, inclusive=inclusive)
         wrote_ids = (legacy_write and self.lean and not self.check and
                      kernel_enabled('refresh_swap_write_fused', '1'))
         if wrote_ids:
@@ -358,4 +382,5 @@ class RefreshSwap:
         # Keep the legacy R1 unused alternatives byte-identical.
         self.pin_token.copy_(torch.where(apply, new, self.pin_token) if self.multi_refresh else new)
         finished.logical_and_(~apply)
-        return torch.where(active, khat_used + 1, torch.zeros_like(khat_used))
+        count = torch.where(active, khat_used + 1, torch.zeros_like(khat_used))
+        return count - 1 if inclusive else count

@@ -10,6 +10,7 @@ from jetspec.engines.jetspec_plus_plus.models.embed_head import VocabParallelEmb
 from jetspec.engines.jetspec_plus_plus.models.forward_context import get_forward_context
 from jetspec.engines.jetspec_plus_plus.models.target_layers import DecoderLayer, RMSNorm
 from jetspec.engines.jetspec_plus_plus.models.target_linear import TargetLinear
+from jetspec.engines.jetspec_plus_plus.models.target_rotary import RopeRows, rope_table
 from jetspec.engines.jetspec_plus_plus.models.registry import model_spec
 
 
@@ -55,6 +56,10 @@ class TargetModel(nn.Module):
             assert self.jetspec_tap_layer_ids and max(self.jetspec_tap_layer_ids) < spec.num_layers
         if use_eagle:
             assert eagle_layers and max(eagle_layers) < spec.num_layers, 'eagle_layers must be inside target'
+        # Layer i's tap is layer i + 1's input add_norm residual (the final norm after the last layer).
+        self.jetspec_taps_from_residual = (
+            jetspec_taps and spec.attention.norm_round != 'after_weight'
+            and setting(run_config, 'engine', 'engine_settings.verify_cut_glue8b', '0') == '1')
         self.embed_tokens = VocabParallelEmbedding(spec.vocab_size, spec.hidden_size,
             draft_async=draft_async, tp_group=tp_group, tp_size=tp_size)
         config = layer_config(spec, config)
@@ -66,11 +71,25 @@ class TargetModel(nn.Module):
             self.layers.append(layer)
         self.norm = RMSNorm(spec.hidden_size, spec.rms_norm_eps,
                             offset=spec.attention.norm_offset, norm_round=spec.attention.norm_round)
+        # verify_cut_norm27b: layers hand (x, mlp out) to the next norm, which adds it in one launch.
+        if any(getattr(layer, 'verify_cut_norm27b', False) for layer in self.layers):
+            self.norm.norm27b = True
+            for layer in self.layers:
+                layer.norm27b_defer = not use_eagle
         if spec.attention.norm_round == 'after_weight':
             rotary_dim = spec.attention.rotary_dim
             inv_freq = 1.0 / (spec.rope_theta ** (
                 torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
             self.register_buffer('inv_freq', inv_freq, persistent=False)
+            self.verify_cut_grope = setting(
+                run_config, 'engine', 'engine_settings.verify_cut_grope', '0') == '1'
+            if self.verify_cut_grope:
+                # Built on the serving device so the gathered rows equal the per-forward values.
+                cos_table, sin_table = rope_table(inv_freq, spec.max_position_embeddings,
+                                                  self.embed_tokens.weight.dtype)
+                self.register_buffer('rope_cos', cos_table, persistent=False)
+                self.register_buffer('rope_sin', sin_table, persistent=False)
+                self.rope_device = inv_freq.device.type
 
     def reset_gdn_state(self):
         for layer in self.layers:
@@ -82,12 +101,17 @@ class TargetModel(nn.Module):
             if hasattr(layer, 'linear_attn'):
                 layer.linear_attn.commit(accepted)
 
-    def forward(self, input_ids, positions):
+    def forward(self, input_ids, positions, tap_out=None):
         prefill = get_context().is_prefill
         hidden = self.embed_tokens(input_ids)
         residual, taps, eagle = None, [], []
         explicit_residual = self.spec.attention.norm_round == 'after_weight'
-        if explicit_residual:
+        if explicit_residual and self.verify_cut_grope:
+            if (self.rope_cos.dtype != hidden.dtype or positions.device.type != self.rope_device
+                    or self.inv_freq.dtype != torch.float32):
+                raise ValueError('verify_cut_grope tables were built for another dtype or device')
+            cos, sin = RopeRows(self.rope_cos, self.rope_sin, positions), None
+        elif explicit_residual:
             freqs = positions.float()[:, None] * self.inv_freq[None, :]
             repeated = torch.cat((freqs, freqs), dim=-1)
             cos, sin = repeated.cos().to(hidden.dtype), repeated.sin().to(hidden.dtype)
@@ -97,14 +121,33 @@ class TargetModel(nn.Module):
             if explicit_residual:
                 hidden = layer(hidden, cos, sin, prefill=prefill,
                                verify=get_forward_context().verify and not prefill)
+                if isinstance(hidden, tuple) and (index == len(self.layers) - 1 and not (
+                        self.norm.norm27b) or self.jetspec_taps and index in self.jetspec_tap_layer_ids):
+                    hidden = hidden[0] + hidden[1]
+            elif self.jetspec_taps_from_residual:
+                hidden, residual = layer(positions, hidden, residual, prefill=prefill,
+                                         verify=get_forward_context().verify and not prefill,
+                                         taps=taps if index - 1 in self.jetspec_tap_layer_ids else None)
+                continue
             else:
                 hidden, residual = layer(positions, hidden, residual, prefill=prefill,
                                          verify=get_forward_context().verify and not prefill)
             if self.jetspec_taps and index in self.jetspec_tap_layer_ids:
                 taps.append(hidden if explicit_residual else
                             (hidden.float() + residual.float()).to(hidden.dtype))
-        hidden = self.norm(hidden) if explicit_residual else self.norm(hidden, residual)[0]
+        if self.jetspec_taps_from_residual:
+            hidden, residual = self.norm(hidden, residual)
+            if len(self.layers) - 1 in self.jetspec_tap_layer_ids:
+                taps.append(residual)
+        else:
+            if isinstance(hidden, tuple):
+                from jetspec.engines.jetspec_plus_plus.kernels.verify_norm27b import add_rms_norm
+                hidden = add_rms_norm(hidden[0], hidden[1], self.norm)[1]
+            else:
+                hidden = self.norm(hidden) if explicit_residual else self.norm(hidden, residual)[0]
         if self.jetspec_taps:
+            if tap_out is not None:
+                return hidden, torch.stack(taps, dim=1, out=tap_out)
             return hidden, torch.stack(taps, dim=1)
         if eagle:
             return hidden, torch.cat(eagle, dim=-1)
@@ -134,7 +177,9 @@ class TargetForCausalLM(nn.Module):
         if self.spec.tie_word_embeddings:
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
-    def forward(self, input_ids, positions):
+    def forward(self, input_ids, positions, tap_out=None):
+        if tap_out is not None:
+            return self.model(input_ids, positions, tap_out=tap_out)
         return self.model(input_ids, positions)
 
     def compute_logits(self, hidden_states, last_only=True):

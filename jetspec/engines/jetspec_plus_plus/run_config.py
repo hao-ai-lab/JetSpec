@@ -294,6 +294,8 @@ class RunConfig:
             category, path = bindings[name]
             if path not in RANK_CONFIG_FIELDS.get(category, {}):
                 continue
+            if category == 'engine' and path == 'engine_settings.draft_vocab_k':
+                value = int(value)
             cursor = resolved[category]
             *parents, key = path.split('.')
             for parent in parents:

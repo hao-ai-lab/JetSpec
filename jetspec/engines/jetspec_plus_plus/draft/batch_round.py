@@ -335,6 +335,22 @@ def prewarm_batch_graphs(rows, make_sequence, *, max_batch, max_model_len, initi
     # (1, shortest prefix) first: a read's first and last rounds can hold one live sequence, whose
     # decoder takes the one-request select (the batch epilogue serves two or more)
     plan = [(1, lengths[0])] + [(bucket, length) for bucket in buckets for length in lengths]
+    # The adapter's batched graphs share one pool. Capture them longest first, so each shorter
+    # capture reuses the longer one's freed blocks (ascending capture stranded 31 GiB at 27B C4).
+    # Only the adapter stage runs here; the row and context graphs keep the ascending plan below.
+    for warm, (bucket, length) in enumerate((bucket, length) for bucket in buckets
+                                             for length in reversed(lengths)):
+        sequences = [make_sequence(max(8, length - n)) for n in range(bucket)]
+        for n, sequence in enumerate(sequences):
+            sequence._jetspec_seq_id = -100000 - 64 * warm - n
+            sequence._jetspec_candidate_round = 1
+        chosen = [select_live_block(rows.propose([sequence], k_hypotheses=initial_ks, passes=passes,
+                                                 initial=True, run_config=run_config)[0],
+                                    true_k=initial_ks[0], correction=-1)
+                  for sequence in sequences]
+        rows.stage(sequences, chosen, run_config=run_config)
+        del sequences, chosen
+        gc.collect()
     for bucket, length in plan:
         sequences = [make_sequence(max(8, length - n)) for n in range(bucket)]
         for n, sequence in enumerate(sequences):

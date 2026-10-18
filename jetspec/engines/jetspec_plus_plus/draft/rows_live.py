@@ -295,7 +295,7 @@ class CompactRowHead(torch.nn.Module):
                     scaling=attn.scaling, is_causal=False,
                 )[0][0]
             output = output.index_select(0, token_map)
-            hidden = residual + attn.o_proj(output.reshape(hidden.shape))
+            hidden = residual + attn.o_proj(output.reshape(hidden.shape[0], -1))
             if layer.drafter_mlp:
                 hidden = hidden + layer.mlp(layer.post_attention_layernorm(hidden))
         return base.head.norm(hidden).reshape(self.layout.r, self.B, -1)
@@ -324,7 +324,7 @@ class CompactRowHead(torch.nn.Module):
             q_rotary_into(fused, qp, attn, cos, sin, queries, token_map)
             kv_rotary_into_slots(fused, attn, normalized, cos, sin, cache, slots, projected_kv)
             output = base.wrapper.run(queries, cache).index_select(0, token_map)
-            update = attn.o_proj(output.reshape(hidden.shape))
+            update = attn.o_proj(output.reshape(hidden.shape[0], -1))
             if layer.drafter_mlp:
                 normalized, hidden = fused.fast_add_rms_norm(
                     update, residual, layer.post_attention_layernorm.weight,

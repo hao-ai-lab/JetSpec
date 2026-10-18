@@ -864,6 +864,267 @@
           }
         }
       ]
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "qwen3p8_27b_adapter_p2_97004"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "2c481bc650d82a361c463abc92e909647cd548096fcba1c2492836b35dfb0c2c"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "head.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "0384faef564f5e30930a17cb206239cd33e2e8fb41e2a01e6d0ec5ececa0c651"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "converter.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "89e58efc693176ab66f909ba5a8bfbd301fcb627f274c0d72dc89f240e29c577"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_adapter_p2_97004",
+      "serving_layout": "trained_c1"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "jetspec-plus-plus-qwen3-8b-release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "5dd2439e82c85e21ec20998575bbcdf4b7fceb1ca34be3734b35caa01c8aaa3c"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "dflash.py"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "f39e744844a06c0016793535f427fa60e6a1c8df7249193317acb284b567e79a"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "29b4bd22ff77c6d1c2388855daa67d351a6447de3fb4f22ab8ad56833155fb3d"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_drafter_release"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "jetspec-plus-plus-qwen3-8b-adapter-release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "893b04ba54b9be76fee4754ea59338d87d340f68562e636637d5e7f8e093eb4d"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "head.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "9d6a89a2db7775385da42549d32984676251bc0b4cdc387bcff2cb6a447d2045"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "converter.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "b0cfa18a802a5e99f1ced9285b5115a3886a76cb1f68646234a89a72d46ecd71"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_adapter_release"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "qwen3p8-27b-drafter-main6ep-ep6-release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "b608f42b8c423885601edee2f2c25bd3b623af677b84b9919877ca3947382568"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "dflash.py"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "2a1d058c7f687d464c71425d47b57d737c0fc98a5bef85909c5eed71abc020ea"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "20361600f809e36a5d33aa436bf56faf8eb8bf6f619d9714cc7d337279201bbe"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_drafter_main6ep_ep6_release"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "jetspecpp_e6_calibration_release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "decoder/manifest.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "a1b247ce2e436314160579d81dada80744b9a91e38e0a98efccd9afcd49d0558"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "thresholds.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "d42a9c855c4b802bbc42c557675423031e26869c9990897059a2669b9519a5f5"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_calibration_release",
+      "serving_layout": "target_slice"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "qwen3p8_27b_calibration_release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "thresholds.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "c746c32768644e9cd4c92b415b8f90c2e984c8fff54a183a7c6587108ecd554e"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "decoder/manifest.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_calibration_release",
+      "serving_layout": "target_slice"
     }
   ]
 }

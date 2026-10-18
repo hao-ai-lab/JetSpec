@@ -12,13 +12,13 @@ ROOT = Path(__file__).resolve().parent
 # compute capability and, for 10.x, the host CPU architecture, so no entry names a machine.
 RECIPES = {
     ('qwen3-8b', 'j1-r0', 'fast', 'sm80'): dict(
-        method='jetspecpp-j1r0-b16', model='qwen3-8b-e6v2-b16', engine='fast-sm80',
+        method='jetspecpp-j1r0-b16', model='qwen3-8b-release', engine='fast-sm80',
         hardware='a100-pair', benchmark='table3-gsm8k-first32'),
     ('qwen3-8b', 'j1-r1', 'fast', 'sm100'): dict(
-        method='jetspecpp-j1r1-b16-serve', model='qwen3-8b-e6-b16', engine='fast-sm100',
+        method='jetspecpp-j1r1-b16-serve', model='qwen3-8b-release', engine='fast-sm100',
         hardware='b200-pair', benchmark='gsm8k-128'),
     ('qwen3-8b', 'j1-r1', 'fast', 'sm100-aarch64'): dict(
-        method='jetspecpp-j1r1-b16-floor4', model='qwen3-8b-e6-b16', engine='fast-sm100',
+        method='jetspecpp-j1r1-b16-floor4', model='qwen3-8b-release', engine='fast-sm100',
         hardware='gb200-pair', benchmark='gsm8k-128'),
     ('qwen3-8b', 'j1-r1', 'reference', 'sm80'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
     ('qwen3-8b', 'j1-r1', 'reference', 'sm100'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
@@ -26,8 +26,12 @@ RECIPES = {
     ('qwen3-8b', 'ar', 'fast', 'sm80'): 'ar-graphed',
     ('qwen3-8b', 'ar', 'fast', 'sm100'): 'ar-graphed',
     ('qwen3-8b', 'ar', 'fast', 'sm100-aarch64'): 'ar-graphed',
-    ('qwen3.8-27b', 'j1-r1', 'fast', 'sm80'): 'jetspecpp-graphed-pair-27b-base800k-cal28-b16-j1r1-sm80',
-    ('qwen3.8-27b', 'j1-r1', 'fast', 'sm100'): 'jetspecpp-graphed-pair-27b-drafter6ep-base800k-j1r1-swap-mr-fast',
+    ('qwen3.8-27b', 'j1-r1', 'fast', 'sm80'): dict(
+        method='jetspecpp-j1r1-b16-serve', model='qwen3.8-27b-p2-cal28', engine='fast-sm80',
+        hardware='a100-pair', benchmark='gsm8k-128'),
+    ('qwen3.8-27b', 'j1-r1', 'fast', 'sm100'): dict(
+        method='jetspecpp-j1r1-b16-serve', model='qwen3.8-27b-p2-cal28', engine='fast-sm100',
+        hardware='b200-pair', benchmark='gsm8k-128'),
     ('qwen3.8-27b', 'ar', 'fast', 'sm80'): 'ar-hybrid27b-fast-graphed-sm80',
     ('qwen3.8-27b', 'ar', 'fast', 'sm100'): 'ar-hybrid27b-fast-graphed',
 }
@@ -135,15 +139,17 @@ def resolve(args):
     names = {row['name'] for row in json.loads((ROOT / 'artifacts/manifest.json').read_text())['artifacts']}
     host['artifacts'] = {key: value for key, value in host.get('artifacts', {}).items() if key in names}
     if not autoregressive:
+        # Release models take the embedding and LM head from the target, so they name no release artifact.
+        release = recipe.get('target_release_artifact')
         for field, key in (('drafter', recipe['drafter_artifact']),
                            ('adapter', recipe['adapter_artifact']),
                            ('heads_bundle', recipe['bundle_artifact']),
-                           ('target_release', recipe['target_release_artifact'])):
+                           ('target_release', release)):
             value = getattr(args, field)
-            if value:
+            if value and key:
                 host['artifacts'][key] = value
-        if args.drafter:
-            host['artifacts'].setdefault(recipe['target_release_artifact'], args.drafter)
+        if args.drafter and release:
+            host['artifacts'].setdefault(release, args.drafter)
     argv = ['--method', recipe['method'], '--regime', recipe['regime'], '--recipe', name,
             '--placement', args.placement, '--devices', args.devices, '--dataset', args.dataset,
             '--prompts-json', args.prompts_json, '--count', str(args.count), '--tokens', str(args.tokens),

@@ -280,6 +280,8 @@ class ChainRoundDriver:
             redraft = redraft or (critical_path() and round_id > 0 and not self.inbox.last_eos)
         if redraft and self.publish_redraft is None:
             raise RuntimeError("miss-redraft has no second publisher")
+        if self._tail_trace:
+            print(f"MAILBOX_ID side=draft event=branch command_id={command_id} round={round_id} control={control} branch={'eos' if self.inbox.last_eos else 'redraft' if redraft else 'hit'}", flush=True)
         stamps = {"command": time.perf_counter_ns()} if self._timing else None
         if self._preposted is None:
             self.receiver.post(round_id, group=self.request_group,
@@ -311,6 +313,8 @@ class ChainRoundDriver:
         failure = None
         post_finished = False
         if key is None:
+            if self._tail_trace:
+                print(f"MAILBOX_ID side=draft event=branch command_id={command_id} round={round_id} branch=capacity_fallback", flush=True)
             if self.fallback is None:
                 raise RuntimeError("chain capacity fallback requires a host publisher")
             key = self.fallback(packet, taps, round_id)

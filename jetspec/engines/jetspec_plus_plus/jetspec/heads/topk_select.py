@@ -37,11 +37,38 @@ import torch
 
 SLACK = 16
 
+# Unit T4 (draft_fuse_t4): the chain's handoff buffers, set only while the chain body that
+# owns them is captured. The select writes into them instead of fresh tensors.
+_CHAIN_OUT = None
+
+
+class chain_outputs:
+    """Point GraphedSelect.chain_body at the chain buffers; ``written`` names what it filled."""
+
+    def __init__(self, buffers):
+        self.buffers = buffers
+        self.written = set()
+
+    def __enter__(self):
+        global _CHAIN_OUT
+        _CHAIN_OUT = self
+        return self
+
+    def __exit__(self, *_):
+        global _CHAIN_OUT
+        _CHAIN_OUT = None
+
+    def target(self, name, shape, dtype, device):
+        value = self.buffers.get(name)
+        if (value is None or tuple(value.shape) != tuple(shape) or value.dtype != dtype
+                or value.device != device or not value.is_contiguous()):
+            return None
+        return value
 
 
 
 def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_merge=False,
-                 bf16_logits=None):
+                 bf16_logits=None, out=None):
     """Device-only body: no host syncs. q_a applies to rows whose top-1 is d_rej, q_b otherwise.
     With a side stream on the default path, argmax runs beside softmax."""
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
@@ -81,8 +108,15 @@ def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_mer
         main.wait_stream(side)
     if fused:
         from jetspec.engines.jetspec_plus_plus.jetspec.heads.anchor_select_fused import select_post
-        ids, p64, pack = select_post(values, ids, before_top1, q_a, q_b, cap, vocab)
-        inexact = pack[4].bool()
+        if out is None:
+            ids, p64, pack = select_post(values, ids, before_top1, q_a, q_b, cap, vocab)
+            inexact = pack[4].bool()
+        else:
+            # T4: write into the chain buffers; the flag cast feeds only the fallback below.
+            ids, p64, pack = select_post(values, ids, before_top1, q_a, q_b, cap, vocab,
+                                         out=out)
+            if exact_merge and cap & (cap - 1):
+                inexact = pack[4].bool()
     else:
         # a non-finite softmax row is NaN throughout (NaN or +inf logits, or an all -inf row
         # make the row sum NaN), and top-k ranks NaN first.
@@ -239,6 +273,87 @@ def fast_offers_topk_home(logits, rejected, q_hats, cap, *, slack=SLACK):
 
 
 
+def _chain_body_t4(logits, rejected, q_a, q_b, cap, width, chain):
+    """Unit T4 chain select: ids, p64 and pack land in the chain's handoff buffers."""
+    rows = logits.shape[0]
+    device = logits.device
+    targets = (chain.target('offers_ids', (rows, width), torch.long, device),
+               chain.target('offers_p64', (rows, width), torch.float64, device),
+               chain.target('offers_pack', (5, rows), torch.long, device))
+    fused = (kernel_enabled('anchor_select_fused', '1') and device.type == 'cuda'
+             and rejected.is_contiguous() and cap <= logits.shape[1]
+             and (not isinstance(q_a, torch.Tensor) or q_a.dtype == torch.float64))
+    out = targets if fused and all(value is not None for value in targets) else None
+    if out is not None and kernel_value('draft_fuse_t4', '0') == '2':
+        from jetspec.engines.jetspec_plus_plus.kernels import select_stats
+        if (select_stats.available(logits, rejected, width, cap)
+                and kernel_enabled('decoder_select_radix', '1')):
+            return _chain_body_stats(logits, rejected, q_a, q_b, cap, width, chain, out)
+    ids, p64, pack, _ = _select_body(
+        logits.float(), rejected, q_a, q_b, cap, width, exact_merge=True,
+        bf16_logits=logits if kernel_enabled('decoder_select_radix', '1') else None,
+        **({'out': out} if out is not None else {}))
+    if out is not None:
+        chain.written.update(name for name, value, target in zip(
+            ('offers_ids', 'offers_p64', 'offers_pack'), (ids, p64, pack), out)
+            if value is target)
+    return ids, p64, pack
+
+
+def _chain_body_stats(logits, rejected, q_a, q_b, cap, width, chain, out):
+    """Unit T4 level 2: one BF16 logits read gives the select statistics, the radix pass 0,
+    the K3 hazard's unfiltered statistics and the chain's dec_logits copy (tau gate)."""
+    from jetspec.engines.jetspec_plus_plus.kernels import select_stats
+    from jetspec.engines.jetspec_plus_plus.jetspec.heads.anchor_select_fused import select_post
+    rows, vocab = logits.shape
+    device = logits.device
+    copy = chain.target('dec_logits', tuple(logits.shape), logits.dtype, device)
+    stats = chain.target('select_stats', (4, rows), torch.float32, device)
+    argmax = chain.target('select_argmax', (rows,), torch.int32, device)
+    if stats is None or argmax is None:
+        stats = argmax = None
+    values, ids, before_top1, stats_out, argmax_out = select_stats.select_topk(
+        logits, rejected, width, copy=copy, stats=stats, argmax=argmax)
+    ids, p64, pack = select_post(values, ids, before_top1, q_a, q_b, cap, vocab, out=out)
+    ids, p64 = select_stats.repair_ties(logits, rejected, stats_out, ids, p64, pack, cap)
+    chain.written.update(('offers_ids', 'offers_p64', 'offers_pack'))
+    if copy is not None:
+        chain.written.add('dec_logits')
+    if stats is not None:
+        chain.written.update(('select_stats', 'select_argmax'))
+    return ids, p64, pack
+
+
+def _chain_body_t5(logits, rejected, q_a, q_b, cap, width, chain):
+    """Opt-in T5 radix restructure; unsupported inputs keep the existing select."""
+    from jetspec.engines.jetspec_plus_plus.kernels import select_stats, select_radix_fused
+    if not (select_stats.available(logits, rejected, width, cap)
+            and kernel_enabled('anchor_select_fused', '1')
+            and kernel_enabled('decoder_select_radix', '1')
+            and (not isinstance(q_a, torch.Tensor) or q_a.dtype == torch.float64)):
+        return None
+    rows = logits.shape[0]
+    device = logits.device
+    out = (chain.target('offers_ids', (rows, width), torch.long, device),
+           chain.target('offers_p64', (rows, width), torch.float64, device),
+           chain.target('offers_pack', (5, rows), torch.long, device))
+    if any(value is None for value in out):
+        return None
+    copy = chain.target('dec_logits', tuple(logits.shape), logits.dtype, device)
+    stats = chain.target('select_stats', (4, rows), torch.float32, device)
+    argmax = chain.target('select_argmax', (rows,), torch.int32, device)
+    if stats is None or argmax is None:
+        stats = argmax = None
+    ids, p64, pack, _, _ = select_radix_fused.select(
+        logits, rejected, q_a, q_b, cap, width, copy=copy, stats=stats, argmax=argmax, out=out)
+    chain.written.update(('offers_ids', 'offers_p64', 'offers_pack'))
+    if copy is not None:
+        chain.written.add('dec_logits')
+    if stats is not None:
+        chain.written.update(('select_stats', 'select_argmax'))
+    return ids, p64, pack
+
+
 class GraphedSelect:
     """One CUDA graph per (device, rows, vocab, cap, width, q pair); inputs copied in."""
 
@@ -257,6 +372,13 @@ class GraphedSelect:
             q_a, q_b = q_hats.unbind()
         else:
             q_a, q_b = _q_pair(q_hats)
+        if kernel_enabled('draft_fuse_t5', '1') and _CHAIN_OUT is not None:
+            outputs = _chain_body_t5(logits, rejected, q_a, q_b, cap, width, _CHAIN_OUT)
+            if outputs is not None:
+                return outputs
+        level = kernel_value('draft_fuse_t4', '0')
+        if level in ('1', '2') and _CHAIN_OUT is not None:
+            return _chain_body_t4(logits, rejected, q_a, q_b, cap, width, _CHAIN_OUT)
         ids, p64, pack, _ = _select_body(
             logits.float(), rejected, q_a, q_b, cap, width, exact_merge=True,
             bf16_logits=logits if kernel_enabled('decoder_select_radix', '1') else None)

@@ -4,6 +4,63 @@ import torch
 from torch.nn import functional as F
 
 
+class GroupedProjection:
+    """Independent block projections in one GEMM, with persistent row buffers.
+
+    A block-diagonal weight preserves distinct normalized inputs and their MX
+    scale groups. It trades zero weight tiles for fewer launches. Each M is
+    warmed eagerly, and returned block outputs are views consumed before reuse.
+    """
+
+    def __init__(self, weights):
+        self.groups, self.n, self.k = weights.shape
+        if self.k % 128 or self.n % 128:
+            raise ValueError('grouped projections require 128-aligned weights')
+        self.weight = weights.new_zeros(self.groups * self.n, self.groups * self.k)
+        for index, weight in enumerate(weights):
+            self.weight[index * self.n:(index + 1) * self.n,
+                        index * self.k:(index + 1) * self.k].copy_(weight)
+        self.buffers = {}
+        if weights.is_cuda:
+            from jetspec.engines.jetspec_plus_plus.models.target_linear import _w4a8_registry
+            _w4a8_registry.pack(self.weight)
+
+    def __call__(self, sources):
+        groups, m, k = sources.shape
+        if groups != self.groups or k != self.k or not 1 <= m <= 128:
+            raise ValueError('grouped projection input shape or M is unsupported')
+        if m not in self.buffers:
+            if sources.is_cuda and torch.cuda.is_current_stream_capturing():
+                raise RuntimeError('warm the grouped projection M before graph capture')
+            self.buffers[m] = (sources.new_empty(m, groups, k),
+                               sources.new_empty(m, groups * self.n))
+        source, output = self.buffers[m]
+        source.copy_(sources.permute(1, 0, 2))
+        from jetspec.engines.jetspec_plus_plus.models.target_linear import w4a8_draft_linear
+        result = w4a8_draft_linear(source.view(m, -1), self.weight, out=output)
+        if result is None:
+            torch.mm(source.view(m, -1), self.weight.t(), out=output)
+        return output.view(m, groups, self.n).permute(1, 0, 2)
+
+
+def prepare_grouped_kv(head):
+    """Pack independent K/V blocks in each adapter stream after weights load."""
+    if hasattr(head, '_gm_span_kv'):
+        return
+    plan = head._d1_lean_plan()
+    weights = head._c1_span_kv[0]
+    packs = {}
+    first = 0
+    while first < len(plan):
+        stop = first + 1
+        while stop < len(plan) and plan[stop][0] == plan[first][0] and plan[stop][7] == plan[first][7]:
+            stop += 1
+        if stop - first > 1:
+            packs[first, stop] = GroupedProjection(weights[first:stop])
+        first = stop
+    head._gm_span_kv = packs
+
+
 def _pack(module, names, weight):
     widths = [getattr(module, name).weight.shape[0] for name in names]
     biases = [getattr(module, name).bias for name in names]
@@ -136,7 +193,8 @@ def qkv(attn, source):
     if packed is None:
         return attn.q_proj(source), attn.k_proj(source), attn.v_proj(source)
     weight, bias, widths = packed
-    return F.linear(source, weight, bias).split(widths, dim=-1)
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import packed_draft_linear
+    return packed_draft_linear(source, weight, bias).split(widths, dim=-1)
 
 
 def kv(layer, source):
@@ -144,4 +202,5 @@ def kv(layer, source):
     if packed is None:
         return layer.k_proj(source), layer.v_proj(source)
     weight, bias, widths = packed
-    return F.linear(source, weight, bias).split(widths, dim=-1)
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import packed_draft_linear
+    return packed_draft_linear(source, weight, bias).split(widths, dim=-1)

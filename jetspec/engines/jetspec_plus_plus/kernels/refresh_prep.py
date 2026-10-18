@@ -41,7 +41,9 @@ if triton is not None:
                  T: tl.constexpr, WINDOW: tl.constexpr,
                  E0: tl.constexpr, E1: tl.constexpr, E2: tl.constexpr,
                  C0: tl.constexpr, C1: tl.constexpr, S0: tl.constexpr, S1: tl.constexpr,
-                 RB: tl.constexpr, B: tl.constexpr):
+                 RB: tl.constexpr, B: tl.constexpr,
+                 IDS=None, GATHER: tl.constexpr = False,
+                 I0: tl.constexpr = 0, I1: tl.constexpr = 0):
         token = tl.program_id(0)
         part = tl.program_id(1)
         r = tl.arange(0, RB)
@@ -56,8 +58,13 @@ if triton is not None:
         length = tl.load(LENGTH).to(tl.int64)
         position = tl.where(valid, length + tail + slot, length)
         col = part * B + tl.arange(0, B)
-        value = tl.load(EMBED + row * E0 + slot * E1 + col * E2,
-                        valid & (col < H), other=0)
+        if GATHER:
+            embedding_id = tl.load(IDS + row * I0 + slot * I1, valid, other=0)
+            value = tl.load(EMBED + embedding_id * E0 + col * E2,
+                            valid & (col < H), other=0)
+        else:
+            value = tl.load(EMBED + row * E0 + slot * E1 + col * E2,
+                            valid & (col < H), other=0)
         tl.store(DATA + token * H + col, value, col < H)
         if part == 0:
             d = tl.arange(0, B)
@@ -109,9 +116,14 @@ def bookkeeping(chained, active, keys, length, window, threshold, cap):
 register_optimization('refresh_bookkeeping', bookkeeping)
 
 
-def prepare(embeddings, length, tails, counts, tokens, cos_table, sin_table, window):
+def prepare(embeddings, length, tails, counts, tokens, cos_table, sin_table, window,
+            *, embedding_ids=None):
     """Pack rows, positions, attention metadata and table gathers in one launch."""
-    rows, width, hidden = embeddings.shape
+    if embedding_ids is not None:
+        rows, width = embedding_ids.shape
+        hidden = embeddings.shape[1]
+    else:
+        rows, width, hidden = embeddings.shape
     dim = cos_table.shape[1]
     result = {name: torch.empty(tokens, device=embeddings.device,
                                dtype=torch.bool if name == 'valid' else torch.long)
@@ -127,8 +139,12 @@ def prepare(embeddings, length, tails, counts, tokens, cos_table, sin_table, win
             embeddings, length, tails, counts, cos_table, sin_table,
             result['data'], result['cos'], result['sin'], result['row'], result['slot'],
             result['valid'], result['k_of'], result['positions'], result['starts'],
-            rows, width, hidden, dim, tokens, window, *embeddings.stride(),
-            *cos_table.stride(), *sin_table.stride(), triton.next_power_of_2(rows), block)
+            rows, width, hidden, dim, tokens, window,
+            *(embeddings.stride() if embedding_ids is None else
+              (embeddings.stride(0), 0, embeddings.stride(1))),
+            *cos_table.stride(), *sin_table.stride(), triton.next_power_of_2(rows), block,
+            **(dict(IDS=embedding_ids, GATHER=True, I0=embedding_ids.stride(0),
+                    I1=embedding_ids.stride(1)) if embedding_ids is not None else {}))
     else:
         offsets = torch.cat((counts.new_zeros(1), counts.cumsum(0)))
         index = torch.arange(tokens, device=counts.device)
@@ -137,6 +153,8 @@ def prepare(embeddings, length, tails, counts, tokens, cos_table, sin_table, win
         slot = torch.where(valid, index - offsets[row], width)
         k_of = torch.cat((tails.long().clamp(0, window), tails.new_zeros(1)))[row]
         positions = torch.where(valid, length + k_of + slot, length)
+        if embedding_ids is not None:
+            embeddings = embeddings[embedding_ids]
         result.update(row=row, slot=slot, valid=valid, k_of=k_of, positions=positions,
                       starts=torch.where(valid, offsets[row], tokens),
                       data=torch.where(valid[:, None],

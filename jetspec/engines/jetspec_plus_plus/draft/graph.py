@@ -237,6 +237,27 @@ class ChainGraph:
                 buffers["row_ring"].rows.shape[1], dtype=torch.int64,
                 device=buffers["passes_run"].device))
         first, publish = bodies.get("A", bodies.get("A0")), bodies["P"]
+        fuse_intake_error = (setting(run_config, 'engine.engine_settings.draft_fuse_t14', '0') == '1'
+                             and kernel_enabled('rows_k3', '1')
+                             and buffers['err'].is_cuda)
+        if fuse_intake_error:
+            buffers['_t14_intake_err'] = buffers['intake_err']
+        if (fuse_intake_error and kernel_enabled('j0_lmhead_kn', '1')
+                and kernel_enabled('lmhead_fused', '1') and kernel_enabled('refine_k3', '1')
+                and kernel_enabled('chain_publish_fused', '1') and 'publisher' in buffers
+                and setting(run_config, 'method.method_settings.chain_fixed_config') in ('J1-R0', 'J1-R1')
+                and not tail_segments(run_config=run_config)
+                and 'final_draft_top16_ids' not in buffers):
+            import triton
+            publisher, ring = buffers['publisher'], buffers['row_ring']
+            buffers['_t14_publication'] = dict(PUBLISH=True, Packet=buffers['packet'],
+                Published=buffers['published'], Wire=publisher.wire, Scores=publisher.scores,
+                WirePasses=buffers['wire_passes_run'], RingRows=ring.rows, RingKeys=ring.keys,
+                RingTop1=ring.p_top1, RingPasses=ring.passes_run, RingRounds=ring.rounds,
+                ROWS=publisher.rows, CAP=publisher.row_cap, RING=ring.rows.shape[1],
+                WORDS=publisher.wire.numel(), BLOCK_OFF=publisher.views[2].storage_offset(),
+                KEY_OFF=publisher.views[5].storage_offset(),
+                PAD_BLOCK=triton.next_power_of_2(max(publisher.wire.numel(), publisher.scores.numel())))
 
         def after_miss_control():
             if "control_after_miss" in buffers:
@@ -335,6 +356,10 @@ class ChainGraph:
 
         def with_error_home():
             from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+            if '_t14_publication' in buffers:
+                buffers['publisher'].home.copy_(buffers['publisher'].wire, non_blocking=True)
+                buffers['err_host'].copy_(buffers['err'], non_blocking=True)
+                return
             if 'final_draft_top16_ids' in buffers:
                 count = buffers['final_draft_top16_ids'].shape[0]
                 buffers['wire_draft_top16_ids'].fill_(-1)
@@ -388,7 +413,8 @@ class ChainGraph:
                 def with_selected_intake(first=first):
                     intake_common()
                     first()
-                    buffers["err"].bitwise_or_(buffers["intake_err"])
+                    if not fuse_intake_error:
+                        buffers["err"].bitwise_or_(buffers["intake_err"])
                 wrapped[name] = with_selected_intake
         return wrapped
 

@@ -7,11 +7,17 @@ def _kernels():
 
     @triton.jit
     def front(source, khat, marker, output, width: tl.constexpr, block: tl.constexpr,
-              mark: tl.constexpr, TILE: tl.constexpr):
+              mark: tl.constexpr, TILE: tl.constexpr,
+              STRIDED: tl.constexpr = False, S0: tl.constexpr = 0,
+              S1: tl.constexpr = 0, S2: tl.constexpr = 1):
         token = tl.program_id(0)
         col = tl.program_id(1) * TILE + tl.arange(0, TILE)
         visible = (token % block <= tl.load(khat + token // block)) & (token % block < block - 1)
-        value = tl.load(source + token * width + col, (col < width) & visible, other=0)
+        if STRIDED:
+            offset = (token // block) * S0 + (token % block) * S1 + col * S2
+        else:
+            offset = token * width + col
+        value = tl.load(source + offset, (col < width) & visible, other=0)
         dtype = output.dtype.element_ty
         value = value.to(dtype)
         if mark:
@@ -27,9 +33,21 @@ def _kernels():
                     eps: tl.constexpr, BLOCK: tl.constexpr,
                     MASK=None, MASK_START: tl.constexpr = 0,
                     MASK_BYTES: tl.constexpr = 0, CACHE_PROGRAMS: tl.constexpr = 0,
-                    FUSED_MASK: tl.constexpr = False, RESET: tl.constexpr = False):
+                    FUSED_MASK: tl.constexpr = False, RESET: tl.constexpr = False,
+                    IDS=None, ACTIVE=None, ERR=None, GUARD: tl.constexpr = False,
+                    GUARD_ROWS: tl.constexpr = 0, MASK_TOKEN: tl.constexpr = -1,
+                    GUARD_BLOCK: tl.constexpr = 1):
         program = tl.program_id(0)
-        if not FUSED_MASK or program < CACHE_PROGRAMS:
+        guard_program: tl.constexpr = CACHE_PROGRAMS + (MASK_BYTES + 255) // 256
+        if GUARD:
+            if program == guard_program:
+                flat = tl.arange(0, GUARD_BLOCK)
+                ids = tl.load(IDS + flat, flat < GUARD_ROWS * block, other=-1)
+                active = tl.load(ACTIVE + flat // block, flat < GUARD_ROWS * block, other=0)
+                found = tl.sum(((ids == MASK_TOKEN) & active &
+                                (flat < GUARD_ROWS * block)).to(tl.int32), 0) > 0
+                tl.store(ERR, tl.load(ERR) | tl.where(found, 1 << 7, 0).to(tl.int64))
+        if (not GUARD or program < guard_program) and (not FUSED_MASK or program < CACHE_PROGRAMS):
             head = program % kv_heads
             token = (program // kv_heads) % tokens
             layer = program // (kv_heads * tokens)
@@ -59,7 +77,7 @@ def _kernels():
                 tl.store(cache + target, (first + second).to(tl.bfloat16), mask=mask)
                 copied = tl.load(projected + base + width + col, mask=mask, other=0)
                 tl.store(cache + target + cache_kv_stride, copied, mask=mask)
-        else:
+        elif FUSED_MASK and program < guard_program:
             index = (program - CACHE_PROGRAMS) * 256 + tl.arange(0, 256)
             valid = index < MASK_BYTES
             row_bytes = (MASK_START + tokens) // 8
@@ -78,4 +96,3 @@ def _kernels():
             tl.store(MASK + index, prior | packed, valid)
 
     return front, postprocess
-

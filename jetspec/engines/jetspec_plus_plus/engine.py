@@ -23,14 +23,17 @@ class Engine:
     precision_target: str = 'bf16'
     precision_draft: str = 'bf16'
     precision_lm_head: str = 'bf16'
+    precision_target_head: str = 'bf16'
 
     def __post_init__(self):
         if self.kind not in ('fast', 'reference'):
             raise ValueError('engine kind must be fast or reference')
         for role in ('target', 'draft', 'lm_head'):
-            allowed = ('bf16', 'fq_w4a16', 'fq_w4a4') + (('nvfp4_w4a4',) if role == 'target' else ('nvfp4_w4a16',))
+            allowed = ('bf16', 'fq_w4a16', 'fq_w4a4') + (('nvfp4_w4a4', 'mxfp4_w4a8') if role == 'target' else ('nvfp4_w4a16', 'mxfp4_w4a8'))
             if getattr(self, 'precision_' + role) not in allowed:
                 raise ValueError('invalid precision_' + role)
+        if self.precision_target_head not in ('bf16', 'mxfp4_w4a8'):
+            raise ValueError('invalid precision_target_head')
 
     @classmethod
     def from_config(cls, resolved, *, sealed_record=False):
@@ -68,7 +71,7 @@ class Engine:
         return cls(kind, cutoffs, cutoffs and deadline, profile,
                    values.get('deterministic', False), record, **request_policy,
                    **{name: settings.get(name, 'bf16') for name in (
-                       'precision_target', 'precision_draft', 'precision_lm_head')})
+                       'precision_target', 'precision_draft', 'precision_lm_head', 'precision_target_head')})
 
     @classmethod
     def from_environment(cls, environ, *, regime=None, profile=None, sealed_record=False):
@@ -109,7 +112,7 @@ class Engine:
                    release_finished_requests=mode != 'off',
                    tag_sequence_ids=mode != 'off', skip_admission_prewarm=mode != 'off',
                    **{field: environ.get(name(field), 'bf16') for field in (
-                       'precision_target', 'precision_draft', 'precision_lm_head')})
+                       'precision_target', 'precision_draft', 'precision_lm_head', 'precision_target_head')})
 
     @property
     def execution(self):

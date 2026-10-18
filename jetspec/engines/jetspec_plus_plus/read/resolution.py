@@ -1,10 +1,12 @@
 """Compose the closed serving and training schemas on CPU."""
+from copy import deepcopy
 from pathlib import Path
 
-from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, Schema, compose, validate
-from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import METHOD_SCHEMA, MODEL_SCHEMA
+from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, Schema, compose, flatten, validate, validate_fields
+from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import METHOD_SCHEMA, MODEL_SCHEMA, method_concurrency_settings
 from jetspec.engines.jetspec_plus_plus.draft.method.schema_extensions import training_schemas, require_training_schemas
-from jetspec.engines.jetspec_plus_plus.config_schemas import ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA, BATCH_DEFAULTS
+from jetspec.engines.jetspec_plus_plus.config_schemas import (ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA,
+                                          BATCH_DEFAULTS, concurrency_settings)
 
 ROOT = next((parent for parent in Path(__file__).resolve().parents
              if (parent / 'artifacts/manifest.json').is_file()), Path.cwd())
@@ -23,8 +25,41 @@ def schemas():
     return result
 
 
+def _concurrency_rows(config, overrides):
+    """Apply the smallest bucket >= concurrency; explicit settings keep precedence.
+
+    Above the largest bucket leave the entry unchanged, so its capacity check
+    retains its existing error. Tables never enter the resolved identity.
+    """
+    named = [override.partition('=')[0] for override in overrides]
+    concurrency = config['benchmark'].get('concurrency', BATCH_DEFAULTS[('benchmark', 'concurrency')])
+    for category, schema, rule in (('method', METHOD_SCHEMA, method_concurrency_settings),
+                                   ('engine', ENGINE_SCHEMA, concurrency_settings)):
+        if 'concurrency_settings' not in config[category]:
+            continue
+        table = config[category].pop('concurrency_settings')
+        if rule(table) is False:
+            raise ValueError(f'{category}.concurrency_settings has invalid type or value')
+        validate_fields({'concurrency': concurrency}, BENCHMARK_SCHEMA.fields, (), 'benchmark')
+        key = min((int(key) for key in table if int(key) >= concurrency), default=None)
+        if key is None:
+            continue
+        for path, value in flatten(table[str(key)], atomic=schema.atomic).items():
+            field = f'{category}.{path}'
+            if any(field == name or field.startswith(name + '.') or name.startswith(field + '.')
+                   for name in named):
+                continue
+            *parents, leaf = path.split('.')
+            payload = config[category]
+            for part in parents:
+                payload = payload.setdefault(part, {})
+            payload[leaf] = deepcopy(value)
+    return config
+
+
 def resolve(names, overrides=(), *, root=ROOT / 'config'):
-    config = compose(root, names, overrides)
+    overrides = tuple(overrides)
+    config = _concurrency_rows(compose(root, names, overrides), overrides)
     require_training_schemas(config)
     validate(config, schemas())
     from jetspec.engines.jetspec_plus_plus.legacy_env import execution_settings, release_recipe

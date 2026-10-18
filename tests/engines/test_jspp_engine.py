@@ -102,7 +102,11 @@ def test_host_values_do_not_gain_an_empty_release_override(tmp_path):
     args = entry.parser().parse_args(['--model', 'qwen3.8-27b', '--host-values', str(path),
                                      '--prompts-json', '/prompts.json', '--output-json', '/read.json'])
     recipe, _, host = entry.resolve(args)
-    assert recipe['target_release_artifact'] not in host['artifacts']
+    # The 27B release takes its embedding and LM head from the target, so it names no release artifact.
+    assert recipe.get('target_release_artifact') is None
+    assert 'target_release_slice' in recipe
+    assert all(name in {recipe['drafter_artifact'], recipe['adapter_artifact'], recipe['bundle_artifact']}
+               for name in host['artifacts'])
 
 
 def test_manifest_preserves_trained_adapter_serving_layout():
@@ -184,8 +188,9 @@ import torch
 os.environ.setdefault('SSD_HF_CACHE', '/tmp/unused-import-hf')
 os.environ.setdefault('SSD_DATASET_DIR', '/tmp/unused-import-datasets')
 root = Path(sys.argv[1])
-# CuTe DSL kernels that their callers import lazily, on CUDA only.
-cuda_only = {'kernels/nvfp4/_k1_kernel.py'}
+# CuTe DSL and Triton kernels that their callers import lazily, on CUDA only.
+cuda_only = {'kernels/nvfp4/_k1_kernel.py', 'kernels/nvfp4/_w4a16_kernel.py', 'kernels/nvfp4/_w4a8_kernel.py',
+             'kernels/nvfp4/_w4a8_quant.py', 'kernels/nvfp4/_w4a8_triton.py'}
 package = root / 'jetspec/engines/jetspec_plus_plus'
 paths = [path for path in sorted(package.rglob('*.py'))
          if str(path.relative_to(package)) not in cuda_only]

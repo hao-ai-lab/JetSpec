@@ -1,7 +1,7 @@
 """Serving owns execution, placement and prompt sampling keys."""
 from jetspec.engines.jetspec_plus_plus.draft.method.config import Schema
 from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import (_field, _nonnegative_int, _nullable_sha256, _positive_int,
-                                           _probability, _safe_file, _is_sha256)
+                                           _probability, _safe_file, _is_sha256, _concurrency_settings)
 
 
 # Effective defaults stay out of canonical configs and legacy launch snapshots.
@@ -19,6 +19,10 @@ BATCH_DEFAULTS = {
 def batch_buckets(value):
     return (isinstance(value, list) and bool(value) and all(_positive_int(x) for x in value)
             and value == sorted(set(value)))
+
+
+def concurrency_settings(value):
+    return _concurrency_settings(value, ENGINE_SCHEMA, 'engine')
 
 
 def prompt_files(value):
@@ -67,9 +71,18 @@ ENGINE_SCHEMA = Schema({
     'supports_batch': bool, 'max_num_seqs': _positive_int,
     'batch_buckets': batch_buckets, 'max_num_batched_tokens': _positive_int,
     'gpu_memory_utilization': lambda v: type(v) in (int, float) and 0 < v <= 1,
-    _field('engine_settings', 'precision_target'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a4'),
-    _field('engine_settings', 'precision_draft'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a16'),
-    _field('engine_settings', 'precision_lm_head'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a16'),
+    _field('engine_settings', 'precision_target'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a4', 'mxfp4_w4a8'),
+    _field('engine_settings', 'precision_draft'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a16', 'mxfp4_w4a8'),
+    _field('engine_settings', 'precision_lm_head'): ('bf16', 'fq_w4a16', 'fq_w4a4', 'nvfp4_w4a16', 'mxfp4_w4a8'),
+    _field('engine_settings', 'precision_target_head'): ('bf16', 'mxfp4_w4a8'),
+    _field('engine_settings', 'draft_vocab_k'): _nonnegative_int,
+    _field('engine_settings', 'draft_vocab_path'): str,
+    _field('engine_settings', 'draft_fuse_t1'): ('0', '1', 'dense', 'len', 'fused_len'),
+    _field('engine_settings', 'draft_fuse_skv'): ('0', '1'),
+    _field('engine_settings', 'draft_fuse_t13'): ('0', '1'),
+    _field('engine_settings', 'draft_fuse_t15'): ('0', '1'),
+    _field('engine_settings', 'draft_fuse_w5'): ('0', '1'),
+    _field('engine_settings', 'draft_fuse_w1'): ('0', '1'),
 }, required=('kind',), checks=(check_batch_capacity,))
 
 HARDWARE_SCHEMA = Schema({
@@ -229,6 +242,7 @@ _HISTORICAL_FIELDS = {
         _field('engine_settings', 'chain_host_lean'),
         _field('engine_settings', 'chain_intake_fused'),
         _field('engine_settings', 'chain_j_switch_l'),
+        _field('engine_settings', 'chain_single_key'),
         _field('engine_settings', 'chain_kernel_profile'),
         _field('engine_settings', 'chain_kernel_profile_every'),
         _field('engine_settings', 'chain_miss_redraft'),
@@ -286,6 +300,17 @@ _HISTORICAL_FIELDS = {
         _field('engine_settings', 'device_split'),
         _field('engine_settings', 'draft_deadline'),
         _field('engine_settings', 'draft_deadline_margin_ms'),
+        _field('engine_settings', 'draft_fuse_t10'),
+        _field('engine_settings', 'draft_fuse_t11'),
+        _field('engine_settings', 'draft_fuse_t14'),
+        _field('engine_settings', 'draft_fuse_t17'),
+        _field('engine_settings', 'draft_fuse_gm'),
+        _field('engine_settings', 'draft_fuse_t3'),
+        _field('engine_settings', 'draft_fuse_t4'),
+        _field('engine_settings', 'draft_fuse_t9'),
+        _field('engine_settings', 'draft_fuse_t5'),
+        _field('engine_settings', 'draft_fuse_t12'),
+        _field('engine_settings', 'draft_fuse_t6'),
         _field('engine_settings', 'draft_pin_check'),
         _field('engine_settings', 'draft_streams'),
         _field('engine_settings', 'e04_lean'),
@@ -428,6 +453,26 @@ _HISTORICAL_FIELDS = {
         _field('engine_settings', 'tail_preissue'),
         _field('engine_settings', 'tail_publish'),
         _field('engine_settings', 'jetspec_verify_device'),
+        _field('engine_settings', 'verify_cut_lean27b'),
+        _field('engine_settings', 'verify_cut_pack27b'),
+        _field('engine_settings', 'verify_cut_grope'),
+        _field('engine_settings', 'verify_cut_mlpglue'),
+        _field('engine_settings', 'verify_cut_convsnap'),
+        _field('engine_settings', 'verify_cut_gbeta'),
+        _field('engine_settings', 'verify_cut_gdnlazy'),
+        _field('engine_settings', 'verify_cut_gdnrepeat'),
+        _field('engine_settings', 'verify_cut_gdncommit'),
+        _field('engine_settings', 'verify_cut_gdnconv'),
+        _field('engine_settings', 'verify_cut_attn27b'),
+        _field('engine_settings', 'verify_cut_norm27b'),
+        _field('engine_settings', 'verify_cut_w1prod27b'),
+        _field('engine_settings', 'verify_cut_commit27b'),
+        _field('engine_settings', 'verify_cut_gdnrec27b'),
+        _field('engine_settings', 'verify_cut_pack27b2'),
+        _field('engine_settings', 'verify_cut_bafold27b'),
+        _field('engine_settings', 'verify_cut_glue8b'),
+        _field('engine_settings', 'verify_cut_persist8b'),
+        _field('engine_settings', 'verify_cut_w1prod8b'),
         _field('engine_settings', 'verify_device_transport'),
         _field('engine_settings', 'verify_host_census'),
         _field('engine_settings', 'verify_input_direct'),
@@ -697,6 +742,7 @@ RANK_CONFIG_FIELDS = {
         _field('engine_settings', 'chain_handoff'): '0',
         _field('engine_settings', 'chain_handoff_timing'): '0',
         _field('engine_settings', 'chain_j_switch_l'): None,
+        _field('engine_settings', 'chain_single_key'): '0',
         _field('engine_settings', 'chain_kernel_profile'): None,
         _field('engine_settings', 'chain_kernel_profile_every'): '20',
         _field('engine_settings', 'chain_miss_redraft'): '0',
@@ -735,6 +781,12 @@ RANK_CONFIG_FIELDS = {
         _field('engine_settings', 'device_publish_check'): '0',
         _field('engine_settings', 'device_split'): '0',
         _field('engine_settings', 'draft_model'): None,
+        _field('engine_settings', 'draft_fuse_t10'): '0',
+        _field('engine_settings', 'draft_fuse_t11'): '0',
+        _field('engine_settings', 'draft_fuse_t9'): '0',
+        _field('engine_settings', 'draft_fuse_t14'): '0',
+        _field('engine_settings', 'draft_fuse_t17'): '0',
+        _field('engine_settings', 'draft_fuse_gm'): '0',
         _field('engine_settings', 'draft_pin_check'): '1',
         _field('engine_settings', 'draft_streams'): '0',
         _field('engine_settings', 'eager_verify_causal_n1'): '0',
@@ -809,6 +861,9 @@ RANK_CONFIG_FIELDS = {
         _field('engine_settings', 'precision_target'): 'bf16',
         _field('engine_settings', 'precision_draft'): 'bf16',
         _field('engine_settings', 'precision_lm_head'): 'bf16',
+        _field('engine_settings', 'draft_vocab_k'): 0,
+        _field('engine_settings', 'draft_vocab_path'): '',
+        _field('engine_settings', 'precision_target_head'): 'bf16',
         _field('engine_settings', 'record_flags'): None,
         _field('engine_settings', 'record_ptop1'): None,
         _field('engine_settings', 'record_qshadow'): None,
@@ -863,6 +918,26 @@ RANK_CONFIG_FIELDS = {
         _field('engine_settings', 'target_model'): None,
         _field('engine_settings', 'torchdynamo_disable'): None,
         _field('engine_settings', 'verify_causal_check'): '0',
+        _field('engine_settings', 'verify_cut_lean27b'): '0',
+        _field('engine_settings', 'verify_cut_pack27b'): '0',
+        _field('engine_settings', 'verify_cut_grope'): '0',
+        _field('engine_settings', 'verify_cut_mlpglue'): '0',
+        _field('engine_settings', 'verify_cut_convsnap'): '0',
+        _field('engine_settings', 'verify_cut_gbeta'): '0',
+        _field('engine_settings', 'verify_cut_gdnlazy'): '0',
+        _field('engine_settings', 'verify_cut_gdnrepeat'): '0',
+        _field('engine_settings', 'verify_cut_gdncommit'): '0',
+        _field('engine_settings', 'verify_cut_gdnconv'): '0',
+        _field('engine_settings', 'verify_cut_attn27b'): '0',
+        _field('engine_settings', 'verify_cut_norm27b'): '0',
+        _field('engine_settings', 'verify_cut_w1prod27b'): '0',
+        _field('engine_settings', 'verify_cut_commit27b'): '0',
+        _field('engine_settings', 'verify_cut_gdnrec27b'): '0',
+        _field('engine_settings', 'verify_cut_pack27b2'): '0',
+        _field('engine_settings', 'verify_cut_bafold27b'): '0',
+        _field('engine_settings', 'verify_cut_glue8b'): '0',
+        _field('engine_settings', 'verify_cut_persist8b'): '0',
+        _field('engine_settings', 'verify_cut_w1prod8b'): '0',
         _field('engine_settings', 'verify_device_transport'): 'chain',
         _field('engine_settings', 'verify_host_census'): '0',
         _field('engine_settings', 'verify_input_direct'): '0',

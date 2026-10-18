@@ -450,6 +450,12 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
     buffers = allocate_buffers(device=drafter.device, R=key.R, lanes=key.lanes,
                                hidden=hidden, vocab=vocab,
                                row_home_words=rows_chain_home_words(key.R, key.lanes))
+    if kernel_value('draft_fuse_t4', '0') == '2' or kernel_enabled('draft_fuse_t5', '1'):
+        # Unit T4 level 2: the select's unfiltered statistics, read by the K3 hazard.
+        buffers["select_stats"] = torch.empty((4, key.lanes), dtype=torch.float32,
+                                              device=drafter.device)
+        buffers["select_argmax"] = torch.empty((key.lanes,), dtype=torch.int32,
+                                               device=drafter.device)
     tap_dtype = front.taps.dtype
     tap_bytes = front.taps.numel() * front.taps.element_size()
     if getattr(front, "hybrid_recurrent", None) is None:
@@ -609,6 +615,9 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
         context_stream = DraftStreams(drafter.device)
         buffers["draft_stream_keys"] = torch.zeros(key.R, dtype=torch.int64,
                                                    device=drafter.device)
+    fuse_geometry = setting(run_config, 'engine.engine_settings.draft_fuse_t11', '0') == '1'
+    fuse_context = (setting(run_config, 'engine.engine_settings.draft_fuse_t9', '0') == '1'
+                    and hasattr(bucket.head, '_chain_ctx_gather'))
 
     def first_rest(*, incremental=False):
         if context_stream is not None:
@@ -617,17 +626,32 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
             context_stream.start(lambda: bucket.head.update_chain(
                 tap_store.prefix_padded(prefix_bucket), front.staged_hidden,
                 buffers["rp"][Offset.L], buffers["draft_stream_keys"], mark=True,
-                **({"incremental": True} if incremental else {})))
+                **({"incremental": True} if incremental else {}),
+                **({"geometry": False} if fuse_context else {})))
         if "capture_dec_window" in buffers:
             hidden = buffers["capture_dec_window"].shape[-1]
             buffers["capture_dec_window"].copy_(front.staged_hidden[0, :, -hidden:])
             buffers["capture_dec_lengths"][0].copy_(buffers["rp"][Offset.DEC_LEN])
             buffers["capture_dec_lengths"][1].copy_(buffers["rp"][Offset.C1_COUNT])
-        logits, ids, p64, pack = decoder.decoder_chain_body(
-            buffers["rp"], tokens, front, bucket)
-        for name, value in (("dec_logits", logits), ("offers_ids", ids),
-                            ("offers_p64", p64), ("offers_pack", pack)):
-            buffers[name].copy_(value)
+        if kernel_value('draft_fuse_t4', '0') in ('1', '2') or kernel_enabled('draft_fuse_t5', '1'):
+            # Unit T4: the select writes its outputs in place; copy only what it did not.
+            from jetspec.engines.jetspec_plus_plus.jetspec.heads.topk_select import chain_outputs
+            with chain_outputs(buffers) as handoff:
+                logits, ids, p64, pack = decoder.decoder_chain_body(
+                    buffers["rp"], tokens, front, bucket)
+            for name, value in (("dec_logits", logits), ("offers_ids", ids),
+                                ("offers_p64", p64), ("offers_pack", pack)):
+                if name not in handoff.written:
+                    buffers[name].copy_(value)
+            if "select_stats" not in handoff.written:
+                buffers.pop("select_stats", None)  # the hazard keeps its own scans
+                buffers.pop("select_argmax", None)
+        else:
+            logits, ids, p64, pack = decoder.decoder_chain_body(
+                buffers["rp"], tokens, front, bucket)
+            for name, value in (("dec_logits", logits), ("offers_ids", ids),
+                                ("offers_p64", p64), ("offers_pack", pack)):
+                buffers[name].copy_(value)
         rows_chain_body(
             buffers["rp"], tokens, buffers["offers_ids"],
             buffers["offers_p64"], buffers["offers_pack"],
@@ -641,8 +665,11 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
                                      **({"incremental": True} if incremental else {}))
         else:
             context_stream.finish()
-            bucket.head._prepare_geometry(buffers["rp"][Offset.L].reshape(1),
-                                           buffers["keys"][:, 0] + 1)
+            if fuse_geometry:
+                bucket.head._prepare_geometry_keys(buffers["rp"][Offset.L], buffers["keys"])
+            else:
+                bucket.head._prepare_geometry(buffers["rp"][Offset.L].reshape(1),
+                                               buffers["keys"][:, 0] + 1)
         passes["A"]()
 
     def first():

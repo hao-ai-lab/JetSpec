@@ -100,6 +100,13 @@ def attend(q: torch.Tensor, cache: torch.Tensor, packed_mask: torch.Tensor,
             or cache.shape[1:3] != (2, 1) or cache.shape[-1] != dim
             or dim not in (64, 128, 256) or packed_mask.numel() * 8 < rows * keys):
         raise ValueError('unsupported J-pass attention layout')
+    from jetspec.engines.jetspec_plus_plus.kernels.draft_splitkv import enabled, attend as split_attend
+    if groups == 1 and enabled(q):
+        output = split_attend(q.transpose(0, 1)[None],
+                              cache[:, 0, 0].transpose(0, 1)[None],
+                              cache[:, 1, 0].transpose(0, 1)[None], scale,
+                              mode='packed', packed=packed_mask, length=lengths, prefix=prefix)
+        return output[0].transpose(0, 1)
     output = torch.empty_like(q)
     _attend[(heads, group_rows // 16, groups)](
         q, cache, packed_mask, lengths, output,

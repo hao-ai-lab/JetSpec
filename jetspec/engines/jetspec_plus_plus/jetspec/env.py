@@ -293,7 +293,11 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
         validate_lane_regime(environ, regime)
     except EnvironmentContractError as error:
         problems.append(str(error))
+    # The C>1 batched draft round takes J from the pass count; the fixed config is only its label.
+    batch_round = (max_num_seqs != 1
+                   and environ.get(_name('engine', 'engine_settings.batch_draft_graph')) == '1')
     if (environ.get(_name('method', 'method_settings.chain_fixed_config')) is not None
+            and not batch_round
             and environ.get(_name('engine', 'engine_settings.chain_graph'), '0') != 'seg'
             and not (environ.get(_name('engine', 'engine_settings.chain_graph'), '0') == '0'
                      and environ.get(_name('engine', 'engine_settings.refresh_swap'), '0') == '1')):
@@ -365,6 +369,9 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
         problems.append("JETSPEC_CHAIN_J_SWITCH_L must be a nonnegative multiple of 128")
 
     for rule in inert_requirements(environ, jetspec=jetspec):
+        # The chain miss-redraft valves belong to the N=1 chain; the batched round never reads them.
+        if batch_round and rule.flag == _name('engine', 'engine_settings.chain_miss_redraft'):
+            continue
         if rule.values is None:
             problems.append(
                 f"{rule.name}={environ[rule.name]!r} is inert unless {rule.flag} is set: {rule.why}")
@@ -523,12 +530,20 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
         if environ.get(_name('engine', 'engine_settings.refresh_swap_glue')) == "1":
             problems.append("JETSPEC_REFRESH_SWAP_GLUE=1 refuses the hybrid decoder "
                             "(GDN state carry and gated D256 partial-RoPE attention)")
-        if not jetspec or max_num_seqs != 1:
-            problems.append("JETSPEC_HYBRID_PAIR=1 requires N=1 JetSpec")
+        if not jetspec:
+            problems.append("JETSPEC_HYBRID_PAIR=1 requires JetSpec")
         if environ.get(_name('method', 'method_settings.drafts')) not in ("15", "31"):
             problems.append("JETSPEC_HYBRID_PAIR=1 requires JETSPEC_DRAFTS=15 or 31")
         requirements = ()
-        if environ.get(_name('engine', 'engine_settings.chain_graph'), '0') == '0':
+        if max_num_seqs != 1:
+            # C>1 serves the batched draft round on the F3 slots: host verify, no swap.
+            requirements += ((_name('engine', 'engine_settings.batch_draft_graph'), "1"),
+                             (_name('engine', 'engine_settings.perseq'), "0"))
+            if environ.get(_name('engine', 'engine_settings.chain_graph'), '0') != '0':
+                problems.append("JETSPEC_HYBRID_PAIR=1 at C>1 requires JETSPEC_CHAIN_GRAPH unset")
+            if environ.get(_name('method', 'method_settings.tree_b'), '0') != '0':
+                problems.append("JETSPEC_HYBRID_PAIR=1 at C>1 requires no tree budget (JETSPEC_TREE_B=0)")
+        elif environ.get(_name('engine', 'engine_settings.chain_graph'), '0') == '0':
             requirements += ((_name('engine', 'engine_settings.refresh_swap'), "1"),)
         else:
             requirements += ((_name('engine', 'engine_settings.chain_graph'), "seg"),

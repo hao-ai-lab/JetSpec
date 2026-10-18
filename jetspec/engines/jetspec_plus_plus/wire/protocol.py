@@ -207,15 +207,19 @@ class CandidateReceiver:
     """One CPU reader fetches immutable packets while verification proceeds."""
 
     def __init__(self, store, decode, *, run_config=None):
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         # A blocking get must not hold the request publisher's TCP connection.
         store = store.clone()
         self.pending = SimpleQueue()
         census = host_census.enabled(run_config)
+        id_trace = setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1'
 
         def receive():
             while True:
                 key, message = self.pending.get()
                 try:
+                    if id_trace:
+                        print(f"MAILBOX_ID side=verify event=candidate_await key={key}", flush=True)
                     wire = self._read(store, key)
                     if census:
                         got = host_census.perf_counter()

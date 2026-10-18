@@ -16,7 +16,8 @@ if triton is not None:
                       WS0: tl.constexpr, WS1: tl.constexpr,
                       SLOTS: tl.constexpr, C: tl.constexpr,
                       BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
-                      PERSISTENT: tl.constexpr = False):
+                      PERSISTENT: tl.constexpr = False,
+                      FROM_LOGITS: tl.constexpr = False):
         depth = tl.arange(0, BK)
         if PERSISTENT:
             first = tl.program_id(0)
@@ -31,15 +32,20 @@ if triton is not None:
             col = tile % C * BN + tl.arange(0, BN)
             current = tl.load(IDS + row // SLOTS * (SLOTS + 1) + row % SLOTS + 1,
                               row < M, other=0)
-            acc = tl.full((BM, BN), 0, tl.float32)
-            for block in range(tl.cdiv(K, BK)):
-                k = block * BK + depth
-                h = tl.load(H + row[:, None] * K + k[None, :],
-                            (row[:, None] < M) & (k[None, :] < K), other=0)
-                w = tl.load(W + col[:, None] * WS0 + k[None, :] * WS1,
-                            (col[:, None] < V) & (k[None, :] < K), other=0)
-                acc = tl.dot(h, tl.trans(w), acc)
-            value = acc.to(tl.bfloat16).to(tl.float32)
+            if FROM_LOGITS:
+                value = tl.load(H + row[:, None] * V + col[None, :],
+                                (row[:, None] < M) & (col[None, :] < V),
+                                other=-float('inf')).to(tl.float32)
+            else:
+                acc = tl.full((BM, BN), 0, tl.float32)
+                for block in range(tl.cdiv(K, BK)):
+                    k = block * BK + depth
+                    h = tl.load(H + row[:, None] * K + k[None, :],
+                                (row[:, None] < M) & (k[None, :] < K), other=0)
+                    w = tl.load(W + col[:, None] * WS0 + k[None, :] * WS1,
+                                (col[:, None] < V) & (k[None, :] < K), other=0)
+                    acc = tl.dot(h, tl.trans(w), acc)
+                value = acc.to(tl.bfloat16).to(tl.float32)
             value = tl.where(col[None, :] < V, value, -float('inf'))
             maximum = tl.max(value, 1)
             top = tl.min(tl.where(value == maximum[:, None], col[None, :], 2147483647), 1)
@@ -48,7 +54,8 @@ if triton is not None:
             alternate_id = tl.min(tl.where(excluded == alternative[:, None],
                                            col[None, :], 2147483647), 1)
             draft = tl.max(tl.where(col[None, :] == current[:, None], value, -float('inf')), 1)
-            total = tl.sum(tl.exp(value - maximum[:, None]), 1)
+            safe_maximum = tl.where(maximum == -float('inf'), 0.0, maximum)
+            total = tl.sum(tl.exp(value - safe_maximum[:, None]), 1)
             out = row * C + tile % C
             tl.store(PMAX + out, maximum, row < M)
             tl.store(PSUM + out, total, row < M)
@@ -80,4 +87,3 @@ if triton is not None:
         tl.store(TOP + row, top)
         tl.store(ALT + row, alternate)
         tl.store(MARGIN + row, p_new >= p_draft)
-

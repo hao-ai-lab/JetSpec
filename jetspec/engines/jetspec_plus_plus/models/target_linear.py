@@ -31,6 +31,7 @@ class WeightFormat:
 class ProjectionPrecision:
     weight_format: WeightFormat = field(default_factory=WeightFormat)
     fake_quant: bool = False
+    role: str = 'draft'
     warmed_m_buckets: set[int] = field(default_factory=set)
     _weights: dict = field(default_factory=dict, init=False, repr=False, compare=False)
     _activations: dict = field(default_factory=dict, init=False, repr=False, compare=False)
@@ -47,7 +48,7 @@ class ProjectionPrecision:
         mode = setting(run_config, 'engine', key, 'bf16')
         return cls(WeightFormat(mode=mode,
             activation_scale_policy='per_row' if mode in ('fq_w4a4', 'nvfp4_w4a4') else None),
-            fake_quant=mode in ('fq_w4a16', 'fq_w4a4'))
+            fake_quant=mode in ('fq_w4a16', 'fq_w4a4'), role=role)
 
     def _weight(self, weight, *, dtype=None):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import fake_quantize
@@ -58,12 +59,17 @@ class ProjectionPrecision:
         cache_key = key if dtype is None else (key, dtype)
         if cache_key not in self._weights:
             if weight.is_cuda and torch.cuda.is_current_stream_capturing():
+                if self.weight_format.mode == 'mxfp4_w4a8':
+                    # A W4A8 site's M bucket first met in capture: draft weights are rounded at load.
+                    return weight
                 raise RuntimeError('warm the projection weight before CUDA graph capture')
             if self.weight_format.mode == 'nvfp4_w4a4':
                 from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import dequantize
                 rounded = dequantize(self._packed_weight(weight, key)).to(dtype or weight.dtype)
             elif self.weight_format.mode == 'nvfp4_w4a16':
                 rounded = _nvfp4_weight_only(self, weight, key)
+            elif self.weight_format.mode == 'mxfp4_w4a8':
+                rounded = _mxfp4_weight_only(weight)
             else:
                 rounded = fake_quantize(weight.reshape(-1, weight.shape[-1]).to(torch.bfloat16))
                 rounded = rounded.reshape(weight.shape).to(weight.dtype)
@@ -78,7 +84,7 @@ class ProjectionPrecision:
 
     def _inputs(self, x, weight):
         mode = self.weight_format.mode
-        if mode not in ('fq_w4a16', 'fq_w4a4', 'nvfp4_w4a4', 'nvfp4_w4a16'):
+        if mode not in ('fq_w4a16', 'fq_w4a4', 'nvfp4_w4a4', 'nvfp4_w4a16', 'mxfp4_w4a8'):
             if self.fake_quant:
                 raise NotImplementedError('fake quant requires fq_w4a16 or fq_w4a4')
             if mode != 'bf16':
@@ -97,8 +103,20 @@ class ProjectionPrecision:
         return x, weight
 
     def linear(self, x, weight, bias, *, implementation=None):
+        reduced = getattr(weight, '_draft_vocab', None)
+        if reduced is not None:
+            from jetspec.engines.jetspec_plus_plus.models.draft_vocab import expand_logits
+            ids, gathered = reduced
+            selected_bias = None if bias is None else bias.index_select(0, ids)
+            logits = self.linear(x, gathered, selected_bias, implementation=implementation)
+            return expand_logits(logits, ids, weight.shape[0])
         if self.weight_format.mode == 'nvfp4_w4a4' and x.numel() // x.shape[-1] <= 80:
             return self._nvfp4_linear(x, weight, bias)
+        if self.weight_format.mode == 'mxfp4_w4a8':
+            site = 'lm_head:' + _w4a8_site() if self.role == 'lm_head' else None
+            output = w4a8_draft_linear(x, weight, bias, site=site)
+            if output is not None:
+                return output
         x, weight = self._inputs(x, weight)
         if implementation is not None:
             if bias is None:
@@ -125,10 +143,19 @@ class ProjectionPrecision:
         return output.to(x.dtype)
 
     def bmm(self, x, weight):
+        if self.weight_format.mode == 'mxfp4_w4a8':
+            output = _w4a8_bmm(x, weight)
+            if output is not None:
+                return output
         x, weight = self._inputs(x, weight)
         return torch.bmm(x, weight.transpose(1, 2))
 
     def mm(self, x, weight, bias=None, *, out=None):
+        if self.weight_format.mode == 'mxfp4_w4a8':
+            site = 'lm_head:' + _w4a8_site() if self.role == 'lm_head' else None
+            output = w4a8_draft_linear(x, weight.t(), bias, out=out, site=site)
+            if output is not None:
+                return output
         if self.weight_format.mode == 'bf16':
             x, weight = self._inputs(x, weight)
         else:
@@ -140,6 +167,8 @@ class ProjectionPrecision:
 
 
 _logged_precision = set()
+# Draft-lane modes that store rounded weights at load (the target verify head stays bf16).
+ROUNDED_MODES = ('nvfp4_w4a16', 'mxfp4_w4a8')
 
 
 def log_precision_exclusions(engine):
@@ -147,13 +176,13 @@ def log_precision_exclusions(engine):
     if modes == ('bf16', 'bf16', 'bf16') or modes in _logged_precision:
         return
     _logged_precision.add(modes)
-    # nvfp4_w4a16 rounds the stored draft-lane weights at load, so every kernel reads them.
+    # nvfp4_w4a16 and mxfp4_w4a8 round the stored draft-lane weights at load, so every kernel reads them.
     bypass = [site for site, role in (('c1_native_loop', 1), ('c1_fused_direct_linear', 1),
               ('packed_qkv_kv', 1), ('drafter_lmhead', 2), ('compact_head', 2))
-              if modes[role] != 'nvfp4_w4a16']
+              if modes[role] not in ROUNDED_MODES]
     print(f'PROJECTION_PRECISION target={modes[0]} draft={modes[1]} lm_head={modes[2]} '
           f'bf16_bypass={",".join(bypass + ["comparison_linears", "blockhead"])}'
-          + (' target_verify_head=bf16' if modes[2] == 'nvfp4_w4a16' else ''), flush=True)
+          + (' target_verify_head=bf16' if modes[2] in ROUNDED_MODES else ''), flush=True)
 
 
 class _WeightRows:
@@ -174,7 +203,8 @@ class _WeightRows:
         if (width, rows.device) not in self._coefficients:
             generator = torch.Generator().manual_seed(689 + width)
             self._coefficients[width, rows.device] = torch.randint(
-                1, 2 ** 33, (width,), generator=generator, dtype=torch.int64).to(rows.device)
+                1, 2 ** 33, (width,), generator=generator, dtype=torch.int64,
+                device='cpu').to(rows.device)
         coefficients = self._coefficients[width, rows.device]
         keys = torch.empty(rows.shape[0], dtype=torch.int64, device=rows.device)
         for start in range(0, rows.shape[0], 1024):
@@ -217,18 +247,306 @@ def _nvfp4_weight_only(precision, weight, key):
 
 
 @torch.no_grad()
+def _mxfp4_round(weight):
+    """BF16 copy of the MXFP4 round trip: rows padded with zeros to the pack's 128 multiples."""
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import dequantize_w4a8, pack_w4a8
+    rows = weight.reshape(-1, weight.shape[-1]).to(torch.bfloat16)
+    n, k = rows.shape
+    padded_n, padded_k = -(-n // 128) * 128, -(-k // 128) * 128
+    if (padded_n, padded_k) != (n, k):
+        rows = F.pad(rows, (0, padded_k - k, 0, padded_n - n))
+    rounded = dequantize_w4a8(pack_w4a8(rows.contiguous()))[:n, :k]
+    return rounded.reshape(weight.shape).to(weight.dtype)
+
+
+def _mxfp4_weight_only(weight):
+    """MXFP4 fallback weight: weights rounded at load pass through, others are rounded once."""
+    if _weight_rows.rounded_only(weight):
+        return weight.detach()
+    return _mxfp4_round(weight.detach())
+
+
+class _W4A8Registry:
+    """W4A8 packs of draft-lane weights and the per-site record of which GEMM ran.
+
+    A pack is keyed by the [N,K] weight view it was built from and holds that
+    weight alive. Packs of stacks, concatenations and KN copies of weights
+    rounded at load are exact, since the MX round trip is idempotent. A pack's
+    kernel state (one per token bucket) owns its activation buffers, so one weight must not
+    run on two streams at once; the captured draft forks project different
+    weights. States of one (N, K, token bucket, config) share one compiled kernel.
+    """
+
+    def __init__(self):
+        self.packs, self.prototypes, self.sites = {}, {}, {}
+        self.head_outputs = {}
+        self._capability = {}
+
+    @staticmethod
+    def key(weight):
+        return (weight.data_ptr(), tuple(weight.shape), tuple(weight.stride()), weight.dtype, weight.device)
+
+    def pack(self, weight):
+        key = self.key(weight)
+        entry = self.packs.get(key)
+        if entry is None:
+            if weight.is_cuda and torch.cuda.is_current_stream_capturing():
+                return None
+            from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import pack_w4a8
+            entry = self.packs[key] = (weight.detach(), pack_w4a8(weight.detach().contiguous()))
+        return entry[1]
+
+    def capable(self, device):
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        if index not in self._capability:
+            self._capability[index] = torch.cuda.get_device_capability(index)[0] == 10
+        return self._capability[index]
+
+    def state(self, pack, m, config, bias, device):
+        """True when the pack holds a state for this call; reuses a compiled prototype."""
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import state_key
+        key = state_key(m, config, bias)
+        if key in pack.states:
+            return True
+        if torch.cuda.is_current_stream_capturing():
+            return False
+        prototype = self.prototypes.get((pack.shape, key, device))
+        if prototype is not None and config.backend == 'k1':
+            pack.states[key] = _clone_w4a8_state(prototype, pack)
+        return True
+
+    def remember(self, pack, m, config, bias, device):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import state_key
+        key = state_key(m, config, bias)
+        if config.backend == 'k1' and key in pack.states:
+            self.prototypes.setdefault((pack.shape, key, device), pack.states[key])
+
+    def record(self, site, n, k, m, path):
+        entry = self.sites.setdefault((site, n, k), {})
+        entry.setdefault(path, set()).add(m)
+
+
+_w4a8_registry = _W4A8Registry()
+
+
+def _clone_w4a8_state(prototype, pack):
+    """A kernel state for another pack of the same shape: new buffers, the compiled kernel shared."""
+    import copy
+    cutlass, ptr = prototype.cutlass, prototype.ptr
+    state = copy.copy(prototype)
+    state.q, state.sfb = torch.zeros_like(prototype.q), torch.zeros_like(prototype.sfb)
+    state.alpha = torch.ones_like(prototype.alpha)
+    state.partials = None if prototype.partials is None else torch.empty_like(prototype.partials)
+    state.output = None if prototype.output is None else torch.empty_like(prototype.output)
+    state.padded_bias = None if prototype.padded_bias is None else torch.zeros_like(prototype.padded_bias)
+    state.fixed = (ptr(pack.data, cutlass.Float4E2M1FN), ptr(pack.swizzled_scales, cutlass.Float8E8M0FNU),
+                   ptr(state.q, cutlass.Float8E4M3FN), ptr(state.sfb, cutlass.Float8E8M0FNU))
+    state.prefetch = (cutlass.Int64(pack.data.data_ptr()), cutlass.Int64(pack.swizzled_scales.data_ptr()),
+                      cutlass.Int32(state.k // 2), cutlass.Int32(128 * pack.swizzled_scales.shape[1]))
+    return state
+
+
+def _w4a8_site():
+    """The first caller frame outside this module, as file:function:line."""
+    import sys
+    frame = sys._getframe(2)
+    # Skip this module and torch's nn.Module dispatch, so a module call names its caller.
+    while frame is not None and (frame.f_code.co_filename == __file__
+                                 or '/torch/' in frame.f_code.co_filename):
+        frame = frame.f_back
+    if frame is None:
+        return 'unknown'
+    code = frame.f_code
+    return f'{code.co_filename.rsplit("/", 1)[-1]}:{code.co_name}:{frame.f_lineno}'
+
+
+def _w4a8_fallback_reason(x, weight, bias, m):
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import MAX_M, routes_to_kernel
+    n, k = weight.shape
+    if not x.is_cuda:
+        return 'cpu'
+    if x.dtype != torch.bfloat16 or weight.dtype != torch.bfloat16 or (
+            bias is not None and bias.dtype != torch.bfloat16):
+        return 'dtype'
+    if k % 128:
+        return 'shape'
+    if bias is not None and tuple(bias.shape) != (n,):
+        return 'bias_shape'
+    if not 1 <= m <= MAX_M:
+        return f'm_gt_{MAX_M}' if m > MAX_M else 'empty'
+    if not routes_to_kernel(n, k, m):
+        return 'bf16_faster'
+    if not _w4a8_registry.capable(x.device):
+        return 'device'
+    return None
+
+
+def w4a8_draft_linear(x, weight, bias=None, *, out=None, site=None):
+    """``x @ weight.T (+ bias)`` on the W4A8 kernel for a draft-lane [N,K] weight view.
+
+    Returns None when the call must take the BF16 path (M > 256, an (N, K, M bucket)
+    above 80 rows where BF16 measured faster, a shape or dtype the kernel cannot
+    take, a CPU tensor, or a pack or M bucket first met inside CUDA graph capture);
+    every call records its site and the path it took.
+    """
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import _sms, default_config, w4a8_linear
+    if weight.ndim != 2:
+        return None
+    n, k = weight.shape
+    m = x.numel() // k if k else 0
+    site = site or _w4a8_site()
+    reason = _w4a8_fallback_reason(x, weight, bias, m)
+    pack = None
+    if reason is None:
+        pack = _w4a8_registry.pack(weight)
+        reason = 'capture_cold' if pack is None else None
+    if reason is None:
+        config = default_config(n, k, m, _sms(x.device))
+        if not _w4a8_registry.state(pack, m, config, bias is not None, x.device):
+            reason = 'capture_cold'
+    _w4a8_registry.record(site, n, k, m, reason or 'w4a8')
+    if reason is not None:
+        return None
+    source = x.reshape(m, k)
+    if not source.is_contiguous():
+        source = source.contiguous()
+    target = None
+    if out is not None:
+        target = out.view(m, n) if out.is_contiguous() and out.numel() == m * n else None
+        if target is not None and target.data_ptr() % 16:
+            target = None
+    if bias is not None and not bias.is_contiguous():
+        bias = bias.contiguous()
+    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import activation_for
+        activation = activation_for(x, config.tile_n)
+        result = w4a8_linear(source, pack, bias, target, config=config,
+                            x_fp8=None if activation is None else activation.data,
+                            x_scale=None if activation is None else activation.scales)
+    else:
+        result = w4a8_linear(source, pack, bias, target, config=config)
+    _w4a8_registry.remember(pack, m, config, bias is not None, x.device)
+    if out is not None:
+        if target is None:
+            out.copy_(result.view(out.shape))
+        return out
+    return result.view(*x.shape[:-1], n)
+
+
+def _w4a8_bmm(x, weight):
+    """Stacked draft projections ``x[i] @ weight[i].T``, one W4A8 call per stack entry."""
+    if x.ndim != 3 or weight.ndim != 3 or x.shape[0] != weight.shape[0]:
+        return None
+    site = _w4a8_site()
+    first = w4a8_draft_linear(x[0], weight[0], site=site)
+    if first is None:
+        return None
+    output = x.new_empty((x.shape[0], x.shape[1], weight.shape[1]))
+    output[0].copy_(first)
+    for index in range(1, x.shape[0]):
+        if w4a8_draft_linear(x[index], weight[index], out=output[index], site=site) is None:
+            torch.mm(x[index], weight[index].t(), out=output[index])
+    return output
+
+
+def packed_draft_linear(x, weight, bias=None, *, role='draft'):
+    """``F.linear`` on a packed draft-lane weight; the W4A8 kernel serves it under mxfp4_w4a8."""
+    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    if getattr(current_engine(), 'precision_' + role) == 'mxfp4_w4a8':
+        output = w4a8_draft_linear(x, weight, bias)
+        if output is not None:
+            return output
+    return F.linear(x, weight, bias)
+
+
+def w4a8_head_logits(hidden, weight, *, site=None):
+    """Route A scratch logits, consumed immediately by a vocabulary epilogue.
+
+    The registry retains one buffer per weight view and hidden shape. Eager
+    warm-up allocates it and warms the GEMM before capture. As with the pack's
+    activation workspace, callers must consume it before reusing the head.
+    Unsupported heads retain their existing BF16 path; a cold capture raises.
+    """
+    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    reduced = getattr(weight, '_draft_vocab', None)
+    if reduced is not None:
+        from jetspec.engines.jetspec_plus_plus.models.draft_vocab import expand_logits
+        ids, gathered = reduced
+        logits = w4a8_head_logits(hidden, gathered, site=site)
+        if logits is None:
+            logits = draft_precision(gathered).linear(hidden, gathered, None)
+        return expand_logits(logits, ids, weight.shape[0])
+    if current_engine().precision_lm_head != 'mxfp4_w4a8':
+        return None
+    m = hidden.numel() // weight.shape[1]
+    site = 'lm_head:' + (site or _w4a8_site())
+    if _w4a8_fallback_reason(hidden, weight, None, m) is not None:
+        return w4a8_draft_linear(hidden, weight, site=site)
+    key = (_w4a8_registry.key(weight), tuple(hidden.shape[:-1]))
+    entry = _w4a8_registry.head_outputs.get(key)
+    if entry is None:
+        if torch.cuda.is_current_stream_capturing():
+            raise RuntimeError('warm the W4A8 head logits bucket before CUDA graph capture')
+        output = hidden.new_empty((*hidden.shape[:-1], weight.shape[0]))
+        entry = _w4a8_registry.head_outputs[key] = (weight.detach(), output)
+    output = w4a8_draft_linear(hidden, weight, out=entry[1], site=site)
+    if output is None:
+        raise RuntimeError('warm the W4A8 head GEMM bucket before CUDA graph capture')
+    return output
+
+
+def report_w4a8_sites(prefix='W4A8_SITE', *, role=None):
+    """Print one line per draft-lane GEMM site (kernel vs fallback per M) and a summary.
+
+    Returns the number of sites that fell back at an M of 256 or less for a
+    reason other than the named exclusions (cpu, device, bf16_faster). The summary
+    counts the sites that ran the kernel above 80 rows and those routed to BF16 there.
+    Use role='lm_head' to restrict the census to bound vocabulary projections and
+    fused heads.
+    """
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import MAX_M, SMALL_M, compile_count
+    unexpected = 0
+    above, within = f'm_gt_{MAX_M}', f'fallback_le_{MAX_M}'
+    counts = {'kernel_only': 0, f'fallback_{above}': 0, within: 0, 'large_m_bf16_faster': 0}
+    large_kernel = 0
+    sites = {key: paths for key, paths in _w4a8_registry.sites.items()
+             if role is None or key[0].startswith(role + ':')}
+    for (site, n, k), paths in sorted(sites.items()):
+        kernel = sorted(paths.get('w4a8', ()))
+        fallback = {reason: sorted(ms) for reason, ms in paths.items() if reason != 'w4a8'}
+        small = {reason: [m for m in ms if m <= MAX_M] for reason, ms in fallback.items()
+                 if reason not in ('cpu', 'device', 'bf16_faster', above)}
+        small = {reason: ms for reason, ms in small.items() if ms}
+        unexpected += bool(small)
+        large_kernel += any(m > SMALL_M for m in kernel)
+        counts[within if small else f'fallback_{above}' if above in fallback
+               else 'large_m_bf16_faster' if 'bf16_faster' in fallback
+               else f'fallback_{above}' if fallback else 'kernel_only'] += 1
+        print(f'{prefix} site={site} n={n} k={k} weight_mb={n * k * 2 / 2**20:.1f} kernel_m={kernel} '
+              + ' '.join(f'fallback_{reason}={ms}' for reason, ms in sorted(fallback.items())), flush=True)
+    print(f'{prefix}_SUMMARY sites={len(sites)} packs={len(_w4a8_registry.packs)} '
+          + ' '.join(f'{label}={count}' for label, count in counts.items())
+          + f' compiled={len(_w4a8_registry.prototypes)} compile_count={compile_count()}'
+          + f' large_m_kernel_sites={large_kernel}', flush=True)
+    return unexpected
+
+
+@torch.no_grad()
 def round_nvfp4_weights(module, role):
-    """Store NVFP4-rounded weights in place for roles set to nvfp4_w4a16.
+    """Store FP4-rounded weights in place for roles set to nvfp4_w4a16 or mxfp4_w4a8.
 
     Call after checkpoint load and before any pack, stack or KN copy is built,
     so every draft-lane kernel (native loops, Triton heads, packed GEMMs) reads
     the rounded values with its kernel unchanged. Each parameter keeps its pack
-    on its precision. Embeddings, norms and biases are not projections and stay.
+    on its precision (NVFP4) or in the W4A8 pack registry (MXFP4). Embeddings,
+    norms and biases are not projections and stay.
     """
     from jetspec.engines.jetspec_plus_plus.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import dequantize, quantize_weight
     engine = current_engine()
-    if 'nvfp4_w4a16' not in (engine.precision_draft, engine.precision_lm_head):
+    if not set(ROUNDED_MODES) & {engine.precision_target, engine.precision_draft, engine.precision_lm_head,
+                                 getattr(engine, 'precision_target_head', 'bf16')}:
         return 0
     rounded = 0
     for name, child in module.named_modules():
@@ -243,7 +561,7 @@ def round_nvfp4_weights(module, role):
         else:
             selected = 'lm_head' if name.rsplit('.', 1)[-1] == 'lm_head' else role
             precision = bind_weight_role(weight, selected)
-        if precision.weight_format.mode != 'nvfp4_w4a16':
+        if precision.weight_format.mode not in ROUNDED_MODES:
             _weight_rows.add(_weight_rows.kept, weight)
             continue
         if _weight_rows.rounded_only(weight):
@@ -251,10 +569,20 @@ def round_nvfp4_weights(module, role):
             weight._nvfp4_rounded = True
             continue
         _weight_rows.add(_weight_rows.original, weight)
-        pack = quantize_weight(weight.detach())
-        weight.detach().copy_(dequantize(pack))
         key = (weight.data_ptr(), tuple(weight.shape), tuple(weight.stride()), weight.dtype, weight.device)
-        precision._packed_weights[key] = (weight.detach(), pack)
+        if precision.weight_format.mode == 'mxfp4_w4a8':
+            # The BF16 copy of dequantize(pack) serves every path the W4A8 kernel cannot.
+            if weight.shape[1] % 128:
+                weight.detach().copy_(_mxfp4_round(weight.detach()))
+            else:
+                from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.w4a8 import dequantize_w4a8, pack_w4a8
+                pack = pack_w4a8(weight.detach())
+                weight.detach().copy_(dequantize_w4a8(pack))
+                _w4a8_registry.packs[key] = (weight.detach(), pack)
+        else:
+            pack = quantize_weight(weight.detach())
+            weight.detach().copy_(dequantize(pack))
+            precision._packed_weights[key] = (weight.detach(), pack)
         _weight_rows.add(_weight_rows.rounded, weight)
         _weight_rows.names.append((name, tuple(weight.shape)))
         weight._nvfp4_rounded = True
@@ -369,7 +697,7 @@ def _precision_for_role(role):
     mode = getattr(current_engine(), 'precision_' + role)
     return ProjectionPrecision(WeightFormat(mode=mode,
         activation_scale_policy='per_row' if mode in ('fq_w4a4', 'nvfp4_w4a4') else None),
-        fake_quant=mode in ('fq_w4a16', 'fq_w4a4'))
+        fake_quant=mode in ('fq_w4a16', 'fq_w4a4'), role=role)
 
 
 def bind_weight_role(weight, role):
@@ -461,8 +789,8 @@ class TargetLinear(LinearBase):
         self.layout = layout
         self.precision_role = precision_role or ('lm_head' if layout == 'head' else 'target')
         self.precision = _precision_for_role(self.precision_role)
-        if layout == 'head' and self.precision.weight_format.mode == 'nvfp4_w4a16':
-            # Weight-only NVFP4 is a draft-lane mode: the target's verify head stays bf16.
+        if layout == 'head' and self.precision.weight_format.mode in ROUNDED_MODES:
+            # The FP4 draft-lane modes leave the target's verify head in bf16.
             self.precision = ProjectionPrecision()
         self.fp32_bf16_storage = fp32_bf16_storage
         if layout == 'replicated' and tp_size != 1:

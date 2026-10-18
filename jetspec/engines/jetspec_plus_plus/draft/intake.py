@@ -75,4 +75,6 @@ def fused_intake(buffers: dict, *, max_length: int | None) -> None:
             bound.staged_hidden if front else fallback,
             buffers["admission_hidden"] if admission else fallback,
             buffers["intake_selected"], store.storage.shape[0],
-            hidden, lanes, front, admission, 256, num_warps=4)
+            hidden, lanes, front, admission, 256,
+            **({'TrueTaps': buffers['refresh_swap_true_taps'], 'HAS_TRUE_TAPS': True}
+               if 'refresh_swap_true_taps' in buffers else {}), num_warps=4)

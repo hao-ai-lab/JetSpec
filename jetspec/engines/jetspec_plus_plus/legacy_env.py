@@ -14,7 +14,7 @@ ENV_FIELDS = _BINDINGS['fields']
 # are compatibility inputs only; the profile adapter refuses their nondefaults.
 ENV_FIELDS['engine'].update({'JETSPEC_' + name.upper(): 'engine_settings.' + name
                              for name in RETIRED_SELECTORS})
-_ATOMIC = ('artifacts', 'thresholds', 'decoder_slice', 'prompt_files',
+_ATOMIC = ('artifacts', 'thresholds', 'decoder_slice', 'target_release.slice', 'prompt_files',
            'model_execution', 'method_execution',
            'optimization.stage_settings')
 

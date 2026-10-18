@@ -81,7 +81,8 @@ SOFTWARE.
 
 FlashInfer low-latency block-scaled GEMM — BSD-3-Clause
 -----------------------------------------------------
-jetspec/engines/jetspec_plus_plus/kernels/nvfp4/_k1_kernel.py forks
+jetspec/engines/jetspec_plus_plus/kernels/nvfp4/_k1_kernel.py and
+jetspec/engines/jetspec_plus_plus/kernels/nvfp4/_w4a8_kernel.py fork
 flashinfer/gemm/kernels/cute_dsl/low_latency_blockscaled_gemm.py from FlashInfer
-v0.7.2. The file keeps its copyright line and BSD-3-Clause license text.
+v0.7.2. Each file keeps its copyright line and BSD-3-Clause license text.
 Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.

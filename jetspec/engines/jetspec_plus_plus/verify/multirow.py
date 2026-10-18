@@ -104,6 +104,10 @@ class SpeculatorAsync(SpeculatorBase):
             raw = "1" if transport_enabled(env_name, run_config=self) else "0"
         else:
             raw = "1" if kernel_enabled(env_name) else "0"
+            if raw == "0":
+                from jetspec.engines.jetspec_plus_plus.profiles import verify_cut_lean27b
+                raw = "1" if verify_cut_lean27b(
+                    env_name, self, getattr(self, '_verify_stage_runner', None)) else "0"
         if name == "_chain_redraft_max_ms":
             value = float(raw)
         else:
@@ -235,8 +239,8 @@ class SpeculatorAsync(SpeculatorBase):
         if pair_enabled(self):
             from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridPairLayout
             if (target_model_runner is None or not has_state(target_model_runner)
-                    or self.max_num_seqs != 1 or self.K not in (15, 31)):
-                raise ValueError("hybrid pair transfer requires the N=1 hybrid b16/b32 target")
+                    or self.K not in (15, 31)):
+                raise ValueError("hybrid pair transfer requires a hybrid b16/b32 target")
             self._pair_layout = HybridPairLayout.from_config(
                 target_model_runner.hf_config, lanes=self.K + 1)
         if self._outcome_pack_presync and not self._outcome_wire_ring_enabled:
@@ -414,6 +418,8 @@ class SpeculatorAsync(SpeculatorBase):
         )
 
     def _consume_jetspec_candidate_receive(self, works, buffers) -> None:
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        receive_key = getattr(buffers, 'key', None)
         # Transport completion orders every field before host reads.
         for work in works:
             work.wait()
@@ -428,6 +434,8 @@ class SpeculatorAsync(SpeculatorBase):
             note_candidate(message, run_config=getattr(self, 'run_config', None))
         delivery = (buffers if isinstance(buffers, CandidateDelivery) else
                     unpack_candidate_delivery(buffers, run_config=getattr(self, 'run_config', None)))
+        if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+            print(f"MAILBOX_ID side=verify event=candidate_receive key={receive_key} sets={[(c.seq_id, c.round_id) if c is not None else None for c in delivery.candidates]}", flush=True)
         self.metrics["jetspec_draft_round_ms"].extend(delivery.draft_ms)
         self.metrics["jetspec_coalesced_count"] += delivery.coalesced
         self.metrics["jetspec_gap_histogram"].extend(gap for gap in delivery.gaps if gap > 0)
@@ -571,10 +579,12 @@ class SpeculatorAsync(SpeculatorBase):
             self._chain_redraft_info = (*key, True, 0.0)
             self.metrics.setdefault("jetspec_chain_redraft_wait_ms", []).append(0.0)
             return candidate_set
-        terminal = profile_enabled() and bool(getattr(seq, '_jetspec_last_packet_eos', 0))
+        terminal = bool(getattr(seq, '_jetspec_last_packet_eos', 0))
         miss = chain_after_miss(ChainKeySnapshot.from_candidate(candidate_set, round_id=key[1]),
                                 round_id=key[1], true_k=true_k, recovery=correction,
                                 eos=terminal)
+        if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+            print(f"MAILBOX_ID side=verify event=branch seq={key[0]} round={key[1]} deliveries={deliveries} true_k={true_k} recovery={correction} branch={'eos' if terminal else 'redraft' if miss else 'hit'}", flush=True)
         if not miss and not (critical_path() and key[1] > 0 and not terminal):
             return candidate_set
         valve = getattr(self, "_chain_redraft_max_ms", None)
@@ -822,16 +832,17 @@ class SpeculatorAsync(SpeculatorBase):
             )
             dist.send(tap_lengths, dst=self.draft_runner_rank, group=request_pg)
             if tap_payload.shape[0] > 0:
-                dist.send(tap_payload, dst=self.draft_runner_rank, group=request_pg)
+                # The draft rank receives taps in its own dtype, as for EAGLE activations above.
+                dist.send(tap_payload.to(dtype=self.draft_dtype), dst=self.draft_runner_rank,
+                          group=request_pg)
             if layout.sections:
                 from jetspec.engines.jetspec_plus_plus.wire.hybrid import target_prefill_tensors
-                if len(seqs) != 1:
-                    raise ValueError("hybrid pair admission requires N=1")
-                positions = torch.arange(int(tap_lengths[0]), device=self.device)
-                for payload in target_prefill_tensors(
-                        self._verify_stage_runner, seqs[0], positions, layout):
-                    dist.send(payload.contiguous(), dst=self.draft_runner_rank,
-                              group=request_pg)
+                for seq, length in zip(seqs, tap_lengths.tolist()):
+                    positions = torch.arange(int(length), device=self.device)
+                    for payload in target_prefill_tensors(
+                            self._verify_stage_runner, seq, positions, layout):
+                        dist.send(payload.contiguous(), dst=self.draft_runner_rank,
+                                  group=request_pg)
             for seq, length in zip(seqs, tap_lengths.tolist()):
                 seq.jetspec_taps_sent += int(length)
             if not self.jetspec_sync and self._jetspec_next_receive_id == 0:
@@ -973,7 +984,8 @@ class SpeculatorAsync(SpeculatorBase):
             verify_device = setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
         from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if ((verify_device or current_engine().kind == 'reference'
-             or eager_pair(getattr(self, '_verify_stage_runner', None)))
+             or (getattr(self, 'max_num_seqs', 1) == 1
+                 and eager_pair(getattr(self, '_verify_stage_runner', None))))
                 and not getattr(self, "_verify_device_legacy", False) and len(seqs) == 1
                 and hasattr(seqs[0], "_jetspec_device_outcome")):
             seq = seqs[0]
@@ -1049,7 +1061,12 @@ class SpeculatorAsync(SpeculatorBase):
             oracle_records=self.metrics["jetspec_round_records"] if self.oracle_anchor else None)
         tensors = [self._cmd]
         if taps.shape[0]:
-            tensors.append(taps)
+            # The draft rank receives taps in its own dtype (an fp32 target packs fp32 taps).
+            tensors.append(taps.to(dtype=self.draft_dtype))
+        if layout.sections and getattr(self, 'max_num_seqs', 1) > 1:
+            from jetspec.engines.jetspec_plus_plus.wire.hybrid import pack_batch_hybrid_outcomes
+            tensors.append(pack_batch_hybrid_outcomes(
+                self._verify_stage_runner, seqs, lengths, layout))
         for seq, length in zip(seqs, lengths):
             seq.jetspec_taps_sent += length
         return wire, tensors
@@ -1442,7 +1459,9 @@ class SpeculatorAsync(SpeculatorBase):
                 )
                 request_tensors.append(tap_lengths)
                 if tap_payload.shape[0] > 0:
-                    request_tensors.append(tap_payload)
+                    # The draft rank receives round taps in its own dtype (an fp32 target sends
+                    # fp32 taps; a bf16 buffer would read their bytes as garbage).
+                    request_tensors.append(tap_payload.to(dtype=self.draft_dtype))
                 self.metrics["jetspec_tap_send_ms"].append(
                     (time.perf_counter() - tap_started) * 1000
                 )
@@ -1610,6 +1629,8 @@ class SpeculatorAsync(SpeculatorBase):
                         selected_block=selected_block,
                     )
                 _census_mark("select", run_config=getattr(self, 'run_config', None))
+                if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+                    print(f"MAILBOX_ID side=verify event=select seq={seq.seq_id} round={seq.jetspec_round} branch={decision.kind} ar={len(decision.drafts) == 0}", flush=True)
                 fallback = None
                 if self.miss_redraft and seq.jetspec_round > 0 and (
                         decision.kind != 'hit' or self.miss_redraft_force):

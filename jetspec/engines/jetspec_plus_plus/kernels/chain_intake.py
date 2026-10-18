@@ -133,7 +133,7 @@ def _tap_front(Packet, Taps, Backing, FrontTaps, Prefix, Staged,
                AdmissionHidden, AdmissionIndex,
                CAPACITY: tl.constexpr, HIDDEN: tl.constexpr, LANES: tl.constexpr,
                HAS_FRONT: tl.constexpr, HAS_ADMISSION: tl.constexpr,
-               BLOCK: tl.constexpr):
+               BLOCK: tl.constexpr, TrueTaps=None, HAS_TRUE_TAPS: tl.constexpr = False):
     lane = tl.arange(0, LANES)
     col = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     length = tl.load(Packet + L)
@@ -173,4 +173,17 @@ def _tap_front(Packet, Taps, Backing, FrontTaps, Prefix, Staged,
             valid = (lane < count) & (prefix_pos >= 0) & (prefix_pos < CAPACITY)
             tl.store(Prefix + lane[:, None] * HIDDEN + h[None, :],
                      tl.where(valid[:, None], value, 0), h[None, :] < HIDDEN)
-
+    if HAS_TRUE_TAPS:
+        if tl.program_id(0) * BLOCK < HIDDEN:
+            recent = tl.arange(0, 4)
+            position = tl.maximum(length - 4 + recent, 0)
+            offset = position - start
+            from_new = append_ok & (offset >= 0) & (offset < count)
+            old = tl.load(
+                Backing + position[:, None] * (5 * HIDDEN) + 4 * HIDDEN + col[None, :],
+                ~from_new[:, None] & (col[None, :] < HIDDEN), other=0)
+            incoming = tl.load(
+                Taps + offset[:, None] * (5 * HIDDEN) + 4 * HIDDEN + col[None, :],
+                from_new[:, None] & (col[None, :] < HIDDEN), other=0)
+            tl.store(TrueTaps + recent[:, None] * HIDDEN + col[None, :],
+                     tl.where(from_new[:, None], incoming, old), col[None, :] < HIDDEN)

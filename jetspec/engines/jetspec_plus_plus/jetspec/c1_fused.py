@@ -17,6 +17,7 @@ try:
     import triton
     import triton.language as tl
     from triton.language.extra.cuda import libdevice
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import store_mx8
 except ImportError:  # Triton is Linux/CUDA-only in the pinned environment.
     triton = None
     tl = None
@@ -508,6 +509,27 @@ if triton is not None:
                             KV_FROM_STATE: tl.constexpr, BLOCK: tl.constexpr,
                             NORM_OFFSET: tl.constexpr = 0, REDUCE_THREADS: tl.constexpr = 32,
                             ULP_STATS: tl.constexpr = False):
+        # Keep the raw cached launcher and native append callback's original ABI.
+        _ew_pre_norm_w1_kernel(input_ptr, update_ptr, residual_ptr, window_ptr,
+            input_weight_ptr, kv_weight_ptr, normalized_ptr, state_ptr, kv_ptr,
+            append_ptr, stream_ptr, append_first, streams, kv_blocks, FOLD, rows,
+            width, input_eps, kv_eps, PENDING, KV_FROM_STATE, BLOCK,
+            NORM_OFFSET, REDUCE_THREADS, ULP_STATS, None, (), (), (), None, (), (), ())
+
+    @triton.jit
+    def _ew_pre_norm_w1_kernel(input_ptr, update_ptr, residual_ptr, window_ptr,
+                            input_weight_ptr, kv_weight_ptr, normalized_ptr,
+                            state_ptr, kv_ptr, append_ptr, stream_ptr,
+                            append_first: tl.constexpr, streams: tl.constexpr,
+                            kv_blocks: tl.constexpr, FOLD: tl.constexpr,
+                            rows: tl.constexpr,
+                            width: tl.constexpr, input_eps: tl.constexpr,
+                            kv_eps: tl.constexpr, PENDING: tl.constexpr,
+                            KV_FROM_STATE: tl.constexpr, BLOCK: tl.constexpr,
+                            NORM_OFFSET: tl.constexpr = 0, REDUCE_THREADS: tl.constexpr = 32,
+                            ULP_STATS: tl.constexpr = False,
+                            Q=None, SF=(), TILES: tl.constexpr = (), STRIDES: tl.constexpr = (),
+                            KVQ=None, KVSF=(), KVTILES: tl.constexpr = (), KVSTRIDES: tl.constexpr = ()):
         program = tl.program_id(0)
         row = program % rows
         group = program // rows
@@ -536,6 +558,8 @@ if triton is not None:
                 normalized = (floats * scale).to(tl.bfloat16)
                 result = (normalized * weights).to(tl.bfloat16)
             tl.store(normalized_ptr + base, result, mask=mask)
+            if len(TILES):
+                store_mx8(result, Q, SF, row, 0, 0, width, BLOCK, TILES, STRIDES)
         elif not FOLD or group <= kv_blocks:
             if PENDING and KV_FROM_STATE:
                 update = tl.load(update_ptr + base, mask=mask, other=0.0)
@@ -564,6 +588,9 @@ if triton is not None:
                            + (rows if FOLD else 0)) * width + base
             tl.store(kv_ptr + output_base,
                      result, mask=mask)
+            if len(KVTILES):
+                store_mx8(result, KVQ, KVSF, row + (rows if FOLD else 0), group - 1, 0,
+                          width, BLOCK, KVTILES, KVSTRIDES, rows * (2 if FOLD else 1))
         else:
             block = group - kv_blocks - 1
             stream = tl.load(stream_ptr + append_first + block)
@@ -575,6 +602,9 @@ if triton is not None:
                                      mask=mask, other=0.0)
             tl.store(kv_ptr + (block * 2 * rows + row) * width + offsets,
                      (append_normalized * append_weights).to(tl.bfloat16), mask=mask)
+            if len(KVTILES):
+                store_mx8((append_normalized * append_weights).to(tl.bfloat16),
+                          KVQ, KVSF, row, block, 0, width, BLOCK, KVTILES, KVSTRIDES, 2 * rows)
 
     @triton.jit(do_not_specialize=["tokens"])
     def _q_rotary_kernel(normalized_ptr, cos_ptr, sin_ptr, output_ptr,
@@ -1073,6 +1103,14 @@ def _lean_ops_extension():
 
 
 def _silu_mul_extension():
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        if current_engine().precision_draft == 'mxfp4_w4a8':
+            from jetspec.engines.jetspec_plus_plus.kernels.nvfp4 import producers
+            return producers
+    if kernel_enabled('draft_fuse_t6'):
+        from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t6 import silu_extension
+        return silu_extension(_SILU_MUL_CPP)
     global _SILU_MUL_EXTENSION
     if _SILU_MUL_EXTENSION is None:
         from torch.utils.cpp_extension import load_inline
@@ -1181,7 +1219,7 @@ def _reference_rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float,
 
 
 def finish_streams(streams, residual: torch.Tensor, update: torch.Tensor,
-                   real: int | None = None) -> torch.Tensor:
+                   real: int | None = None, *, out: torch.Tensor | None = None) -> torch.Tensor:
     """Write the five C1 streams with the final bf16 residual add in one launch."""
     width = residual.shape[-1]
     rows = residual.numel() // width
@@ -1189,6 +1227,9 @@ def finish_streams(streams, residual: torch.Tensor, update: torch.Tensor,
         raise ValueError("C1 refresh row trimming requires flattened token rows")
     write_rows = rows if real is None else real
     shape = (*residual.shape[:-1], 5 * width) if real is None else (real, 5 * width)
+    if out is not None and (tuple(out.shape) != shape or not out.is_contiguous()
+                            or out.dtype != residual.dtype or out.device != residual.device):
+        raise ValueError("C1 finish output must match the contiguous stream layout")
     stream_shape = residual.shape if real is None else (real, width)
     if (triton is None or residual.device.type != "cuda" or
             residual.dtype != torch.bfloat16 or len(streams) != 4 or
@@ -1198,10 +1239,16 @@ def finish_streams(streams, residual: torch.Tensor, update: torch.Tensor,
                     for stream in streams) or
             not residual.is_contiguous() or not update.is_contiguous()):
         if real is None:
-            return torch.cat([*streams, residual + update], dim=-1)
+            if out is None:
+                return torch.cat([*streams, residual + update], dim=-1)
+            return torch.cat([*streams, residual + update], dim=-1, out=out)
+        if out is None:
+            return torch.cat([*(stream[:real] for stream in streams),
+                              (residual + update)[:real]], dim=-1)
         return torch.cat([*(stream[:real] for stream in streams),
-                          (residual + update)[:real]], dim=-1)
-    out = residual.new_empty(shape)
+                          (residual + update)[:real]], dim=-1, out=out)
+    if out is None:
+        out = residual.new_empty(shape)
     launch_cached(_finish_streams_kernel, (write_rows, 5),
                   (*streams, residual, update, out, write_rows, width,
                    triton.next_power_of_2(width)), num_warps=8)
@@ -1241,6 +1288,24 @@ def ew_pre_norm(u: torch.Tensor, window: torch.Tensor, input_weight: torch.Tenso
     sources = u.new_empty((kv_weights.shape[0], rows * (2 if append is not None else 1), width))
     update, residual = (u, u) if pending is None else pending
     dirty, streams, first = append if append is not None else (u, kv_weights, 0)
+    if kernel_enabled('draft_fuse_w1', '1') and norm_offset == 0:
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, allocate_activation, _arguments
+        if enabled(u):
+            produced = allocate_activation(normalized)
+            kv_produced = (allocate_activation(sources, group_rows=sources.shape[1])
+                           if kv_weights.shape[0] else None)
+            _ew_pre_norm_w1_kernel[((kv_weights.shape[0] *
+                                 (2 if append is not None else 1) + 1) * rows,)](
+                u, update, residual, window, input_weight, kv_weights,
+                normalized, state, sources, dirty, streams, first,
+                dirty.shape[-1] // width, kv_weights.shape[0], append is not None,
+                rows, width, input_eps, kv_eps, pending is not None, kv_from_state,
+                triton.next_power_of_2(width), norm_offset,
+                _module_reduce_threads(width, rows), ulp,
+                *_arguments(produced),
+                *(_arguments(kv_produced) if kv_produced is not None else (None, (), (), ())),
+                num_warps=8, enable_fp_fusion=False)
+            return normalized, state, sources
     launch_cached(_ew_pre_norm_kernel, ((kv_weights.shape[0] *
                                         (2 if append is not None else 1) + 1) * rows,),
                   (u, update, residual, window, input_weight, kv_weights,
@@ -1263,6 +1328,10 @@ def _module_reduce_threads(width, rows):
 
 def rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, rms_norm as produce
+        if enabled(x):
+            return produce(x, weight, eps)
     if (x.device.type != "cuda" or x.dtype == torch.float32
             or not (x.shape[-1] == 128 or x.shape[-1] % 128 == 0)):
         return _reference_rms_norm(x, weight, eps)
@@ -1336,6 +1405,10 @@ def fused_kv_postprocess(projected_key: torch.Tensor, projected_value: torch.Ten
 
 
 def fast_rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, rms_norm as produce
+        if enabled(x):
+            return produce(x, weight, eps)
     if x.device.type != "cuda" or x.dtype == torch.float32 or triton is None:
         return _reference_rms_norm(x, weight, eps)
     shape = x.shape
@@ -1511,6 +1584,10 @@ def fast_kv_postprocess(projected_key: torch.Tensor, projected_value: torch.Tens
 
 def fast_add_rms_norm(update: torch.Tensor, residual: torch.Tensor,
                       weight: torch.Tensor, eps: float):
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, add_norm
+        if enabled(update):
+            return add_norm(update, residual, weight, eps)
     if (update.device.type != "cuda" or update.dtype == torch.float32
             or triton is None):
         state = residual + update
@@ -1542,6 +1619,15 @@ if triton is not None:
                                  tokens, streams: tl.constexpr,
                                  width: tl.constexpr, eps: tl.constexpr,
                                  BLOCK: tl.constexpr):
+        _grouped_rms_norm_w1_kernel(input_ptr, weight_ptr, stream_ptr, output_ptr,
+                                    tokens, streams, width, eps, BLOCK, None, (), (), ())
+
+    @triton.jit(do_not_specialize=["tokens"])
+    def _grouped_rms_norm_w1_kernel(input_ptr, weight_ptr, stream_ptr, output_ptr,
+                                 tokens, streams: tl.constexpr,
+                                 width: tl.constexpr, eps: tl.constexpr,
+                                 BLOCK: tl.constexpr,
+                                 Q=None, SF=(), TILES: tl.constexpr = (), STRIDES: tl.constexpr = ()):
         program = tl.program_id(0)
         block = program // tokens
         token = program % tokens
@@ -1557,6 +1643,9 @@ if triton is not None:
         weights = tl.load(weight_ptr + block * width + offsets, mask=mask, other=0.0)
         output_base = (block * tokens + token) * width
         tl.store(output_ptr + output_base + offsets, normalized * weights, mask=mask)
+        if len(TILES):
+            store_mx8((normalized * weights).to(tl.bfloat16), Q, SF, token, block, 0,
+                      width, BLOCK, TILES, STRIDES, tokens)
 
 
     @triton.jit(do_not_specialize=["tokens", "block_stride"])
@@ -1636,7 +1725,8 @@ if triton is not None:
                                     cache_block_stride: tl.constexpr,
                                     cache_head_stride: tl.constexpr,
                                     cache_token_stride: tl.constexpr,
-                                    eps: tl.constexpr, BLOCK: tl.constexpr):
+                                    eps: tl.constexpr, BLOCK: tl.constexpr,
+                                    positions_ptr=None, TABLE: tl.constexpr = False):
         program = tl.program_id(0)
         output_heads = kv_heads * groups
         token = program % tokens
@@ -1661,7 +1751,8 @@ if triton is not None:
         rotated = (rotated_values * reciprocal_rms).to(tl.bfloat16)
         rotated = (rotated * rotated_weights).to(tl.bfloat16)
         rotated = tl.where(offsets < half, -rotated, rotated)
-        rope_base = token * head_dim
+        rotary_token = tl.load(positions_ptr + token) if TABLE else token
+        rope_base = rotary_token * head_dim
         cos = tl.load(cos_ptr + rope_base + offsets, mask=mask, other=0.0)
         sin = tl.load(sin_ptr + rope_base + offsets, mask=mask, other=0.0)
         slot = tl.load(slots_ptr + token)
@@ -1687,6 +1778,10 @@ _RUNTIME_COUNT_INDEX = ({
 
 def fast_grouped_rms_norm(prefix: torch.Tensor, weights: torch.Tensor,
                           stream_indices: torch.Tensor, eps: float) -> torch.Tensor:
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, grouped_norm
+        if enabled(prefix) and prefix.shape[1] <= 256:
+            return grouped_norm(prefix, weights, stream_indices, eps)
     blocks, width = weights.shape
     tokens = prefix.shape[1]
     streams = prefix.shape[-1] // width
@@ -1741,27 +1836,34 @@ def fast_batched_kv_postprocess(projected_key: torch.Tensor,
 
 def folded_append_kv_into_cache(projected_key, projected_value, weights,
                                 cos, sin, slots, key_cache, value_cache,
-                                eps, kv_heads, groups, head_dim):
+                                eps, kv_heads, groups, head_dim, *, rotary_positions=None):
     """Postprocess a folded span's append rows directly into their cache slots."""
     blocks, tokens, _ = projected_key.shape
     if (projected_key.device.type != "cuda" or projected_key.dtype == torch.float32
             or triton is None):
+        if rotary_positions is not None:
+            cos, sin = cos[rotary_positions][None], sin[rotary_positions][None]
         key, value = fast_batched_kv_postprocess(projected_key, projected_value, weights,
                                                   cos, sin, eps, kv_heads, groups, head_dim)
         key_cache.index_copy_(3, slots, key)
         value_cache.index_copy_(3, slots, value)
         return
     cos, sin = cos.contiguous(), sin.contiguous()
+    lookup = ((None, False) if rotary_positions is None else (rotary_positions, True))
     launch_cached(_folded_append_cache_kernel, (blocks * tokens * kv_heads * groups,),
                   (projected_key, projected_value, weights, cos, sin, slots,
                    key_cache, value_cache, tokens, kv_heads, groups, head_dim,
                    projected_key.stride(0), projected_key.stride(1),
                    key_cache.stride(0), key_cache.stride(2), key_cache.stride(3),
-                   eps, triton.next_power_of_2(head_dim)), num_warps=4)
+                   eps, triton.next_power_of_2(head_dim), *lookup), num_warps=4)
 
 
 def lean_grouped_rms_norm(prefix, weights, stream_indices, eps):
     """``fast_grouped_rms_norm``'s CUDA branch through ``launch_cached`` (JETSPEC_C1_PRELOOP)."""
+    if kernel_enabled('draft_fuse_w1', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, grouped_norm
+        if enabled(prefix) and prefix.shape[1] <= 256:
+            return grouped_norm(prefix, weights, stream_indices, eps)
     blocks, width = weights.shape
     tokens = prefix.shape[1]
     output = prefix.new_empty(blocks, tokens, width)
@@ -2174,7 +2276,7 @@ __global__ void c1_qk_norm_rotary_cache_kernel(
     const int64_t* __restrict__ start_slot, int tokens, int heads, int kv_heads,
     int groups, int64_t in_token_stride, int64_t out_token_stride,
     int64_t out_head_stride, int64_t query_token_stride, int64_t query_head_stride,
-    float q_eps, float k_eps) {
+    float q_eps, float k_eps, const int64_t* __restrict__ rotary_positions) {
   const int program = blockIdx.x * blockDim.y + threadIdx.y;
   const int query_rows = tokens * heads;
   if (program >= query_rows + tokens * kv_heads) return;
@@ -2190,7 +2292,8 @@ __global__ void c1_qk_norm_rotary_cache_kernel(
   c1_head_norm128((is_query ? query : key) + base,
                   is_query ? q_weight : k_weight, is_query ? q_eps : k_eps,
                   thread, normalized);
-  c1_rotary128(normalized, cos + token * 128, sin + token * 128, thread, rotated);
+  const int64_t rotary_token = rotary_positions != nullptr ? rotary_positions[token] : token;
+  c1_rotary128(normalized, cos + rotary_token * 128, sin + rotary_token * 128, thread, rotated);
   if (is_query) {
     const int64_t target = token * query_token_stride + output_head * query_head_stride;
 #pragma unroll
@@ -2218,7 +2321,8 @@ void c1_qk_norm_rotary_cache(torch::Tensor query, torch::Tensor key, torch::Tens
                              torch::Tensor key_out, torch::Tensor value_out,
                              int64_t tokens, int64_t heads, int64_t kv_heads,
                              int64_t groups, double q_eps, double k_eps,
-                             std::optional<torch::Tensor> start, int64_t requested_warps) {
+                             std::optional<torch::Tensor> start, int64_t requested_warps,
+                             std::optional<torch::Tensor> rotary_positions) {
   const int64_t* start_slot = nullptr;
   if (start.has_value()) {
     TORCH_CHECK(start->scalar_type() == at::kLong && start->is_cuda(), "C1 QK start slot");
@@ -2246,7 +2350,8 @@ void c1_qk_norm_rotary_cache(torch::Tensor query, torch::Tensor key, torch::Tens
       static_cast<int>(tokens), static_cast<int>(heads), static_cast<int>(kv_heads),
       static_cast<int>(groups), key.stride(0), key_out.stride(0), key_out.stride(1),
       q_out.stride(2), q_out.stride(1),
-      static_cast<float>(q_eps), static_cast<float>(k_eps));
+      static_cast<float>(q_eps), static_cast<float>(k_eps),
+      rotary_positions.has_value() ? rotary_positions->data_ptr<int64_t>() : nullptr);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -2325,7 +2430,8 @@ void c1_qk_norm_rotary_cache(torch::Tensor query, torch::Tensor key, torch::Tens
                              torch::Tensor key_out, torch::Tensor value_out,
                              int64_t tokens, int64_t heads, int64_t kv_heads,
                              int64_t groups, double q_eps, double k_eps,
-                             std::optional<torch::Tensor> start, int64_t requested_warps);
+                             std::optional<torch::Tensor> start, int64_t requested_warps,
+                             std::optional<torch::Tensor> rotary_positions);
 
 torch::Tensor c1_rms_norm_wide_rows(torch::Tensor input, torch::Tensor weights, double eps);
 
@@ -2543,7 +2649,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, module) {
              py::arg("k_weight"), py::arg("cos"), py::arg("sin"), py::arg("q_out"),
              py::arg("key_out"), py::arg("value_out"), py::arg("tokens"), py::arg("heads"),
              py::arg("kv_heads"), py::arg("groups"), py::arg("q_eps"), py::arg("k_eps"),
-             py::arg("start"), py::arg("requested_warps") = 16);
+             py::arg("start"), py::arg("requested_warps") = 16,
+             py::arg("rotary_positions") = py::none());
 }
 """
 
@@ -2752,7 +2859,8 @@ if triton is not None:
                          WIDTH: tl.constexpr, EPS: tl.constexpr,
                          TILE_ROW: tl.constexpr, TILE_COL: tl.constexpr,
                          WIN_BATCH: tl.constexpr, WIN_TOKEN: tl.constexpr,
-                         WIN_COL: tl.constexpr, BLOCK: tl.constexpr):
+                         WIN_COL: tl.constexpr, BLOCK: tl.constexpr,
+                         Q=None, SF=(), TILES: tl.constexpr = (), STRIDES: tl.constexpr = ()):
         row = tl.program_id(0)
         col = tl.arange(0, BLOCK)
         mask = col < WIDTH
@@ -2769,6 +2877,9 @@ if triton is not None:
         normalized = (value * rms).to(tl.bfloat16)
         weight = tl.load(WEIGHT + col, mask, 0)
         tl.store(OUT + row * WIDTH + col, (normalized * weight).to(tl.bfloat16), mask)
+        if len(TILES):
+            store_mx8((normalized * weight).to(tl.bfloat16), Q, SF, row, 0, 0,
+                      WIDTH, BLOCK, TILES, STRIDES)
 
     @triton.jit
     def _q_norm_rotary(PROJ, WEIGHT, COS, SIN, OUT,
@@ -2942,11 +3053,17 @@ def kv_norm_rotary_cache(key, value, weight, cos, sin, eps, heads, groups, dim,
                   num_warps=4, enable_fp_fusion=False)
 
 
+def _packed_linear(x, weight, bias=None):
+    """F.linear on a bound draft weight; the W4A8 kernel serves it under mxfp4_w4a8."""
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import packed_draft_linear
+    return packed_draft_linear(x, weight, bias)
+
+
 def mlp_epilogue(fused, mlp, rows, packed=None):
     if packed is None:
         gate, up = mlp.gate_proj(rows), mlp.up_proj(rows)
     else:
-        gate, up = F.linear(rows, *packed).chunk(2, dim=-1)
+        gate, up = _packed_linear(rows, *packed).chunk(2, dim=-1)
     if (rows.device.type == "cuda" and rows.dtype == torch.bfloat16
             and gate.dtype == torch.bfloat16 and up.dtype == torch.bfloat16):
         activated = fused._silu_mul_extension().silu_mul(gate, up)
@@ -3022,12 +3139,12 @@ def adapter_query(head, embeddings, cos, sin, mask, length, window_slots=None,
         if index != current:
             outputs.append(u)
             window, current = u, index
-        projected_q = F.linear(normed, q_w)[None]
+        projected_q = _packed_linear(normed, q_w)[None]
         gate = (projected_q.view(1, count, heads, dim * 2)[..., dim:] if gated else None)
         q = q_norm_rotary(head._c1_fused_module(), projected_q, qn_w, cos, sin,
                           qn_eps, heads, dim, offset, rotary, gated, norm_round=item["norm_round"])
         if causal:
-            key, value = F.linear(kv_sources[block - kv_first], *item["kv"][:2]).split(
+            key, value = _packed_linear(kv_sources[block - kv_first], *item["kv"][:2]).split(
                 item["kv"][2], dim=-1)
             kv_norm_rotary_cache(key[None], value[None], kn_w, cos, sin, kn_eps,
                                  kv_heads, groups, dim, head._c1_kv[block], slots,
@@ -3039,17 +3156,17 @@ def adapter_query(head, embeddings, cos, sin, mask, length, window_slots=None,
         if gate is not None:
             from jetspec.engines.jetspec_plus_plus.kernels.hybrid_c1_lean import gate_mul
             attended = gate_mul(attended, gate, heads, dim)
-        projected = F.linear(attended[0], o_w)
+        projected = _packed_linear(attended[0], o_w)
         post, state, _ = ew_pre_norm(u, window, post_w, empty, post_eps, kvn_eps,
                                      pending=(projected, u), norm_offset=offset, ulp=bool(offset),
                                      norm_round=item["norm_round"])
-        gate_rows, up_rows = F.linear(post, item["gate_up"]).chunk(2, dim=-1)
+        gate_rows, up_rows = _packed_linear(post, item["gate_up"]).chunk(2, dim=-1)
         if u.device.type == "cuda" and u.dtype == torch.bfloat16:
             activated = (ulp_silu_mul(gate_rows, up_rows) if offset else
                          _silu_mul_extension().silu_mul(gate_rows, up_rows))
         else:
             activated = F.silu(gate_rows) * up_rows
-        pending = (F.linear(activated, down_w), state)
+        pending = (_packed_linear(activated, down_w), state)
     outputs.append(pending[1] + pending[0])
     return torch.cat(outputs, dim=-1)[None]
 
@@ -3111,14 +3228,22 @@ def stacked_kv(fused, tile, window, weight, bias, kv_weight, kv_eps,
     tile_count = tile.shape[0]
     if tile.device.type == "cuda" and tile.dtype == torch.bfloat16 and triton is not None:
         source = tile.new_empty(tile_count + batch * tokens, hidden)
-        _stacked_kv_norm[(tile_count + batch * tokens,)](
-            tile, window, kv_weight, source, tile_count, tokens, hidden, kv_eps,
-            *tile.stride(), *window.stride(), triton.next_power_of_2(hidden),
-            num_warps=8 if hidden >= 4096 else 4)
+        if kernel_enabled('draft_fuse_w1', '1') and source.shape[0] <= 256:
+            from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import allocate_activation, _arguments
+            produced = allocate_activation(source)
+            _stacked_kv_norm[(tile_count + batch * tokens,)](
+                tile, window, kv_weight, source, tile_count, tokens, hidden, kv_eps,
+                *tile.stride(), *window.stride(), triton.next_power_of_2(hidden),
+                *_arguments(produced), num_warps=8 if hidden >= 4096 else 4)
+        else:
+            _stacked_kv_norm[(tile_count + batch * tokens,)](
+                tile, window, kv_weight, source, tile_count, tokens, hidden, kv_eps,
+                *tile.stride(), *window.stride(), triton.next_power_of_2(hidden),
+                num_warps=8 if hidden >= 4096 else 4)
     else:
         rows = torch.cat((tile, window.reshape(batch * tokens, hidden)), dim=0)
         source = fused.fast_rms_norm(rows, kv_weight, kv_eps)
-    projected = F.linear(source, weight, bias)[None]
+    projected = _packed_linear(source, weight, bias)[None]
     if projected.device.type == "cuda" and projected.dtype == torch.bfloat16 and triton is not None:
         direct_cache = cache is not None
         key = projected.new_empty(batch, kv_heads, tokens, head_dim) if direct_cache else \

@@ -186,14 +186,18 @@ if triton is not None:
 
 def select_post(values, ids, before_top1, q_a, q_b, cap, vocab, *,
                 top1_partials=None, rejected=None, combined=None, candidate_keys=None,
-                _kernels=None):
+                _kernels=None, out=None):
     if triton is None or values.device.type != "cuda":
         raise RuntimeError("fused anchor selection requires CUDA Triton")
     rows, width = values.shape
     id_bits = max(1, (vocab - 1).bit_length())
-    out_ids = torch.empty_like(ids) if candidate_keys is None else ids
-    out_p = torch.empty((rows, width), device=values.device, dtype=torch.float64)
-    pack = torch.empty((5, rows), device=values.device, dtype=torch.long)
+    if out is None:
+        out_ids = torch.empty_like(ids) if candidate_keys is None else ids
+        out_p = torch.empty((rows, width), device=values.device, dtype=torch.float64)
+        pack = torch.empty((5, rows), device=values.device, dtype=torch.long)
+    else:
+        # Unit T4: the caller's (ids, p64, pack) buffers; _post writes every element.
+        out_ids, out_p, pack = out
     device_q = isinstance(q_a, torch.Tensor)
     q_rows = device_q and q_a.numel() == rows
     chunks = 0 if top1_partials is None else top1_partials[0].shape[1]

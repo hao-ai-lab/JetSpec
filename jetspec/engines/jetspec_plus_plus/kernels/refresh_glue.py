@@ -138,7 +138,7 @@ def layers(model, state, *, length, true_taps, tail, tail_counts, block, slot_co
     hidden, rope = prelude(state, length, true_taps, tail, tail_counts, block, slot_counts)
     current, pending = hidden, None
     fused = fused_kernels() if hidden.is_cuda else None
-    for layer in model.layers:
+    for index, layer in enumerate(model.layers):
         if hidden.is_cuda:
             q, k, v, residual = decoder_lean_project(
                 layer, fused, hidden if pending is None else None, pending, rope)
@@ -148,6 +148,13 @@ def layers(model, state, *, length, true_taps, tail, tail_counts, block, slot_co
         attended = attend(q, pk[..., :state['bucket'], :], pv[..., :state['bucket'], :],
                           k, v, length, tail_counts, state['lanes'], state['slots'],
                           layer.self_attn.scaling, run_config=run_config).transpose(1, 2).contiguous()
+        if kernel_enabled('draft_fuse_t12', '1') and index == len(model.layers) - 1:
+            start = 4 + state['lanes']
+            attended = attended[:, start:]
+            if hidden.is_cuda:
+                residual = residual[:, start:]
+            else:
+                current = current[:, start:]
         if hidden.is_cuda:
             pending = decoder_lean_finish(layer, fused, residual, attended)
         else:

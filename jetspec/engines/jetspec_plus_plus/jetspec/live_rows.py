@@ -1277,12 +1277,24 @@ class BucketPass:
                 **({'refresh': True} if refresh else {}),
                 **({'tail_rows': self.B, 'block_size': self.B} if self.wide else {}))
         self.ids=torch.empty(N*self.head.R,self.B,dtype=torch.long,device=drafter.device)
+        from jetspec.engines.jetspec_plus_plus.jetspec.rows import rows_pass_fused
+        self._t14_entry = (config_values(run_config).get('engine.engine_settings.draft_fuse_t14', '0') == '1'
+                           and self.wide and self.head.backend == 'flashinfer'
+                           and rows_pass_fused(drafter.embed_tokens.weight, run_config=run_config))
         self.graph=None
 
-    def step(self, *, hidden_only=False):
+    def step(self, *, hidden_only=False, guard=None):
         d=self.drafter
         if self.wide:
-            self.hidden=self.head(d.embed_tokens(self.ids))
+            if getattr(self, '_t14_entry', False):
+                from jetspec.engines.jetspec_plus_plus.kernels.j_entry import embedding_norm
+                from jetspec.engines.jetspec_plus_plus.jetspec.rows import fused_kernels
+                norm = self.head.head.layers[0].input_layernorm
+                hidden, normalized = embedding_norm(self.ids, d.embed_tokens.weight,
+                    norm.weight, norm.variance_epsilon, *(guard or (None, None, -1)))
+                self.hidden = self.head._forward_fused(hidden, fused_kernels(), normalized)
+            else:
+                self.hidden=self.head(d.embed_tokens(self.ids))
             if hidden_only:
                 return self.hidden
             return project_row_logits(d.lm_head,self.hidden)
@@ -1352,6 +1364,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import reference_chain_pass
 
     rows, lanes = bucket.ids.shape
+    fuse_t14 = config_values(run_config).get('engine.engine_settings.draft_fuse_t14', '0') == '1'
     if not (bucket.anchor0 and bucket.wide and type(J) is int and J >= 0):
         raise ValueError('chain passes require wide anchor0 rows and nonnegative J')
     if tokens.pending_draft_ids.shape != (rng_words(lanes),):
@@ -1404,6 +1417,16 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     k3 = kernel_enabled('refine_k3', '1')
     fused_head = kernel_enabled('lmhead_fused', '1')
     head_kn = fused_head and kernel_enabled('j0_lmhead_kn', '1')
+    if getattr(getattr(getattr(bucket.drafter, 'lm_head', None), 'weight', None), '_draft_vocab', None) is not None:
+        head_kn = False
+    fuse_t17 = (config_values(run_config).get('engine.engine_settings.draft_fuse_t17', '0') == '1'
+                and k3 and bucket.ids.is_cuda and lanes == 16 and not eval_mode
+                and refresh_at and refresh_at[0] == 1
+                and kernel_enabled('refresh_prep_lean', '1'))
+    if fuse_t17:
+        from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t17 import allocate_refresh
+        outputs['_t17_refresh'] = allocate_refresh(rows, lanes, keys.device, lanes,
+            refresh_khat_threshold(False, run_config=run_config))
     if fused_head and (not k3 or keys.device.type != 'cuda'):
         raise ValueError('JETSPEC_LMHEAD_FUSED requires CUDA JETSPEC_REFINE_K3=1')
     if head_kn:
@@ -1412,8 +1435,10 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
         bucket.chain_lmhead_partials = partials
     elif fused_head:
         from jetspec.engines.jetspec_plus_plus.kernels.drafter_lmhead import allocate_partials as allocate_head_partials
+        reduced = getattr(getattr(getattr(bucket.drafter, 'lm_head', None), 'weight', None), '_draft_vocab', None)
         partials = allocate_head_partials(rows, lanes,
-                                          bucket.drafter.lm_head.weight.shape[0], keys.device)
+                                          (bucket.drafter.lm_head.weight.shape[0] if reduced is None
+                                           else reduced[1].shape[0]), keys.device)
         bucket.chain_lmhead_partials = partials
     else:
         partials = (allocate_partials(rows, lanes, bucket.drafter.lm_head.weight.shape[0],
@@ -1432,7 +1457,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
         refresh_stream = DraftStreams(staged_hidden.device)
     refresh_projected = [None]
 
-    def refresh(pass_index):
+    def refresh(pass_index, guard=None):
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         if T_ref < rows * rng_words(lanes):
             raise ValueError('B1 refresh needs fixed token capacity')
@@ -1442,7 +1467,9 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
         if window != lanes:
             raise ValueError(f'chain refresh window must equal live lanes: {window} != {lanes}')
         again = pass_index != refresh_at[0] if refresh_at else False
-        chained = torch.cumprod(p_top1_prev.double(), dim=1)
+        fused_bookkeeping = fuse_t17 and pass_index == 1
+        if not fused_bookkeeping:
+            chained = torch.cumprod(p_top1_prev.double(), dim=1)
         prep_lean = (kernel_enabled('refresh_prep_lean', '1')
                      and bucket.ids.is_cuda)
         if eval_mode:
@@ -1451,6 +1478,10 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
             prep_lean = False
             outputs['eval_audit'][1].add_(1)
             outputs['eval_audit'][3].add_((active & (khat != rng_words(lanes))).sum())
+        elif fused_bookkeeping:
+            state = outputs['_t17_refresh']
+            khat, counts, tails, fixed_start = (state[name] for name in (
+                'RefreshKhat', 'RefreshCounts', 'RefreshTails', 'RefreshStart'))
         elif prep_lean:
             from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import bookkeeping
             khat, counts, tails, fixed_start = bookkeeping(
@@ -1461,7 +1492,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
             khat, counts, tails, fixed_start = refresh_bookkeeping(
                 chained, active, keys, rp[Offset.L], window,
                 refresh_khat_threshold(again, run_config=run_config), refresh_khat_cap(again, run_config=run_config) if again else None)
-        embedded = d.embed_tokens(bucket.ids)
+        embedded = d.embed_tokens.weight if fuse_t17 else d.embed_tokens(bucket.ids)
         if exact_prefix:
             tails = torch.zeros_like(keys[:, 0])
         elif not prep_lean:
@@ -1476,8 +1507,9 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
         else:
             args = (embedded, rp[Offset.L], tails, counts, T_ref,
                     rp[Offset.L] + window)
-        block = (head._refresh_cached_fixed(*args) if key_width is None else
-                 head._refresh_cached_fixed(*args, key_width=key_width))
+        embedding_args = {'embedding_ids': bucket.ids} if fuse_t17 else {}
+        block = (head._refresh_cached_fixed(*args, **embedding_args) if key_width is None else
+                 head._refresh_cached_fixed(*args, key_width=key_width, **embedding_args))
         if refresh_stream is not None:
             from jetspec.engines.jetspec_plus_plus.jetspec.refresh_inject import project
 
@@ -1489,25 +1521,33 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
         if refresh_swap is not None:
             # serving: the decoder's first disagreement lowers k-hat and swaps that draft
             before = bucket.ids.clone() if getattr(refresh_swap, 'states_only', False) else None
+            fuse_swap_finish = config_values(run_config).get('engine.engine_settings.draft_fuse_t10', '0') == '1'
             khat = refresh_swap.apply(length=rp[Offset.L], ids=bucket.ids, khat=khat,
                                       slot_counts=counts,
                                       tail_counts=tails,
                                       active=active, block=block,
-                                      finished=outputs['finished'])
+                                      finished=outputs['finished'],
+                                      **({'inclusive': config_values(run_config).get(
+                                          'engine.engine_settings.refresh_inject_inclusive', '0') == '1'}
+                                         if fuse_swap_finish else {}))
             if before is not None:
                 refresh_swap.eval_effects[0].add_(bucket.ids.ne(before).sum())
-            if config_values(run_config).get('engine.engine_settings.refresh_inject_inclusive', '0') == '1':
+            if not fuse_swap_finish and config_values(run_config).get('engine.engine_settings.refresh_inject_inclusive', '0') == '1':
                 khat = khat - 1  # swap.apply returns a count, inclusive inject takes a cutoff
         if refresh_stream is None:
             bucket.head.inject_refresh(block, khat, reset=again,
-                                       fixed_layout=True, run_config=run_config)
+                                       fixed_layout=True, run_config=run_config,
+                                       **({'guard': guard} if guard is not None else {}))
         else:
             from jetspec.engines.jetspec_plus_plus.jetspec.refresh_inject import commit
             refresh_stream.finish()
-            commit(bucket.head, refresh_projected[0], khat, again)
+            commit(bucket.head, refresh_projected[0], khat, again,
+                   **({'guard': guard} if guard is not None else {}))
 
     def pass_body(index, *, do_refresh=False):
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        fuse_pins = (fuse_t14 and refresh_swap is not None and not refresh_swap.states_only
+                     and kernel_enabled('chain_mr_glue_lean', '1') and bucket.ids.is_cuda)
         if eval_mode:
             if index == 0:
                 outputs['eval_audit'].zero_()
@@ -1518,7 +1558,10 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
             if kernel_enabled('chain_mr_glue_lean', '1') and bucket.ids.is_cuda:
                 j0_prep(tokens.committed_ids, rp, keys, active, bucket.ids,
                         outputs['finished'], outputs['passes_run'], outputs['err'],
-                        owns_err=owns_outputs)
+                        owns_err=owns_outputs,
+                        **({'pin_slot': refresh_swap.pin_slot,
+                            'pin_mask': refresh_swap.pin_mask if refresh_swap.dense_pins else None}
+                           if fuse_pins else {}))
             else:
                 draw_idx = rp[Offset.RNG_IDX:Offset.RNG_IDX + rng_words(lanes)]
                 from jetspec.engines.jetspec_plus_plus.draft.method.passes import j0_fill
@@ -1531,17 +1574,25 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
                 if owns_outputs:
                     outputs['err'].zero_()
             if refresh_swap is not None:
-                refresh_swap.reset()
+                if not fuse_pins:
+                    refresh_swap.reset()
                 if refresh_swap.fill_mode == 'context':
                     refresh_swap.fill_context.copy_(bucket.ids)
-        if do_refresh:
-            refresh(index)
         mask_token = int(bucket.drafter.head.mask_token_id)
+        fuse_guard = (fuse_t14 and (refresh_swap is None or refresh_swap.fill_mode == 'keep'))
+        inject_guard = (fuse_guard and do_refresh and bucket.ids.is_cuda
+                        and kernel_enabled('refresh_inject_lean2', '1'))
+        entry_guard = fuse_guard and not inject_guard and getattr(bucket, '_t14_entry', False)
+        if do_refresh:
+            refresh(index, **({'guard': (bucket.ids, active, outputs['err'], mask_token)}
+                              if inject_guard else {}))
         if refresh_swap is not None and refresh_swap.fill_mode != 'keep':
             outputs['err'].bitwise_or_(
                 (bucket.ids.eq(mask_token) & active[:, None] & ~refresh_swap.fill_filled)
                 .any().to(torch.long).reshape(1) * (1 << 7))
             refresh_swap.fill_filled.zero_()
+        elif inject_guard or entry_guard:
+            pass  # The inject or embedding grid owns the guard; neither resets Err.
         elif ((kernel_enabled('chain_sega_glue', '2')
              and index in (0, 1))
                 or (kernel_enabled('chain_mr_glue_lean', '1')
@@ -1551,7 +1602,10 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
             outputs['err'].bitwise_or_(
                 (bucket.ids.eq(mask_token) & active[:, None])
                 .any().to(torch.long).reshape(1) * (1 << 7))
-        logits = bucket.step(hidden_only=True) if fused_head else bucket.step()
+        if entry_guard:
+            logits = bucket.step(hidden_only=fused_head, guard=(active, outputs['err'], mask_token))
+        else:
+            logits = bucket.step(hidden_only=True) if fused_head else bucket.step()
         if capture_top:
             distribution = (project_row_logits(bucket.drafter.lm_head, logits)
                             if fused_head else logits)

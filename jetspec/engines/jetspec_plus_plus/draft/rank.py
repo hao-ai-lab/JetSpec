@@ -195,8 +195,8 @@ class DraftRunner(ModelRunner):
         self._hybrid_pair_layout = None
         if self.run_config.engine.engine_settings.hybrid_pair == "1":
             from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridPairLayout
-            if cfg.max_num_seqs != 1 or cfg.speculate_k not in (15, 31):
-                raise ValueError("hybrid pair transfer requires N=1 and b16/b32")
+            if cfg.speculate_k not in (15, 31):
+                raise ValueError("hybrid pair transfer requires b16/b32")
             self._hybrid_pair_layout = HybridPairLayout.from_config(
                 cfg.hf_config, lanes=cfg.speculate_k + 1)
         self._chain_mode = cfg.jetspec and self.run_config.engine.engine_settings.chain_graph == "seg"
@@ -355,21 +355,22 @@ class DraftRunner(ModelRunner):
                 dist.recv(tap_payload, src=0, group=request_pg)
             hybrid_admission = None
             if self._hybrid_pair_layout is not None:
-                if batch_size != 1:
-                    raise ValueError("hybrid pair admission requires N=1")
                 layout = self._hybrid_pair_layout
-                hybrid_admission = (
-                    torch.empty(layout.recurrent_shape, dtype=torch.float32,
-                                device=self.device),
-                    torch.empty(layout.conv_shape, dtype=layout.dtype,
-                                device=self.device),
-                    torch.empty((total_taps, layout.kv_heads, layout.attention_dim),
-                                dtype=layout.dtype, device=self.device),
-                    torch.empty((total_taps, layout.kv_heads, layout.attention_dim),
-                                dtype=layout.dtype, device=self.device),
-                )
-                for payload in hybrid_admission:
-                    dist.recv(payload, src=0, group=request_pg)
+                hybrid_admission = []
+                for length in tap_lengths.tolist():
+                    tensors = (
+                        torch.empty(layout.recurrent_shape, dtype=torch.float32,
+                                    device=self.device),
+                        torch.empty(layout.conv_shape, dtype=layout.dtype,
+                                    device=self.device),
+                        torch.empty((int(length), layout.kv_heads, layout.attention_dim),
+                                    dtype=layout.dtype, device=self.device),
+                        torch.empty((int(length), layout.kv_heads, layout.attention_dim),
+                                    dtype=layout.dtype, device=self.device),
+                    )
+                    for payload in tensors:
+                        dist.recv(payload, src=0, group=request_pg)
+                    hybrid_admission.append(tensors)
             tap_chunks = []
             offset = 0
             for length in tap_lengths.tolist():
@@ -414,8 +415,12 @@ class DraftRunner(ModelRunner):
                 if current_engine().tag_sequence_ids:
                     state._jetspec_seq_id = int(seq_id)
                 if hybrid_admission is not None:
+                    recurrent, conv, key, value = hybrid_admission[row]
+                    # The decoder computes in the draft dtype; only the recurrence stays fp32.
+                    dtype = self.hf_config.torch_dtype
                     (state.hybrid_recurrent, state.hybrid_conv,
-                     state.hybrid_prefix_key, state.hybrid_prefix_value) = hybrid_admission
+                     state.hybrid_prefix_key, state.hybrid_prefix_value) = (
+                        recurrent, conv.to(dtype), key.to(dtype), value.to(dtype))
                     if setting(run_config, 'engine.engine_settings.chain_graph', '0') == '0':
                         from jetspec.engines.jetspec_plus_plus.wire.hybrid import seed_eager_hybrid_state
                         seed_eager_hybrid_state(state, capacity=self.config.max_model_len + 32)
@@ -731,6 +736,8 @@ class DraftRunner(ModelRunner):
                     for index, candidate_set in enumerate(candidate_sets):
                         if candidate_set is not None:
                             pin_home[candidate_set.seq_id] = (candidate_set.round_id, pins[index])
+            if setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+                print(f"MAILBOX_ID side=draft event=candidate_send id={self._jetspec_candidate_send_id} sets={[(c.seq_id, c.round_id) if c is not None else None for c in candidate_sets]} branch=admission", flush=True)
             self.jetspec_mailbox_store.set(
                 f"candidate_payload_{self._jetspec_candidate_send_id}",
                 packet.cpu().numpy().tobytes())
@@ -759,6 +766,7 @@ class DraftRunner(ModelRunner):
         control = self.jetspec_mailbox_store.get(key)
         self._jetspec_control_receive_id += 1
         if (control == b'1' and getattr(self, '_hybrid_pair_layout', None) is not None
+                and getattr(self.config, 'max_num_seqs', 1) == 1
                 and setting(run_config, 'engine.engine_settings.chain_graph', '0') == '0'):
             from jetspec.engines.jetspec_plus_plus.wire.hybrid import receive_eager_hybrid_outcome
             return receive_eager_hybrid_outcome(self, receive=lambda tensor:
@@ -778,6 +786,11 @@ class DraftRunner(ModelRunner):
         if self.config.jetspec_wait_ms == float("inf"):
             append_jetspec_tap_mirrors(
                 self.jetspec_tap_mirrors, payload["seq_ids"], taps, lengths)
+        if (getattr(self, '_hybrid_pair_layout', None) is not None
+                and getattr(self.config, 'max_num_seqs', 1) > 1):
+            from jetspec.engines.jetspec_plus_plus.wire.hybrid import receive_batch_hybrid_outcomes
+            receive_batch_hybrid_outcomes(self, payload, receive=lambda tensor:
+                dist.recv(tensor, src=0, group=self.jetspec_request_pg))
         end.record()
         if kernel_enabled('request_lean', '1'):
             # serving JETSPEC_REQUEST_LEAN=1: no host wait on the tap receive (the device orders the
@@ -1073,11 +1086,13 @@ class DraftRunner(ModelRunner):
             from jetspec.engines.jetspec_plus_plus.draft.batch_round import batch_round_enabled, prewarm_batch_graphs
             if self.config.max_num_seqs > 1 and batch_round_enabled(self.jetspec_rows, run_config=run_config):
                 def batch_sequence(length):
-                    return JetSpecSequence(
+                    sequence = JetSpecSequence(
                         taps=torch.zeros(length, 5, self.config.jetspec_tap_hidden_size,
                                          device=d.device, dtype=d.dtype),
                         committed_ids=torch.zeros(1, length + 1, device=d.device, dtype=torch.long),
                         prompt_index=240, staged=staged_context(getattr(self, 'run_config', None)))
+                    sequence._jetspec_seq_id = -2  # a warm-up id until the prewarm assigns its own
+                    return sequence
                 prewarm_batch_graphs(
                     self.jetspec_rows, batch_sequence, max_batch=self.config.max_num_seqs,
                     max_model_len=self.config.max_model_len, initial_ks=ks,
@@ -1159,6 +1174,12 @@ class DraftRunner(ModelRunner):
                   f'{allocated_stamp}'
                   f'{warm_stamp}', flush=True)
         torch.cuda.synchronize()
+        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        if 'mxfp4_w4a8' in (current_engine().precision_draft, current_engine().precision_lm_head):
+            # W4A8 coverage: which GEMM each draft-lane site captured, and the rounded rows.
+            from jetspec.engines.jetspec_plus_plus.models.target_linear import report_nvfp4_census, report_w4a8_sites
+            report_w4a8_sites()
+            report_nvfp4_census(dict(drafter=d, rows=self.jetspec_rows), self.device)
         print('W240_T_MODULE_WARMUP=complete synthetic_state_unpublished',flush=True)
 
     # new one, with true asynchrony
@@ -1291,6 +1312,17 @@ class DraftRunner(ModelRunner):
                 raise ValueError("chain admission has no safe captured length key")
             lengths = range(first, last + 1, 128)
             row_caps, capture_names = ((R,) if R == 16 or rows_min_count(run_config=run_config) > 4 else (4, 8)), None
+        from jetspec.engines.jetspec_plus_plus.draft.method.schedule import Schedule
+        fixed_schedule = setting(run_config, 'method.method_settings.chain_fixed_config')
+        if (setting(run_config, 'engine.engine_settings.chain_single_key', "0") == "1"
+                and fixed_schedule and Schedule.parse(fixed_schedule).r > 1
+                and not setting(run_config, 'engine.engine_settings.chain_j_switch_l')):
+            # Every key retains its buffers and private pools for every pass.
+            # Multi-refresh schedules otherwise multiply that storage across
+            # all lengths and both historical row caps until the card fills.
+            # One ceiling key covers every exact-L packet at the fixed row cap.
+            # Length-switched schedules retain their buckets and switch point.
+            lengths, row_caps = (key_limit,), (R,)
         last = lengths[-1]
         decoder_key_bucket = setting(run_config, 'engine.engine_settings.chain_decoder_key_bucket', "0") == "1"
 
@@ -1517,6 +1549,8 @@ class DraftRunner(ModelRunner):
             return choice
 
         def publish_redraft(buffers, round_id):
+            if setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+                print(f"MAILBOX_ID side=draft event=candidate_send id={self._jetspec_candidate_send_id} seq={seq_id} round={round_id} branch=redraft", flush=True)
             self.jetspec_mailbox_store.set(
                 f"candidate_payload_{self._jetspec_candidate_send_id}",
                 buffers["redraft_home"].numpy().tobytes())
@@ -1527,6 +1561,8 @@ class DraftRunner(ModelRunner):
             timing = setting(run_config, 'engine.engine_settings.chain_handoff_timing', "0") == "1"
             publish_start = time.perf_counter_ns() if timing else None
             records = []
+            if setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+                print(f"MAILBOX_ID side=draft event=candidate_send id={self._jetspec_candidate_send_id} seq={seq_id} round={round_id + 1} branch=next_round", flush=True)
             self.jetspec_mailbox_store.set(
                 f"candidate_payload_{self._jetspec_candidate_send_id}",
                 buffers["wire_home"].numpy().tobytes())

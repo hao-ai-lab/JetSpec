@@ -48,11 +48,24 @@ def load_target_model(model, path):
         missing = set(dict(model.named_parameters())) - loaded
         if missing:
             raise RuntimeError(f'hybrid text checkpoint is missing parameters: {sorted(missing)}')
+    # verify_cut_pack27b2: pack once at load, before warm-up and the KV cache are sized.
+    from jetspec.engines.jetspec_plus_plus.models.target_pack import pack_model_projections
+    pack_model_projections(model)
 
 
-def load_model(model, path, target_path=None, target_hidden_size=None):
+def load_model(model, path, target_path=None, target_hidden_size=None, is_draft=False):
     if hasattr(model, 'spec'):
         load_target_model(model, path)
+        if is_draft:
+            # The target precisions shape the target rank only: a spec model on the draft rank keeps BF16
+            # target-role projections, as it does under a bf16 target, and is never rounded or packed here.
+            from jetspec.engines.jetspec_plus_plus.models.target_linear import ProjectionPrecision, TargetLinear
+            for child in model.modules():
+                if isinstance(child, TargetLinear) and child.precision_role == 'target':
+                    child.precision = ProjectionPrecision(role='target')
+            return
+        from jetspec.engines.jetspec_plus_plus.models.target_w4a8 import round_target_w4a8_weights
+        round_target_w4a8_weights(model)
     else:
         load_comparison_model(model, path, target_path=target_path,
                               target_hidden_size=target_hidden_size)

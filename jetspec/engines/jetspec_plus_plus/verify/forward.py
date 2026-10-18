@@ -81,7 +81,14 @@ class TargetRunner(ModelRunner):
     def hybrid_target(self):
         """Keep the frozen reference verifier's capability read unchanged."""
         from jetspec.engines.jetspec_plus_plus.models.state import has_state
-        return has_state(self)
+        # N=1 commits through the device or reference protocol; C>1 is batch_hybrid_target.
+        return has_state(self) and getattr(self.config, 'max_num_seqs', 1) == 1
+
+    @property
+    def batch_hybrid_target(self):
+        """A stateful target served at C>1: the host verify commits each full row's count."""
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        return has_state(self) and getattr(self.config, 'max_num_seqs', 1) > 1
 
     def commit_hybrid_state(self, accepted):
         """Route the frozen reference verifier's commit through the protocol."""
@@ -260,6 +267,8 @@ class TargetRunner(ModelRunner):
         if (setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
                 or setting(self, 'engine.engine_settings.ssd_verify_device', '0') == "1"):
             shapes.extend(((1, 1), (1, 0)))
+        from jetspec.engines.jetspec_plus_plus.models.target_w4a8 import report_target_w4a8, warm_target_w4a8
+        warm_target_w4a8(self.model, [full * width + bs - full for bs, full in shapes])
         for bs, full in shapes:
                 count = full * width + bs - full
                 lengths = torch.tensor([width] * full + [1] * (bs - full),
@@ -291,13 +300,20 @@ class TargetRunner(ModelRunner):
                         self._state_slots = gv['state_slots'][:bs]
                     state_options = (dict(verify=True, query_lengths=(width,) * full + (1,) * (bs - full))
                                      if stateful else {})
+                    # The model stacks its taps straight into the replay buffer.
+                    tap_out = (gv["taps"][:count] if self.config.jetspec_taps and not stateful
+                               and setting(self, 'engine.engine_settings.verify_cut_glue8b', '0') == "1"
+                               else None)
+                    if tap_out is not None:
+                        state_options = dict(state_options, tap_out=tap_out)
                     model_forward(gv["input_ids"][:count], gv["positions"][:count], **state_options)
                     graph = torch.cuda.CUDAGraph()
                     with torch.cuda.graph(graph, pool=pool):
                         result = model_forward(gv["input_ids"][:count], gv["positions"][:count], **state_options)
                         if self.config.jetspec_taps:
                             gv["outputs"][:count].copy_(result[0])
-                            gv["taps"][:count].copy_(result[1])
+                            if result[1] is not tap_out:
+                                gv["taps"][:count].copy_(result[1])
                         else:
                             gv["outputs"][:count].copy_(result)
                 finally:
@@ -312,6 +328,7 @@ class TargetRunner(ModelRunner):
                 self._jetspec_mixed_graphs[bs, full] = graph
                 torch.cuda.synchronize()
                 reset_context()
+        report_target_w4a8()
         self._jetspec_mixed_pool = pool
         if self._verify_plan_reuse_enabled:
             if max_bs != 1 or not self._jetspec_verify_device:
@@ -651,6 +668,9 @@ class TargetRunner(ModelRunner):
         """
         if self.is_draft or not self.config.jetspec:
             raise ValueError("mixed verification requires a JetSpec target")
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        if has_state(self):
+            raise ValueError('hybrid target mixed verification requires JETSPEC_PERSEQ=0')
         widths = [len(seq) - seq.num_cached_tokens for seq in seqs]
         if any(width not in (1, self.config.speculate_k + 1) for width in widths):
             raise ValueError("mixed queries must be AR or a complete draft block")
@@ -689,6 +709,7 @@ class Verifier(VerifierBase):
         "_jetspec_publish_first": 'engine.engine_settings.verify_publish_first',
         "_jetspec_verify_outcome_fused": 'verify_outcome_fused',
         "_jetspec_verify_outcome_fused_check": 'engine.engine_settings.verify_outcome_fused_check',
+        "_verify_cut_glue8b": 'engine.engine_settings.verify_cut_glue8b',
     }
 
     def __getattr__(self, name):
@@ -704,6 +725,10 @@ class Verifier(VerifierBase):
             value = setting(self, env_name, "0") == "1"
         else:
             value = kernel_enabled(env_name)
+            if not value:
+                from jetspec.engines.jetspec_plus_plus.profiles import verify_cut_lean27b
+                value = verify_cut_lean27b(
+                    env_name, self, getattr(self, 'target_model_runner', None))
         setattr(self, name, value)
         return value
 
@@ -1110,6 +1135,12 @@ class Verifier(VerifierBase):
                 # that GDN snapshot before the existing hybrid envelope is sent.
                 self.target_model_runner.commit_hybrid_state(torch.tensor(
                     len(full_suffixes[0]), dtype=torch.int64, device=self.device))
+            elif getattr(self.target_model_runner, 'batch_hybrid_target', False):
+                # C>1: commit while the runner still holds the full rows' slot order;
+                # the AR forward below prepares a different set of slots.
+                self.target_model_runner.commit_state(torch.tensor(
+                    [len(suffix) for suffix in full_suffixes],
+                    dtype=torch.int64, device=self.device))
             if taps_flat is not None:
                 taps = taps_flat.view(
                     len(full_indices), self.lookahead + 1, 5, -1
@@ -1273,10 +1304,9 @@ class Verifier(VerifierBase):
         """N=1 verify with one small host outcome read after device commit."""
         from jetspec.engines.jetspec_plus_plus.models.state import has_state
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        from jetspec.engines.jetspec_plus_plus.jetspec.profile import enabled as profile_enabled
         # Recovery is staged for the next suffix, not accepted in this one.
-        # Eval must consume a pending EOS through its full speculative round.
-        recovery_eos_terminal = not profile_enabled()
+        # The scheduler finishes only after EOS enters the committed suffix.
+        recovery_eos_terminal = False
         temperature = getattr(seq, "temperature", 0)
         if temperature > 0 and getattr(self, "hybrid_verify_audit", False):
             raise ValueError("JETSPEC_HYBRID_VERIFY_AUDIT only supports T=0 argmax auditing")
@@ -1334,7 +1364,8 @@ class Verifier(VerifierBase):
                 kernel_profile.step("stage_ids")
             stage_committed_ids(seq, proposal,
                 capacity=self.target_model_runner.config.max_model_len + self.lookahead + 2)
-            if taps is not None:
+            # The second stage below writes the same slot after the packet D2H is queued.
+            if taps is not None and not getattr(self, "_verify_cut_glue8b", False):
                 if profiled:
                     kernel_profile.step("stage_taps_first")
                 stage_committed_taps(seq, taps,
@@ -1546,6 +1577,12 @@ class Verifier(VerifierBase):
         suffix = seq.token_ids[seq.num_cached_tokens:seq.num_cached_tokens + committed]
         if len(suffix) != committed:
             raise RuntimeError("device verify host proposal mirror is incomplete")
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+            eos_id = getattr(self.tokenizer, 'eos_token_id', None)
+            branch = ('eos' if eos_id in suffix and not seq.ignore_eos else 'cap'
+                      if seq._jetspec_last_packet_eos else 'ar_step' if not full else 'verify')
+            print(f"MAILBOX_ID side=verify event=outcome seq={seq.seq_id} round={seq.jetspec_round + 1} branch={branch} recovery={recovery_id} eos={seq._jetspec_last_packet_eos} suffix={suffix}", flush=True)
         if verify_top2 is not None:
             top_ids = verify_top2.indices.tolist()
             top_logits = verify_top2.values.tolist()

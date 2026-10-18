@@ -14,7 +14,7 @@ if triton is not None:
                 USED, SLOT, NEW, APPLY, WIDTH: tl.constexpr, SLOTS: tl.constexpr,
                 PINNED: tl.constexpr, BLOCK: tl.constexpr,
                 PIN_TOKEN=None, FINISHED=None, INJECT_COUNT=None,
-                FINISH: tl.constexpr = False):
+                FINISH: tl.constexpr = False, INCLUSIVE: tl.constexpr = False):
         row = tl.program_id(0)
         lane = tl.arange(0, BLOCK)
         top = tl.load(TOP + row * SLOTS + lane, lane < WIDTH - 1, other=-1)
@@ -33,8 +33,14 @@ if triton is not None:
         if PINNED:
             apply = apply & (tl.load(PIN + row) < 0)
         tl.store(IDS + row * WIDTH + slot, new, apply)
-        tl.store(USED + row, used)
-        tl.store(SLOT + row, slot)
-        tl.store(NEW + row, new)
-        tl.store(APPLY + row, apply)
-
+        if FINISH:
+            tl.store(PIN + row, tl.where(apply, slot, tl.load(PIN + row)))
+            tl.store(PIN_TOKEN + row, new)
+            tl.store(FINISHED + row, tl.load(FINISHED + row) & ~apply)
+            inject = tl.where(tl.load(ACTIVE + row), used + 1, 0)
+            tl.store(INJECT_COUNT + row, inject - INCLUSIVE)
+        else:
+            tl.store(USED + row, used)
+            tl.store(SLOT + row, slot)
+            tl.store(NEW + row, new)
+            tl.store(APPLY + row, apply)

@@ -10,6 +10,7 @@
     "c1_qk_fused": "0",
     "c1_qk_warps": "16",
     "chain_attn3": "0",
+    "chain_single_key": "1",
     "ctx_kv_direct": "0",
     "ctx_kv_fused": "0",
     "ctx_kv_one_gemm": "0",

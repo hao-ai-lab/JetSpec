@@ -13,6 +13,8 @@ class GatedRotaryEmbedding:
         self.head_size, self.rotary_dim = head_size, rotary_dim
 
     def __call__(self, query, key, cos, sin):
+        if isinstance(cos, RopeRows):
+            return self.gathered(query, key, cos)
         def rotate(tensor):
             rot = tensor[..., :self.rotary_dim]
             half = self.rotary_dim // 2
@@ -20,6 +22,35 @@ class GatedRotaryEmbedding:
             changed = rot * cos[:, None, :] + shifted * sin[:, None, :]
             return torch.cat((changed, tensor[..., self.rotary_dim:]), dim=-1)
         return rotate(query), rotate(key)
+
+    def gathered(self, query, key, rows):
+        """Rotate with table rows: one launch on CUDA, the eager arithmetic elsewhere."""
+        if query.is_cuda:
+            from jetspec.engines.jetspec_plus_plus.kernels.verify_gated_rope import gated_rope
+            return gated_rope(query, key, rows.cos, rows.sin, rows.positions, self.rotary_dim)
+        return self(query, key, rows.cos[rows.positions], rows.sin[rows.positions])
+
+
+class RopeRows:
+    """Position-indexed cos and sin tables with the positions of one forward."""
+    __slots__ = ('cos', 'sin', 'positions')
+
+    def __init__(self, cos, sin, positions):
+        self.cos, self.sin, self.positions = cos, sin, positions
+
+
+def rope_table(inv_freq, max_position, dtype, chunk=16384):
+    """Cos and sin for every position by the shell's per-forward fp32 operations."""
+    width = 2 * inv_freq.numel()
+    cos_table = torch.empty(max_position, width, dtype=dtype, device=inv_freq.device)
+    sin_table = torch.empty_like(cos_table)
+    for start in range(0, max_position, chunk):
+        positions = torch.arange(start, min(start + chunk, max_position), device=inv_freq.device)
+        freqs = positions.float()[:, None] * inv_freq[None, :]
+        repeated = torch.cat((freqs, freqs), dim=-1)
+        cos_table[start:start + positions.numel()] = repeated.cos().to(dtype)
+        sin_table[start:start + positions.numel()] = repeated.sin().to(dtype)
+    return cos_table, sin_table
 
 
 class PartialRotaryEmbedding(nn.Module):

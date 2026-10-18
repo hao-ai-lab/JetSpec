@@ -42,6 +42,8 @@ class ChainCommandInbox:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         command_id = self.next_id
+        if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+            print(f"MAILBOX_ID side=draft event=command_await id={command_id} source={self.pair_source}", flush=True)
         if self.transport is not None and self.pair_source == "boundary":
             # A device EOS can precede the host's request-end decision. Accept
             # either a continued pushed round or the next TCP control.

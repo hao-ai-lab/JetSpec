@@ -642,7 +642,8 @@ class ModelRunner:
         # Pass tokenizer_path as target_path if it's available (mostly for Eagle draft)
         target_path = getattr(config, 'tokenizer_path', None)
         target_hidden_size = getattr(config, 'd_model_target', None)
-        load_model(self.model, config.model, target_path=target_path, target_hidden_size=target_hidden_size)
+        load_model(self.model, config.model, target_path=target_path, target_hidden_size=target_hidden_size,
+                   is_draft=self.is_draft)
         
         if config.draft_async:  # move this here so we don't get a timeout waiting for draft rank while load_model happens?
             ranks = (self.draft_rank,)

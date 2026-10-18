@@ -1151,18 +1151,42 @@ def _apply_head_thresholds(resolved, recipe, override, bundle_pin):
     return paths, expected, pins, sources
 
 
+def _resolve_release_slice(spec, target):
+    """Bind release tensor names to verified target files in the dispatch pins."""
+    from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import _release_slice
+    if not _release_slice(spec):
+        raise ValueError('invalid target release slice')
+    for name, digest in spec['target_files'].items():
+        if _sha256(target / name) != digest:
+            raise ValueError(f'target release slice SHA256 mismatch: {name}')
+    index = json.loads((target / 'model.safetensors.index.json').read_text())['weight_map']
+    for name in spec['tensors'].values():
+        if name not in index or index[name] not in spec['target_files']:
+            raise ValueError(f'target release slice lacks pinned tensor shard: {name}')
+    expected = {f'heads/release_target/{name}': digest for name, digest in spec['target_files'].items()}
+    pin = {'directory': str(target), **spec, 'files': {
+        name: {'sha256': digest} for name, digest in spec['target_files'].items()}}
+    return expected, pin
+
+
 def _resolve_generated_heads(recipe, target, host, artifacts_dir, artifacts, sources):
-    """Resolve the generated artifact layout, including trained adapter views."""
+    """Resolve generated heads or published calibration with a pinned target slice."""
     keys = {"adapter": recipe["adapter_artifact"],
             "drafter": recipe["drafter_artifact"],
-            "target_release": recipe["target_release_artifact"],
             "bundle": recipe["bundle_artifact"]}
+    release_slice = recipe.get('target_release_slice')
+    if release_slice is None:
+        keys['target_release'] = recipe['target_release_artifact']
     # The trained adapter recipes use the published ep6 directory directly,
     # including its separately pinned embedding/LM-head release. Existing
     # placeholder recipes retain their generated-view resolution unchanged.
-    trained = (artifacts.get(keys["adapter"], {}).get("serving_layout") == "trained_c1"
-               and artifacts[keys["drafter"]]["kind"] == "published")
+    published_calibration = (artifacts[keys['bundle']].get('serving_layout') == 'target_slice')
+    trained = (published_calibration or
+               artifacts.get(keys["adapter"], {}).get("serving_layout") == "trained_c1") and (
+               artifacts[keys["drafter"]]["kind"] == "published")
     release_name = "target_release_weights.safetensors" if trained else "model.safetensors"
+    published_roles = ('adapter', 'drafter', 'target_release') + (
+        ('bundle',) if published_calibration else ())
     paths = {"target": target, "compile_pin": None, "blockhead": None}
     expected = {"heads/thresholds": _resolve_head_thresholds(None, recipe["thresholds_sha256"])}
     checkpoints = {}
@@ -1171,8 +1195,8 @@ def _resolve_generated_heads(recipe, target, host, artifacts_dir, artifacts, sou
             key = keys["drafter"]
         if (key not in artifacts or (artifacts[key]["kind"] != "generated"
                 and not (trained and artifacts[key]["kind"] == "published"
-                         and role in ("adapter", "drafter", "target_release")))):
-            if trained and role in ("adapter", "drafter", "target_release"):
+                         and role in published_roles))):
+            if trained and role in published_roles:
                 raise ValueError(f"hybrid trained {role} lacks generated or published artifact {key!r}")
             raise ValueError(f"hybrid placeholder lacks generated artifact {key!r}")
         directory, sources[role] = artifact_directory(key, artifacts, host, artifacts_dir)
@@ -1197,8 +1221,14 @@ def _resolve_generated_heads(recipe, target, host, artifacts_dir, artifacts, sou
                              for name, sha in files.items()})
         elif role == "bundle":
             expected["heads/decoder_manifest"] = files["decoder/manifest.json"]
-    paths["target_release"] = paths["target_release"] / release_name
-    expected["target_release_weights"] = checkpoints["target_release"]["files"][release_name]["sha256"]
+    if release_slice is None:
+        paths["target_release"] = paths["target_release"] / release_name
+        expected["target_release_weights"] = checkpoints["target_release"]["files"][release_name]["sha256"]
+    else:
+        release_expected, checkpoints['target_release'] = _resolve_release_slice(release_slice, target)
+        expected.update(release_expected)
+        paths['target_release'] = target
+        sources['target_release'] = 'target_slice'
     manifest = json.loads((paths["bundle"] / "decoder/manifest.json").read_text())
     if manifest.get("source") != "target_slice" or not manifest.get("target_files"):
         raise ValueError("hybrid placeholder lacks target_slice tail pins")
@@ -1219,6 +1249,13 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
     """
     host = no_host_values() if host is None else host
     artifacts = _manifest_artifacts() if artifacts is None else artifacts
+    release_slice = recipe.get('target_release_slice')
+    if release_slice is not None:
+        # The drafter's publication may also list the now-unused release file.
+        key = recipe['drafter_artifact']
+        artifacts = {**artifacts, key: {**artifacts[key], 'files': [
+            row for row in artifacts[key]['files']
+            if _identifier(row['destination_path'], 'drafter file') != 'target_release_weights.safetensors']}}
     target_value, target_source = host_variable(environment_name('hardware', 'hardware_settings.target_model_path'), host)
     target = Path(target_value)
     sources = {"target": target_source}
@@ -1271,7 +1308,9 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
             "adapter": None, "drafter": None, "bundle": None,
             "target": target, "compile_pin": None, "blockhead": checkpoint,
         }, {f"blockhead/{name}": sha for name, sha in declared.items()}, None, sources
-    generated = artifacts.get(recipe['bundle_artifact'], {}).get('kind') == 'generated'
+    bundle_record = artifacts.get(recipe['bundle_artifact'], {})
+    generated = (bundle_record.get('kind') == 'generated'
+                 or bundle_record.get('serving_layout') == 'target_slice')
     if (bundle_override is None) != (bundle_pin is None):
         raise ValueError('BUNDLE_PIN_REQUIRED: override and pin must be paired')
     threshold_only = generated or (isinstance(bundle_pin, dict)
@@ -1285,15 +1324,20 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
         return _apply_head_thresholds(resolved, recipe, bundle_override, bundle_pin)
     drafter_key = recipe["drafter_artifact"]
     adapter_key = recipe.get("adapter_artifact", "adapter_head")
-    release_key = recipe["target_release_artifact"]
-    for key in (adapter_key, drafter_key, release_key, recipe["bundle_artifact"]):
+    release_key = recipe.get("target_release_artifact")
+    for key in (adapter_key, drafter_key, recipe["bundle_artifact"],
+                *((release_key,) if release_slice is None else ())):
         if key not in artifacts:
             raise ValueError(f"recipe names absent artifacts/manifest.json key {key!r}")
     adapter, sources["adapter"] = artifact_directory(adapter_key, artifacts, host, artifacts_dir)
     drafter, sources["drafter"] = artifact_directory(
         drafter_key, artifacts, host, artifacts_dir)
-    release, sources["target_release"] = artifact_directory(
-        release_key, artifacts, host, artifacts_dir)
+    if release_slice is None:
+        release, sources["target_release"] = artifact_directory(
+            release_key, artifacts, host, artifacts_dir)
+    else:
+        release = target
+        sources['target_release'] = 'target_slice'
     declared_bundle, sources["bundle"] = artifact_directory(
         recipe["bundle_artifact"], artifacts, host, artifacts_dir)
     # The recipe may serve a sibling operating point of the published bundle (same layout,
@@ -1311,12 +1355,14 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
             compile_key, artifacts, host, artifacts_dir)
     paths = {
         "adapter": adapter, "drafter": drafter, "bundle": bundle,
-        "target": target, "target_release": release / "target_release_weights.safetensors",
+        "target": target, "target_release": (release / "target_release_weights.safetensors"
+                                             if release_slice is None else target),
         "compile_pin": compile_pin, "blockhead": None,
     }
     assert_artifact_present(adapter_key, artifacts, adapter, sources["adapter"])
     assert_artifact_present(drafter_key, artifacts, drafter, sources["drafter"])
-    assert_artifact_present(release_key, artifacts, release, sources["target_release"])
+    if release_slice is None:
+        assert_artifact_present(release_key, artifacts, release, sources["target_release"])
     legacy_kpred = recipe.get("environment", {}).get(environment_name('engine', 'engine_settings.legacy_kpred_forward'), "0") == "1"
     bundle_key = recipe["bundle_artifact"]
     bundle_artifact = artifacts[bundle_key]
@@ -1374,8 +1420,14 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
     drafter_files = _artifact_files(artifacts[drafter_key])
     for name in ("config.json", "dflash.py", "model.safetensors"):
         expected[f"drafter/{name}"] = drafter_files[name]
-    release_files = _artifact_files(artifacts[release_key])
-    expected["target_release_weights"] = release_files["target_release_weights.safetensors"]
+    if release_slice is None:
+        release_files = _artifact_files(artifacts[release_key])
+        expected["target_release_weights"] = release_files["target_release_weights.safetensors"]
+        release_pin = {'directory': str(release), 'files': {
+            name: {'sha256': digest} for name, digest in release_files.items()}}
+    else:
+        release_expected, release_pin = _resolve_release_slice(release_slice, target)
+        expected.update(release_expected)
     bundle_files = _artifact_files(bundle_artifact)
     decoder_source = None
     if manifest_sha := bundle_files.get("decoder/manifest.json"):
@@ -1424,8 +1476,7 @@ def _resolve_artifacts(recipe, host=None, artifacts_dir=DEFAULT_ARTIFACTS_DIR, a
                 artifacts[adapter_key]).items()}},
         "drafter_checkpoint": {"directory": str(drafter), "files": {
             name: {"sha256": value} for name, value in drafter_files.items()}},
-        "target_release": {"directory": str(release), "files": {
-            name: {"sha256": value} for name, value in release_files.items()}},
+        "target_release": release_pin,
         "served_heads": {"directory": str(bundle), "files": {
             name: {"sha256": recipe["thresholds_sha256"] if name == "thresholds.json" else value}
             for name, value in bundle_files.items()}},
@@ -2744,7 +2795,16 @@ def load_plan_engine(plan, load, model, *, environment=None, **kwargs):
     if environment is not None:
         run_config, engine = child_run_config(plan, environment,
                                              enforce_eager=kwargs.get('enforce_eager', False))
-        kwargs['run_config'] = kwargs.get('run_config') or run_config
+        given = kwargs.get('run_config')
+        if config_read is not None and given is not None:
+            # A record rebuilt from the environment lacks the config read's batch overlay (C buckets,
+            # max_num_seqs); take those keys from the plan record and keep everything else.
+            from dataclasses import replace
+            from jetspec.engines.jetspec_plus_plus.run_config import FrozenMapping
+            batch = {key: run_config.engine[key] for key in run_config.batch_capacity
+                     if key in run_config.engine}
+            given = replace(given, engine=FrozenMapping.from_mapping({**given.engine, **batch}))
+        kwargs['run_config'] = given or run_config
         kwargs['engine'] = kwargs.get('engine') or engine
     if model_entry is not None and 'thresholds_sha256' in model_entry:
         import jetspec.engines.jetspec_plus_plus.jetspec.run_manifest as run_manifest

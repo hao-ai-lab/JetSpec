@@ -301,7 +301,8 @@ def _decoder_gate_up(mlp, source):
     _prepare_decoder_gate_up(mlp)
     weight, bias, width = mlp._decoder_gate_up_packed
     precision = getattr(mlp.gate_proj, 'precision', None)
-    project = torch.nn.functional.linear if precision is None else precision.linear
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import packed_draft_linear
+    project = packed_draft_linear if precision is None else precision.linear
     output = project(source.reshape(-1, source.shape[-1]), weight, bias)
     return output.view(*source.shape[:-1], -1).split(width, dim=-1)
 
@@ -409,14 +410,23 @@ def decoder_lean_project(layer, fused, hidden, pending, rope):
 
 def _decoder_packed_project(attn, fused, source, rope, *, prefix=False):
     """One packed GEMM; CUDA postprocessing reads the split's row stride."""
+    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     weight, bias, widths = (attn._decoder_prefix_kv if prefix else attn._decoder_qkv)
     projection = attn.k_proj if prefix else attn.q_proj
     precision = getattr(projection, 'precision', None)
-    project = torch.nn.functional.linear if precision is None else precision.linear
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import packed_draft_linear
+    project = packed_draft_linear if precision is None else precision.linear
     parts = project(source, weight, bias).split(widths, dim=-1)
     cos, sin = rope
     head_dim = attn.head_dim
     kv_heads = attn.k_proj.out_features // head_dim
+    if (not prefix and source.is_cuda and source.dtype == torch.bfloat16
+            and source.shape[0] == 1 and kernel_enabled('draft_fuse_t12', '1')):
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder_t12 import qkv_postprocess
+        return qkv_postprocess(fused, *parts, attn.q_norm.weight, attn.k_norm.weight,
+                               cos, sin, attn.q_norm.variance_epsilon,
+                               attn.k_norm.variance_epsilon,
+                               attn.q_proj.out_features // head_dim, kv_heads, head_dim)
     if prefix:
         query, projected_key, projected_value = None, *parts
     else:
@@ -477,6 +487,14 @@ def decoder_lean_attention(layer, fused, query, key, value, mask, *, length=None
     key, value = repeat_kv(key, groups), repeat_kv(value, groups)
     return fused.efficient_attention(query, key, value, mask[:, :, :, :key.shape[-2]],
                                      attn.scaling).transpose(1, 2).contiguous()
+
+
+def decoder_merged_attention(layer, query, key, value, length, count, prefix):
+    """Prefix rows (count rule) and window rows (key <= length + w) in one
+    length attention; the result is already [1, tokens, heads, dim]."""
+    from jetspec.engines.jetspec_plus_plus.kernels.len_attention import attend_merged
+    return attend_merged(query, key, value, length, count, layer.self_attn.scaling,
+                         prefix=prefix)
 
 
 def decoder_lean_finish(layer, fused, hidden, attended):
@@ -1438,6 +1456,8 @@ class AnchorDecoder(MethodAnchorDecoder):
         from jetspec.engines.jetspec_plus_plus.models.target_linear import round_nvfp4_weights
         for module, role in ((layers, 'draft'), (prefix_layers, 'draft'), (lm_head, 'lm_head')):
             round_nvfp4_weights(module, role)
+        from jetspec.engines.jetspec_plus_plus.models.draft_vocab import configure_draft_vocab
+        configure_draft_vocab(lm_head, run_config)
         if setting(run_config, 'engine', 'engine_settings.heads_fast', None) == '1':
             from jetspec.engines.jetspec_plus_plus.models.fast import read_thresholds
             read_thresholds(run_config)
@@ -1741,7 +1761,10 @@ class AnchorDecoder(MethodAnchorDecoder):
     def _ensure_warmup_state(self, sequence):
         if hasattr(sequence, "hybrid_recurrent"):
             return
-        if getattr(sequence, "_jetspec_seq_id", None) != -1:
+        # Warm-up sequences carry a negative id (-1 for N=1, others for the C>1 prewarm); a live
+        # sequence, tagged or not, must arrive with the target's committed state.
+        seq_id = getattr(sequence, "_jetspec_seq_id", None)
+        if seq_id is None or seq_id >= 0:
             raise ValueError("live hybrid admission lacks target committed state")
         parameter = next(self.layers.parameters())
         layout = self.layout
@@ -1749,7 +1772,9 @@ class AnchorDecoder(MethodAnchorDecoder):
             layout.recurrent_shape, device=parameter.device, dtype=torch.float32)
         sequence.hybrid_conv = torch.zeros(
             layout.conv_shape, device=parameter.device, dtype=parameter.dtype)
-        shape = (sequence.taps.shape[0], layout.kv_heads, layout.attention_dim)
+        # The C>1 prewarm grows its prefixes in place, so it takes the decoder capacity.
+        rows = sequence.taps.shape[0] if seq_id == -1 else self.capacity
+        shape = (rows, layout.kv_heads, layout.attention_dim)
         sequence.hybrid_prefix_key = torch.zeros(shape, device=parameter.device,
                                                  dtype=parameter.dtype)
         sequence.hybrid_prefix_value = torch.zeros_like(sequence.hybrid_prefix_key)
@@ -1912,6 +1937,8 @@ class AnchorDecoder(MethodAnchorDecoder):
         return draft_width(run_config=run_config) + 1
 
     def _chain_lm_head(self, decoded):
+        if getattr(self.lm_head.weight, '_draft_vocab', None) is not None:
+            return self.lm_head(decoded)
         if self._lm_head_kn is not None:
             precision = getattr(self.lm_head, 'precision', None)
             if precision is not None and precision.weight_format.mode != 'bf16':
@@ -1937,10 +1964,15 @@ class AnchorDecoder(MethodAnchorDecoder):
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         self._check_prefix_merge(state, front)
         lanes = prefix_hidden.shape[1]
-        combined_rope = tuple(torch.cat((p, w), dim=1)
-                              for p, w in zip(rope, (state['cos'], state['sin'])))
-        source = torch.cat((prefix_hidden, state['hidden']), dim=1)
+        if kernel_enabled('draft_fuse_t12', '1') and 'combined_hidden' in state:
+            combined_rope = state['combined_cos'], state['combined_sin']
+            source = state['combined_hidden']
+        else:
+            combined_rope = tuple(torch.cat((p, w), dim=1)
+                                  for p, w in zip(rope, (state['cos'], state['sin'])))
+            source = torch.cat((prefix_hidden, state['hidden']), dim=1)
         pending = None
+        merged = length.is_cuda and kernel_enabled('draft_fuse_t3', '1')
         for index, layer in enumerate(self.layers):
             stored_key, stored_value = state['kv'][layer.self_attn.layer_idx]
             direct = kernel_enabled('decoder_slot_write', '1')
@@ -1954,6 +1986,18 @@ class AnchorDecoder(MethodAnchorDecoder):
                     layer, fused, source if pending is None else None, pending, combined_rope)
                 stored_key.index_copy_(2, slots, key[..., :lanes, :])
                 stored_value.index_copy_(2, slots, value[..., :lanes, :])
+            if merged:
+                if not direct:
+                    stored_key.index_copy_(2, state['slots'], key[..., lanes:, :])
+                    stored_value.index_copy_(2, state['slots'], value[..., lanes:, :])
+                attended = decoder_merged_attention(
+                    layer, query if index == 0 else query[..., lanes:, :],
+                    stored_key[..., :front.decoder_bucket, :],
+                    stored_value[..., :front.decoder_bucket, :], length, count,
+                    lanes if index == 0 else 0)
+                pending = decoder_lean_finish(
+                    layer, fused, hidden if index == 0 else hidden[:, lanes:], attended)
+                continue
             if index == 0:
                 prefix_attended = decoder_lean_attention(
                     layer, fused, query[..., :lanes, :],
@@ -2019,6 +2063,14 @@ class AnchorDecoder(MethodAnchorDecoder):
                          prefix_masks={},
                          prefix_cos=like.new_empty(1, prefix_lanes, head_dim),
                          prefix_sin=like.new_empty(1, prefix_lanes, head_dim))
+            if kernel_enabled('draft_fuse_t12', '1') and kernel_enabled('decoder_prefix_merge', '1'):
+                state['combined_hidden'] = like.new_zeros(1, prefix_lanes + like.shape[1],
+                                                         self.hidden_size)
+                for name in ('cos', 'sin'):
+                    combined = state['combined_' + name] = like.new_zeros(
+                        1, prefix_lanes + like.shape[1], head_dim)
+                    state['prefix_' + name], state[name] = combined[:, :prefix_lanes], combined[:, prefix_lanes:]
+                state['hidden'] = state['combined_hidden'][:, prefix_lanes:]
         if bucketed:
             states[bucket] = state
         else:
@@ -2121,12 +2173,26 @@ class AnchorDecoder(MethodAnchorDecoder):
                  if setting(self.run_config, 'engine', 'engine_settings.chain_decoder_key_bucket', '0') == '1'
                  else self._window_graph_state)
         fused_glue = kernel_enabled('decoder_glue_fused', '1')
+        combined_glue = (fused_glue and kernel_enabled('draft_fuse_t12', '1')
+                         and kernel_enabled('decoder_prefix_merge', '1'))
         if fused_glue:
             from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import prefix_glue
             table = self._rope_table
             if table is None or not all(value.is_contiguous() for value in table):
                 raise RuntimeError('decoder glue requires a prewarmed contiguous rotary table')
-            prefix_glue(rp, tokens.pending_draft_ids, *table,
+            if combined_glue:
+                from jetspec.engines.jetspec_plus_plus.kernels.decoder_t12 import combined_glue as stage_combined
+                stage_combined(
+                    rp, tokens.pending_draft_ids, prefix_hidden, front.staged_hidden, *table,
+                    state['combined_hidden'], state['combined_cos'], state['combined_sin'],
+                    state['prefix_masks'][front.decoder_bucket], state['masks'][front.decoder_bucket],
+                    state['prefix_positions'], state['prefix_slots'], state['slots'], front.rejected_ids,
+                    length_offset=Offset.DEC_LEN, count_offset=Offset.C1_COUNT,
+                    correction_offset=Offset.CORRECTION, miss_offset=Offset.AFTER_MISS,
+                    wire=setting(self.run_config, 'engine', 'engine_settings.decoder_frame', None) == 'wire',
+                    zero_miss=setting(self.run_config, 'method', 'method_settings.kset_after_miss', None) == 'zero')
+            else:
+                prefix_glue(rp, tokens.pending_draft_ids, *table,
                         state['prefix_masks'][front.decoder_bucket], state['prefix_positions'],
                         state['prefix_slots'], state['prefix_cos'], state['prefix_sin'],
                         front.rejected_ids, length_offset=Offset.DEC_LEN,
@@ -2155,7 +2221,9 @@ class AnchorDecoder(MethodAnchorDecoder):
             fused_window = (glue_level == 2 and rp.is_cuda and available()
                             and self._rope_table is not None
                             and all(table.is_contiguous() for table in self._rope_table))
-            if fused_glue:
+            if combined_glue:
+                pass  # Both sets of inputs already share the combined staging launch.
+            elif fused_glue:
                 from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import window_glue
                 window_glue(length, front.staged_hidden,
                             *self._rope_table, state['hidden'],
@@ -2376,7 +2444,9 @@ class AnchorDecoder(MethodAnchorDecoder):
                         attn_mask=mask, scale=layer.self_attn.scaling).transpose(1, 2)
                     current = decoder_window_finish(layer, current, attended)
                 decoded = self.norm(current)
-        decoded = decoded[0, 4 + lanes:]
+        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        trimmed = state.get('glue') and kernel_enabled('draft_fuse_t12', '1')
+        decoded = decoded[0] if trimmed else decoded[0, 4 + lanes:]
         if hidden.is_cuda and compact_cuda:
             from jetspec.engines.jetspec_plus_plus.jetspec.chain.refresh_swap import compact_head
             # This kernel consumes native [N,K] tiles. Seg A's [K,N] cuBLAS layout

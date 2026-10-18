@@ -63,6 +63,8 @@ def announce_chain_command(store, command: str, *, round_id=None, L=None,
         _local_command_next += 1
     else:
         command_id = int(store.add(CHAIN_COMMAND_COUNTER, 1)) - 1
+    if setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1':
+        print(f"MAILBOX_ID side=verify event=command_publish id={command_id} command={wire.decode('ascii')}", flush=True)
     store.set(f"{CHAIN_COMMAND_KEY}{command_id}", wire)
     return command_id
 

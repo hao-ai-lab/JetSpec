@@ -29,7 +29,8 @@ def reference_epilogue(logits, tile=VOCAB_TILE):
         part = values[:, start:start + tile]
         maximum, local = part.max(-1)
         maxima.append(maximum)
-        sums.append((part - maximum[:, None]).exp().sum(-1))
+        safe_maximum = torch.where(maximum == float('-inf'), 0.0, maximum)
+        sums.append((part - safe_maximum[:, None]).exp().sum(-1))
         indices.append(local + start)
     maxima = torch.stack(maxima, -1)
     sums = torch.stack(sums, -1)
@@ -48,25 +49,35 @@ if triton is not None:
               M: tl.constexpr, V: tl.constexpr, K: tl.constexpr,
               HS0: tl.constexpr, HS1: tl.constexpr,
               WS0: tl.constexpr, WS1: tl.constexpr,
-              C: tl.constexpr, BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr):
+              C: tl.constexpr, BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
+              FROM_LOGITS: tl.constexpr = False, TOKEN_IDS=None,
+              REDUCED: tl.constexpr = False):
         rows = tl.program_id(0) * BM + tl.arange(0, BM)
         cols = tl.program_id(1) * BN + tl.arange(0, BN)
-        depth = tl.arange(0, BK)
-        acc = tl.full((BM, BN), 0, tl.float32)
-        for block in range(tl.cdiv(K, BK)):
-            k = block * BK + depth
-            h = tl.load(H + rows[:, None] * HS0 + k[None, :] * HS1,
-                        (rows[:, None] < M) & (k[None, :] < K), other=0)
-            w = tl.load(W + cols[:, None] * WS0 + k[None, :] * WS1,
-                        (cols[:, None] < V) & (k[None, :] < K), other=0)
-            acc = tl.dot(h, tl.trans(w), acc)
-        # nn.Linear returns BF16 logits. Round before argmax and fp32 softmax.
-        value = acc.to(tl.bfloat16).to(tl.float32)
+        if FROM_LOGITS:
+            value = tl.load(H + rows[:, None] * V + cols[None, :],
+                            (rows[:, None] < M) & (cols[None, :] < V),
+                            other=-float('inf')).to(tl.float32)
+        else:
+            depth = tl.arange(0, BK)
+            acc = tl.full((BM, BN), 0, tl.float32)
+            for block in range(tl.cdiv(K, BK)):
+                k = block * BK + depth
+                h = tl.load(H + rows[:, None] * HS0 + k[None, :] * HS1,
+                            (rows[:, None] < M) & (k[None, :] < K), other=0)
+                w = tl.load(W + cols[:, None] * WS0 + k[None, :] * WS1,
+                            (cols[:, None] < V) & (k[None, :] < K), other=0)
+                acc = tl.dot(h, tl.trans(w), acc)
+            # nn.Linear returns BF16 logits. Round before argmax and fp32 softmax.
+            value = acc.to(tl.bfloat16).to(tl.float32)
         value = tl.where(cols[None, :] < V, value, -float('inf'))
         maximum = tl.max(value, 1)
-        total = tl.sum(tl.exp(value - maximum[:, None]), 1)
+        safe_maximum = tl.where(maximum == -float('inf'), 0.0, maximum)
+        total = tl.sum(tl.exp(value - safe_maximum[:, None]), 1)
         index = tl.min(tl.where(value == maximum[:, None], cols[None, :],
                                 2147483647), 1)
+        if REDUCED:
+            index = tl.load(TOKEN_IDS + index, index < V, other=2147483647).to(tl.int32)
         out = rows * C + tl.program_id(1)
         tl.store(PMAX + out, maximum, rows < M)
         tl.store(PSUM + out, total, rows < M)
@@ -100,21 +111,28 @@ def allocate_partials(rows, lanes, vocab, device):
 
 
 def head_partials(hidden, weight, partials):
-    """Write only three scalars per row and vocabulary tile, never logits."""
+    """Write top-1 partials, using warmed W4A8 scratch logits under the head mode."""
     if triton is None or hidden.device.type != 'cuda':
         raise RuntimeError('fused lm_head requires CUDA Triton')
     if hidden.dtype != torch.bfloat16 or weight.dtype != torch.bfloat16:
         raise ValueError('fused lm_head requires BF16 hidden states and weight')
     rows, lanes, width = hidden.shape
+    token_ids = None
+    reduced = getattr(weight, '_draft_vocab', None)
+    if reduced is not None:
+        token_ids, weight = reduced
     vocab, head_width = weight.shape
     if width != head_width or partials[0].shape != (rows, lanes, (vocab + VOCAB_TILE - 1) // VOCAB_TILE):
         raise ValueError('fused lm_head shape mismatch')
     flat = hidden.reshape(-1, width)
     chunks = partials[0].shape[-1]
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import w4a8_head_logits
+    logits = w4a8_head_logits(hidden, weight)
     _head[(triton.cdiv(rows * lanes, 64), chunks)](
-        flat, weight, *partials, rows * lanes, vocab, width,
+        flat if logits is None else logits, weight, *partials, rows * lanes, vocab, width,
         *flat.stride(), *weight.stride(), chunks, 64, VOCAB_TILE, 64,
-        num_warps=4, num_stages=4)
+        FROM_LOGITS=logits is not None, TOKEN_IDS=token_ids,
+        REDUCED=reduced is not None, num_warps=4, num_stages=4)
 
 
 def head_top1(hidden, weight, partials, token, p_top1):
@@ -142,7 +160,9 @@ def chain_pass(hidden, weight, ids, keys, active, outputs, previous_top1,
         *(pins if pins is not None else (keys, keys)),
         lanes, chunks, triton.next_power_of_2(chunks), index, save_previous,
         False, int(Offset.L), pins is not None,
-        pins is not None and pins[0].ndim == 2, num_warps=16)
+        pins is not None and pins[0].ndim == 2,
+        **(outputs.get('_t14_publication', {}) if index == 1 else {}),
+        **(outputs.get('_t17_refresh', {}) if index == 0 else {}), num_warps=16)
 
 
 def optimized_pass(hidden, input_tokens, pinned_first=None, pinned_second=None, pins=None,
@@ -153,11 +173,17 @@ def optimized_pass(hidden, input_tokens, pinned_first=None, pinned_second=None, 
                                         pins, p_top1=p_top1, partials=partials)
     if (triton is None or not hidden.is_cuda or p_top1 is not None
             or hidden.dtype != torch.bfloat16 or head_weight.dtype != torch.bfloat16):
+        if getattr(head_weight, '_draft_vocab', None) is not None:
+            from jetspec.engines.jetspec_plus_plus.models.target_linear import draft_linear
+            hidden = draft_linear(hidden, head_weight)
+            head_weight = None
         return reference('jacobi_pass')(hidden, input_tokens, pinned_first, pinned_second,
                                         pins, p_top1=p_top1, head_weight=head_weight)
     rows, lanes = input_tokens.shape
     if partials is None:
-        partials = allocate_partials(rows, lanes, head_weight.shape[0], hidden.device)
+        reduced = getattr(head_weight, '_draft_vocab', None)
+        vocab = head_weight.shape[0] if reduced is None else reduced[1].shape[0]
+        partials = allocate_partials(rows, lanes, vocab, hidden.device)
     tokens = torch.empty_like(input_tokens)
     probabilities = torch.empty_like(input_tokens, dtype=torch.float32)
     head_top1(hidden, head_weight, partials, tokens, probabilities)

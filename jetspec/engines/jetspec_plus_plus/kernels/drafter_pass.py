@@ -36,6 +36,9 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
     ids.copy_(values.tokens)
     if save_previous:
         previous_top1.copy_(values.p_top1[:, 1:])
+    if index == 0 and '_t17_refresh' in outputs:
+        from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t17 import reference_refresh
+        reference_refresh(values.p_top1, active, keys, rp[Offset.L], outputs['_t17_refresh'])
     source = torch.cat((tokens.committed_ids.index_select(0, rp[Offset.L].reshape(1)),
                         tokens.pending_draft_ids, tokens.pending_draft_ids[-1:]))
     preceding = source.index_select(0, keys[:, 0].clamp(0, ids.shape[1]))
@@ -45,6 +48,8 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
 
 
 if triton is not None:
+    from jetspec.engines.jetspec_plus_plus.kernels.chain_publish import _finish_publish
+    from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t17 import _refresh
     @triton.jit
     def _partials(LOGITS, PMAX, PSUM, PIDX, V: tl.constexpr,
                   L: tl.constexpr, C: tl.constexpr, S0: tl.constexpr,
@@ -55,7 +60,8 @@ if triton is not None:
         value = tl.load(LOGITS + (slot // L) * S0 + (slot % L) * S1 + x * S2,
                         x < V, other=-float('inf')).to(tl.float32)
         maximum = tl.max(value, 0)
-        total = tl.sum(tl.exp(value - maximum), 0)
+        safe_maximum = tl.where(maximum == -float('inf'), 0.0, maximum)
+        total = tl.sum(tl.exp(value - safe_maximum), 0)
         index = tl.min(tl.where(value == maximum, x, 2147483647), 0)
         out = slot * C + chunk
         tl.store(PMAX + out, maximum)
@@ -70,8 +76,18 @@ if triton is not None:
                 L: tl.constexpr, C: tl.constexpr, PC: tl.constexpr,
                 PASS: tl.constexpr, SAVE_PREV: tl.constexpr,
                 HAS_PIN2: tl.constexpr, RP_L: tl.constexpr,
-                HAS_PIN: tl.constexpr, DENSE_PIN: tl.constexpr = False):
-        row = tl.program_id(0)
+                HAS_PIN: tl.constexpr, DENSE_PIN: tl.constexpr = False,
+                PUBLISH: tl.constexpr = False, Packet=None, Published=None,
+                Wire=None, Scores=None, WirePasses=None, RingRows=None, RingKeys=None,
+                RingTop1=None, RingPasses=None, RingRounds=None,
+                ROWS: tl.constexpr = 0, CAP: tl.constexpr = 0, RING: tl.constexpr = 0,
+                WORDS: tl.constexpr = 0, BLOCK_OFF: tl.constexpr = 0,
+                KEY_OFF: tl.constexpr = 0, PAD_BLOCK: tl.constexpr = 1,
+                ROW=0, USE_ROW: tl.constexpr = False,
+                REFRESH: tl.constexpr = False, RefreshChained=None, RefreshKhat=None,
+                RefreshCounts=None, RefreshTails=None, RefreshStart=None,
+                REFRESH_WINDOW: tl.constexpr = 0, REFRESH_THRESHOLD: tl.constexpr = 0.):
+        row = ROW if USE_ROW else tl.program_id(0)
         lane = tl.arange(0, L)
         chunk = tl.arange(0, PC)
         offsets = row * L * C + lane[:, None] * C + chunk[None, :]
@@ -114,6 +130,10 @@ if triton is not None:
         tl.store(IDS + row * L + lane, token)
         if SAVE_PREV:
             tl.store(PREV_TOP1 + row * (L - 1) + lane - 1, top1, lane > 0)
+        if REFRESH:
+            _refresh(top1, lane, row, ACTIVE, KEYS, RP, RefreshChained,
+                     RefreshKhat, RefreshCounts, RefreshTails, RefreshStart,
+                     L, RP_L, REFRESH_WINDOW, REFRESH_THRESHOLD)
         passes = tl.load(PASSES + row) if PASS else 0
         passes = tl.where(was_finished, passes, PASS + 1)
         finished = was_finished | fixed
@@ -128,15 +148,25 @@ if triton is not None:
         tl.store(META + row * 4 + 1, tl.sum(tl.where(lane == 0, selected_token, 0), 0))
         tl.store(META + row * 4 + 2, passes)
         tl.store(META + row * 4 + 3, finished.to(tl.int64))
+        if PUBLISH:
+            _finish_publish(row, selected_token, selected_top1, passes, Packet, KEYS,
+                FINAL_TOKENS, FINAL_TOP1, Published, Wire, Scores, WirePasses,
+                RingRows, RingKeys, RingTop1, RingPasses, RingRounds,
+                ROWS, CAP, RING, L, WORDS, BLOCK_OFF, KEY_OFF, PAD_BLOCK)
 
 
 def allocate_partials(rows, lanes, vocab, device, *, block=2048):
     """Allocate outside CUDA graph capture, once per fixed row bucket."""
     chunks = triton.cdiv(vocab, block) if triton is not None else (vocab + block - 1) // block
     shape = (rows, lanes, chunks)
-    return (torch.empty(shape, device=device, dtype=torch.float32),
-            torch.empty(shape, device=device, dtype=torch.float32),
-            torch.empty(shape, device=device, dtype=torch.int32))
+    partials = (torch.empty(shape, device=device, dtype=torch.float32),
+                torch.empty(shape, device=device, dtype=torch.float32),
+                torch.empty(shape, device=device, dtype=torch.int32))
+    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    if kernel_enabled('draft_fuse_t6'):
+        from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t6 import PassPartials
+        return PassPartials(partials, torch.zeros(rows, device=device, dtype=torch.int32))
+    return partials
 
 
 def chain_pass(logits, ids, keys, active, outputs, previous_top1, tokens, rp,
@@ -147,6 +177,12 @@ def chain_pass(logits, ids, keys, active, outputs, previous_top1, tokens, rp,
     as in ``reference_pass``; default None."""
     if triton is None:
         raise RuntimeError('JETSPEC_REFINE_K3 on CUDA requires Triton')
+    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    if kernel_enabled('draft_fuse_t6'):
+        from jetspec.engines.jetspec_plus_plus.kernels.draft_fuse_t6 import chain_pass_into
+        return chain_pass_into(logits, ids, keys, active, outputs, previous_top1,
+                               tokens, rp, partials, index, save_previous,
+                               pinned_second, pins)
     rows, lanes, vocab = logits.shape
     chunks = partials[0].shape[-1]
     block = triton.cdiv(vocab, chunks)
@@ -162,7 +198,9 @@ def chain_pass(logits, ids, keys, active, outputs, previous_top1, tokens, rp,
         *(pins if pins is not None else (keys, keys)),
         lanes, chunks, triton.next_power_of_2(chunks), index, save_previous,
         pinned_second is not None, int(Offset.L), pins is not None,
-        pins is not None and pins[0].ndim == 2, num_warps=4)
+        pins is not None and pins[0].ndim == 2,
+        **(outputs.get('_t14_publication', {}) if index == 1 else {}),
+        **(outputs.get('_t17_refresh', {}) if index == 0 else {}), num_warps=4)
 
 
 def optimized_pass(logits, input_tokens, pinned_first=None, pinned_second=None, pins=None,

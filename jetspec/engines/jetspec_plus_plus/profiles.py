@@ -63,6 +63,9 @@ def legacy_names(kernels):
 def _kernel_switch(name):
     if any(token in name for token in ('check', 'audit', 'profile', 'dump', 'timing')):
         return False
+    # Opt-in verify cuts are engine settings read beside the profile, never members.
+    if name.startswith('verify_cut_'):
+        return False
     return (any(token in name for token in (
         'fused', 'fuse', 'gluon', 'lean', 'packed', 'attn', 'lmhead_kn',
         'gemm_tune', 'qkv', 'k3', 'rope', 'kvnorm', 'slot_write', 'gqa_view',
@@ -277,6 +280,29 @@ KERNEL_QUALIFICATION_EXCEPTIONS = MappingProxyType({
     'verify_post_lean': 'not qualified with recurrent target state',
     'verify_select_lean': 'not qualified with recurrent target state',
 })
+
+# verify_cut_lean27b qualifies these verify paths bitwise with recurrent target state at
+# the 27B attention shape. verify_plan_reuse is an engine setting, not a member. The
+# verify_plan_lean exception stays: it also needs verify_stage_host and verify_stage_blob.
+# verify_plan_reuse is not qualified: the D256 FlashInfer 0.6.18 wrapper is JIT-built, and the
+# reuse guard refuses JIT (B200 run 2026-10-17).
+VERIFY_CUT_LEAN27B = frozenset(('verify_outcome_fused', 'verify_post_lean'))
+
+
+def verify_cut_lean27b(name, owner, runner):
+    """Opt-in verify_cut_lean27b: name is qualified for this recurrent target runner."""
+    from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+    if (name not in VERIFY_CUT_LEAN27B
+            or setting(owner, 'engine.engine_settings.verify_cut_lean27b', '0') != '1'):
+        return False
+    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.models.state import has_state
+    if current_engine().kind != 'fast' or not has_state(runner):
+        return False
+    attention = runner.model_spec.attention
+    return (attention.head_dim == 256 and attention.rotary_dim == 64
+            and attention.output_gate and attention.norm_offset == 1
+            and attention.norm_round == 'after_weight')
 
 # Existing wrappers retain their architecture fallback (for example attn_sm100
 # falls back on sm80). Membership does not assert native Gluon availability.

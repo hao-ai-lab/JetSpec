@@ -111,6 +111,9 @@ def attend(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
         raise ValueError('unsupported chain length attention layout')
     heads, rows, dim = q.shape[1:]
     keys = k.shape[-2]
+    from jetspec.engines.jetspec_plus_plus.kernels.draft_splitkv import enabled, attend as split_attend
+    if enabled(q):
+        return split_attend(q, k, v, scale, mode=mode, length=length, count=count)
     # Bucket size bounds the split geometry; each split reads the live device
     # length and skips blocks outside the exact prefix on replay.
     splits = (min(4, max(1, triton.cdiv(keys, 256))))
@@ -130,6 +133,111 @@ def attend(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
         num_warps=4, enable_fp_fusion=False)
     _merge[(heads, rows)](partial, maximum, denominator, output,
                           output.stride(1), output.stride(2), output.stride(3),
+                          heads, rows, dim, splits, triton.next_power_of_2(splits),
+                          num_warps=4, enable_fp_fusion=False)
+    return output
+
+
+@triton.jit
+def _merged_partials(Q, K, V, LENGTH, COUNT, P, M, S,
+                     QH: tl.constexpr, QR: tl.constexpr, QD: tl.constexpr,
+                     KH: tl.constexpr, KR: tl.constexpr, KD: tl.constexpr,
+                     VH: tl.constexpr, VR: tl.constexpr, VD: tl.constexpr,
+                     HEADS: tl.constexpr, GROUPS: tl.constexpr,
+                     ROWS: tl.constexpr, PREFIX: tl.constexpr,
+                     KEYS: tl.constexpr, DIM: tl.constexpr,
+                     SCALE: tl.constexpr, CHUNK: tl.constexpr, BK: tl.constexpr):
+    head = tl.program_id(0)
+    split = tl.program_id(1)
+    tile = tl.program_id(2)
+    kv_head = head // GROUPS
+    row = tile * 16 + tl.arange(0, 16)
+    dim = tl.arange(0, DIM)
+    key_lane = tl.arange(0, BK)
+    length = tl.load(LENGTH)
+    count = tl.load(COUNT)
+    # Window row w attends key <= length + w; the tile's last window row bounds it.
+    window_end = tl.minimum((tile + 1) * 16, ROWS) - PREFIX
+    limit = length + tl.maximum(window_end, 0)
+    q = tl.load(Q + head * QH + row[:, None] * QR + dim[None, :] * QD,
+                (row[:, None] < ROWS), other=0)
+    maximum = tl.full((16,), float('-inf'), tl.float32)
+    denominator = tl.full((16,), 0, tl.float32)
+    numerator = tl.full((16, DIM), 0, tl.float32)
+    for start in range(split * CHUNK, tl.minimum((split + 1) * CHUNK, KEYS), BK):
+        if start < limit:
+            key = start + key_lane
+            k = tl.load(K + kv_head * KH + key[None, :] * KR + dim[:, None] * KD,
+                        (key[None, :] < KEYS), other=0)
+            v = tl.load(V + kv_head * VH + key[:, None] * VR + dim[None, :] * VD,
+                        (key[:, None] < KEYS), other=0)
+            score = tl.dot(q, k) * SCALE
+            prefix = tl.where(row[:, None] < count,
+                              key[None, :] < length - count + row[:, None] + 1,
+                              key[None, :] == 0)
+            window = key[None, :] < length + row[:, None] - PREFIX + 1
+            valid = tl.where(row[:, None] < PREFIX, prefix, window)
+            score = tl.where(valid & (key[None, :] < KEYS) &
+                             (row[:, None] < ROWS), score, float('-inf'))
+            block_max = tl.max(score, 1)
+            new_max = tl.maximum(maximum, block_max)
+            safe_max = tl.where(new_max == float('-inf'), 0., new_max)
+            alpha = tl.where(maximum == float('-inf'), 0.,
+                             tl.exp2((maximum - safe_max) * 1.4426950408889634))
+            probability = tl.exp2((score - safe_max[:, None]) * 1.4426950408889634)
+            denominator = denominator * alpha + tl.sum(probability, 1)
+            contribution = tl.dot(probability, v.to(tl.float32),
+                                  input_precision="tf32x3")
+            numerator = numerator * alpha[:, None] + contribution
+            maximum = new_max
+    offset = (split * HEADS + head) * ROWS + row
+    tl.store(M + offset, maximum, row < ROWS)
+    tl.store(S + offset, denominator, row < ROWS)
+    tl.store(P + offset[:, None] * DIM + dim[None, :], numerator,
+             row[:, None] < ROWS)
+
+
+def merged_splits(keys: int) -> int:
+    """Split count: at most four up to 2304 keys, then one split per 256 keys."""
+    if keys > 2304:
+        return triton.cdiv(keys, 256)
+    return min(4, max(1, triton.cdiv(keys, 256)))
+
+
+def attend_merged(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                  length: torch.Tensor, count: torch.Tensor, scale: float, *,
+                  prefix: int) -> torch.Tensor:
+    """Attend decoder prefix and window rows [1,H,R,D] in one pass; return [1,R,H,D].
+
+    Rows below ``prefix`` use the decoder count rule.  Window row ``w`` (row
+    ``prefix + w``) permits key <= length + w, the window mask's rule.
+    """
+    if (q.ndim != 4 or k.shape != v.shape or q.shape[0] != 1 or k.shape[0] != 1
+            or not 0 < q.shape[-2] <= 32 or q.shape[-1] != k.shape[-1]
+            or q.shape[1] % k.shape[1] or q.shape[-1] not in (64, 128, 256)
+            or not 0 <= prefix <= q.shape[-2]):
+        raise ValueError('unsupported merged length attention layout')
+    heads, rows, dim = q.shape[1:]
+    keys = k.shape[-2]
+    from jetspec.engines.jetspec_plus_plus.kernels.draft_splitkv import enabled, attend as split_attend
+    if enabled(q):
+        return split_attend(q, k, v, scale, mode='merged', length=length,
+                            count=count, prefix=prefix).transpose(1, 2)
+    splits = merged_splits(keys)
+    chunk = triton.cdiv(triton.cdiv(keys, splits), 64) * 64
+    partial = torch.empty((splits, heads, rows, dim), device=q.device, dtype=torch.float32)
+    maximum = torch.empty((splits, heads, rows), device=q.device, dtype=torch.float32)
+    denominator = torch.empty_like(maximum)
+    output = q.new_empty((1, rows, heads, dim))
+    _merged_partials[(heads, splits, triton.cdiv(rows, 16))](
+        q, k, v, length, count, partial, maximum, denominator,
+        q.stride(1), q.stride(2), q.stride(3),
+        k.stride(1), k.stride(2), k.stride(3),
+        v.stride(1), v.stride(2), v.stride(3),
+        heads, heads // k.shape[1], rows, prefix, keys, dim, scale, chunk, 64,
+        num_warps=4, enable_fp_fusion=False)
+    _merge[(heads, rows)](partial, maximum, denominator, output,
+                          output.stride(2), output.stride(1), output.stride(3),
                           heads, rows, dim, splits, triton.next_power_of_2(splits),
                           num_warps=4, enable_fp_fusion=False)
     return output

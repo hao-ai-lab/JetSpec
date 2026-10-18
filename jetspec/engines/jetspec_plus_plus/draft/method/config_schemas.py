@@ -5,7 +5,7 @@ import math
 from pathlib import PurePosixPath
 import re
 
-from .config import Schema
+from .config import Schema, validate_fields
 
 
 def _field(*parts):
@@ -19,6 +19,24 @@ def _positive_int(value):
 
 def _nonnegative_int(value):
     return type(value) is int and value >= 0
+
+
+def _concurrency_settings(value, schema, category):
+    """Validate every same-category partial row, including unselected buckets."""
+    if not isinstance(value, dict) or not value:
+        return False
+    fields = {key: rule for key, rule in schema.fields.items() if key != 'concurrency_settings'}
+    for key, row in value.items():
+        if (not isinstance(key, str) or not re.fullmatch(r'[1-9][0-9]*', key)
+                or not isinstance(row, dict) or not row):
+            return False
+        validate_fields(row, fields, (), f'{category}.concurrency_settings.{key}',
+                        atomic=schema.atomic)
+    return True
+
+
+def method_concurrency_settings(value):
+    return _concurrency_settings(value, METHOD_SCHEMA, 'method')
 
 
 def _probability(value):
@@ -227,6 +245,15 @@ def _decoder_slice(value):
             and all(_safe_file(name) and _is_sha256(digest) for name, digest in value['target_files'].items()))
 
 
+def _release_slice(value):
+    return (isinstance(value, dict) and set(value) == {'source', 'target_files', 'tensors'}
+            and _decoder_slice({key: value[key] for key in ('source', 'target_files')})
+            and 'model.safetensors.index.json' in value['target_files']
+            and isinstance(value['tensors'], dict)
+            and set(value['tensors']) == {'lm_head.weight', 'model.embed_tokens.weight'}
+            and all(isinstance(name, str) and bool(name) for name in value['tensors'].values()))
+
+
 def _check_geometry(config):
     method, model = config['method'], config['model']
     schedule = method.get('schedule')
@@ -291,11 +318,12 @@ MODEL_SCHEMA = Schema({
     _field('adapter', 'artifact'): str, _field('adapter', 'config_sha256'): _is_sha256,
     _field('adapter', 'published'): bool,
     _field('target_release', 'artifact'): str, _field('target_release', 'file'): _safe_file,
+    _field('target_release', 'slice'): _release_slice,
     'thresholds': _thresholds, 'thresholds_sha256': _is_sha256,
     _field('thresholds_fit', 'block_sizes'): lambda v: isinstance(v, list) and bool(v) and all(_positive_int(x) for x in v),
     _field('thresholds_fit', 'row_rule'): str,
     _field('thresholds_fit', 'k_score'): str,
-}, atomic=('artifacts', 'thresholds', 'decoder_slice', 'artifact_manifest', 'receipts', 'pins'))
+}, atomic=('artifacts', 'thresholds', 'decoder_slice', 'target_release.slice', 'artifact_manifest', 'receipts', 'pins'))
 
 
 # Closed compatibility leaves; legacy env spellings belong to the replay tool.

@@ -21,9 +21,19 @@ def project_into_cache(layer, fused, hidden, pending, rope, cache, prefix_slots,
         normed, hidden = fused.fast_add_rms_norm(
             *pending, layer.input_layernorm.weight, layer.input_layernorm.variance_epsilon)
     weight, bias, widths = attn._decoder_qkv
-    qp, kp, vp = F.linear(normed, weight, bias).split(widths, -1)
+    from jetspec.engines.jetspec_plus_plus.models.target_linear import packed_draft_linear
+    qp, kp, vp = packed_draft_linear(normed, weight, bias).split(widths, -1)
     tokens, dim = source.shape[1], attn.head_dim
     cos, sin = rope
+    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    if kernel_enabled('draft_fuse_t12', '1'):
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder_t12 import qkv_postprocess
+        query, _, _ = qkv_postprocess(
+            fused, qp, kp, vp, attn.q_norm.weight, attn.k_norm.weight, cos, sin,
+            attn.q_norm.variance_epsilon, attn.k_norm.variance_epsilon,
+            widths[0] // dim, widths[1] // dim, dim,
+            cache=cache, prefix_slots=prefix_slots, window_slots=window_slots)
+        return query, hidden
     query = fused.jpass_q_norm_rotary(
         qp.view(tokens, -1), attn.q_norm.weight, cos[0], sin[0],
         attn.q_norm.variance_epsilon, widths[0] // dim, dim).transpose(0, 1)[None]

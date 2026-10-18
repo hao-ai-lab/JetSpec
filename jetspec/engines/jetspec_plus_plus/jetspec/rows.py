@@ -593,6 +593,63 @@ def packed_mask(banks, lengths, ks):
     return (prefix[:, None, :] | combined.reshape(lengths.numel(), -1, prefix.shape[-1])).flatten()
 
 
+def _chain_geometry_reference(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, mask,
+                              *, prefix, tail, key_offset):
+    """Torch form of the T11 kernel's flat index rules (the CPU path)."""
+    count = keys.shape[0]
+    ks = keys[:, 0] + key_offset
+    length = length.reshape(())
+    mask_bytes = banks['block'].numel()
+    block_bytes, prefix_bytes = banks['tail'].shape[1], banks['prefix'].shape[1]
+    index = torch.arange(mask_bytes, device=mask.device)
+    p = banks['prefix'].reshape(-1)[length * prefix_bytes + index % prefix_bytes]
+    t = banks['tail'].reshape(-1)[ks[index // block_bytes] * block_bytes + index % block_bytes]
+    mask[:mask_bytes].copy_(p | t | banks['block'])
+    if tail:
+        positions = length + torch.arange(tail, device=cos.device)
+        ccos[prefix:prefix + tail].copy_(cos[positions])
+        csin[prefix:prefix + tail].copy_(sin[positions])
+    query = torch.arange(count * 16, device=cos.device)
+    positions = length + ks[query // 16] + query % 16
+    qcos.copy_(cos[positions])
+    qsin.copy_(sin[positions])
+
+
+def chain_geometry_into(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, mask,
+                        *, prefix, tail, key_offset=1):
+    """T11: one launch writes the N=1 chain mask and rotary rows.
+
+    Row r's tail count is ``keys[r, 0] + key_offset``; ``length`` is a one-
+    element device tensor. The mask bytes are packed_mask's and each rotary row
+    is a gather from the ``cos``/``sin`` table. ``tail`` context rows at
+    ``ccos[prefix:]`` are written for ``length``; 0 keeps the rows that the
+    context stream already wrote for the same length.
+    """
+    count, dim = keys.shape[0], cos.shape[-1]
+    mask_bytes, block_bytes = banks['block'].numel(), banks['tail'].shape[1]
+    if (keys.dtype != torch.int64 or mask_bytes != count * block_bytes or
+            tuple(qcos.shape) != (count * 16, dim) or mask.numel() < mask_bytes):
+        raise ValueError('chain geometry shapes disagree with the mask banks')
+    from jetspec.engines.jetspec_plus_plus.kernels import chain_geometry
+    if not cos.is_cuda or chain_geometry.triton is None:
+        _chain_geometry_reference(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, mask,
+                                  prefix=prefix, tail=tail, key_offset=key_offset)
+        return
+    if not all(value.is_contiguous() for value in (ccos, csin, qcos, qsin, mask)) or \
+            cos.stride() != sin.stride() or cos.stride(-1) != 1:
+        raise ValueError('chain geometry requires contiguous rotary rows and mask')
+    tile = 512
+    mask_tiles = -(-mask_bytes // tile)
+    rope_elements = (tail + count * 16) * dim
+    chain_geometry._chain_geometry[(mask_tiles + -(-rope_elements // tile),)](
+        cos, sin, length, keys, banks['prefix'], banks['tail'], banks['block'],
+        ccos, csin, qcos, qsin, mask,
+        KEY_STRIDE=keys.stride(0), KEY_OFFSET=key_offset, TABLE_STRIDE=cos.stride(0),
+        PREFIX=prefix, TAIL=tail, DIM=dim, MASK_BYTES=mask_bytes,
+        PREFIX_BYTES=banks['prefix'].shape[1], BLOCK_BYTES=block_bytes,
+        MASK_TILES=mask_tiles, ROPE_ELEMENTS=rope_elements, TILE=tile, num_warps=4)
+
+
 def _write_kv(cache, slots, span, k, v):
     """One strided copy per tensor when the slots are one range; index_put otherwise."""
     if span is not None:
@@ -707,8 +764,10 @@ class RowDraftHead(nn.Module):
         This operation can be captured after adapter outputs change. It must
         execute once per round before any drafter pass reads the context.
         """
+        # A multi-sequence (C>1) head never replays this graph: batch_graph_context writes its
+        # context K/V, so capturing it would only hold a private pool that grows with N x P.
         if (not getattr(self, 'graphs', False) or contexts.device.type != 'cuda'
-                or not hasattr(self, '_context_graph')):
+                or not hasattr(self, '_context_graph') or getattr(self, 'N', 1) > 1):
             self._refresh_context_eager(contexts)
             return
         if self._context_graph is None:
@@ -883,7 +942,7 @@ class RowDraftHead(nn.Module):
             attn.k_norm.weight, cos, sin, attn.k_norm.variance_epsilon, nkv, 1, hd)
         _write_kv(cache, slots, None, k.view(rows, nkv, hd), v.view(rows, nkv, hd))
 
-    def _forward_fused(self, hidden, fused):
+    def _forward_fused(self, hidden, fused, first_normalized=None):
         """The pass layers on the certified kernels: one launch per norm, norm
         plus rotary fused for q and k, the residual add fused into the post
         norm, and a strided cache copy per tensor.  Same projections, same
@@ -904,8 +963,12 @@ class RowDraftHead(nn.Module):
             attn = layer.self_attn
             nh, nkv, hd = attn.config.num_attention_heads, attn.config.num_key_value_heads, attn.head_dim
             if pending is None:
-                normalized = fused.fast_rms_norm(hidden, layer.input_layernorm.weight,
-                                                 layer.input_layernorm.variance_epsilon)
+                if first_normalized is not None:
+                    normalized = first_normalized
+                    first_normalized = None
+                else:
+                    normalized = fused.fast_rms_norm(hidden, layer.input_layernorm.weight,
+                                                     layer.input_layernorm.variance_epsilon)
             else:
                 normalized, hidden = fused.fast_add_rms_norm(
                     *pending, layer.input_layernorm.weight, layer.input_layernorm.variance_epsilon)
@@ -1212,6 +1275,14 @@ class BucketRowDraftHead(RowDraftHead):
             self._chain_ctx_dirty_source = torch.zeros(self.B + self.T, dtype=torch.long,
                                                        device=self.device)
             self._chain_ctx_dirty_slots = torch.zeros_like(self._chain_ctx_dirty_source)
+            if config_values(self.run_config).get('engine.engine_settings.draft_fuse_t9', '0') == '1':
+                positions = torch.arange(self.P + self.T, device=self.device)
+                cos, sin = self.head.rotary_emb(self.hidden_stub, positions[None])
+                self._chain_ctx_rope = (cos[0], sin[0])
+                self._chain_ctx_gather = (
+                    self.contexts.new_empty((self.B + self.T, self.contexts.shape[-1])),
+                    self.ccos.new_empty((self.B + self.T, self.ccos.shape[-1])),
+                    self.csin.new_empty((self.B + self.T, self.csin.shape[-1])))
 
     def _incremental_context(self, prefix, tails, length, mark):
         """JETSPEC_ROWS_CTX_INCR=1: the hypotheses only set the query rotary rows and
@@ -1337,7 +1408,7 @@ class BucketRowDraftHead(RowDraftHead):
 
     @torch.inference_mode()
     def update_chain(self, prefix_padded, tails, length, ks, *, mark=True,
-                     incremental=False):
+                     incremental=False, geometry=True):
         """Fixed-P context copy and one device-length geometry update for N=1."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         if self.N != 1 or prefix_padded.shape != (self.P, self.contexts.shape[-1]) or \
@@ -1345,7 +1416,17 @@ class BucketRowDraftHead(RowDraftHead):
             raise ValueError('chain context requires one fixed-P prefix and one fixed tail')
         self._refresh_mark = bool(mark)
         context = self.contexts.view(1, self.P + self.T, -1)
-        if kernel_enabled('chain_sega_glue', '2') and mark:
+        gathered = (incremental and mark and hasattr(self, '_chain_ctx_gather') and
+                    config_values(self.run_config).get('engine.engine_settings.hybrid_context_dirty', '0') != '1')
+        if gathered:
+            from jetspec.engines.jetspec_plus_plus.draft.glue import context_gather_mark
+            context_gather_mark(
+                self._chain_ctx_length, length, prefix_padded, tails,
+                self.head.adapted_position_embedding.weight, context,
+                *self._chain_ctx_rope, self.ccos[0], self.csin[0],
+                *self._chain_ctx_gather, self._chain_ctx_dirty_source,
+                self._chain_ctx_dirty_slots, self._chain_ctx_previous)
+        elif kernel_enabled('chain_sega_glue', '2') and mark:
             from jetspec.engines.jetspec_plus_plus.draft.glue import context_copy_mark
             context_copy_mark(length, prefix_padded, tails,
                               self.head.adapted_position_embedding.weight, context)
@@ -1357,8 +1438,19 @@ class BucketRowDraftHead(RowDraftHead):
             if mark:
                 context[:, :self.P].add_(self.head.adapted_position_embedding.weight[0])
                 context[:, self.P:].add_(self.head.adapted_position_embedding.weight[1])
-        self._prepare_geometry(length.reshape(1), ks)
-        if incremental:
+        if geometry:
+            self._prepare_geometry(length.reshape(1), ks)
+        elif not gathered:
+            # Only context rotary rows are consumed on the side stream. Query
+            # rotary rows and masks are prepared with the real keys after join.
+            cos, sin = self._chain_ctx_rope
+            positions = length + self.tail_positions
+            self.ccos[0, self.P:].copy_(cos.index_select(0, positions))
+            self.csin[0, self.P:].copy_(sin.index_select(0, positions))
+        if gathered:
+            self._refresh_chain_dirty(self._chain_ctx_dirty_source, self._chain_ctx_dirty_slots,
+                                      staged=self._chain_ctx_gather)
+        elif incremental:
             source, slots = chain_context_dirty_rows(
                 self._chain_ctx_length, length, prefix=self.P, tail=self.T,
                 block=self.B, noise_start=self.P + self.T)
@@ -1371,13 +1463,16 @@ class BucketRowDraftHead(RowDraftHead):
         if hasattr(self, '_chain_ctx_length'):
             self._chain_ctx_length.copy_(length.reshape(()))
 
-    def _refresh_chain_dirty(self, source, slots):
+    def _refresh_chain_dirty(self, source, slots, *, staged=None):
         # Changing M changes BLAS reduction/rounding on real 27B BF16 shapes.
         # Keep the reference projection geometry and select only cache writes.
         preserve_projection = config_values(self.run_config).get('engine.engine_settings.hybrid_context_dirty', '0') == '1'
-        hidden = self.contexts if preserve_projection else self.contexts.index_select(0, source)
-        cos = self.ccos[0].index_select(0, source)
-        sin = self.csin[0].index_select(0, source)
+        if staged is None:
+            hidden = self.contexts if preserve_projection else self.contexts.index_select(0, source)
+            cos = self.ccos[0].index_select(0, source)
+            sin = self.csin[0].index_select(0, source)
+        else:
+            hidden, cos, sin = staged
         if rows_pass_fused(hidden, run_config=self.run_config):
             fused = fused_kernels()
             state = fused.fast_rms_norm(self.head.fc(hidden),
@@ -1618,8 +1713,28 @@ class BucketRowDraftHead(RowDraftHead):
         packed = packed_mask(self._mask_banks, lengths, row_ks if self.N > 1 else ks)
         self.custom_mask_buffer[:packed.numel()].copy_(packed)
 
+    def _prepare_geometry_keys(self, length, keys):
+        """engine.engine_settings.draft_fuse_t11: the post-join geometry of
+        ``_prepare_geometry(length, keys[:, 0] + 1)`` in one launch.
+
+        The kernel reads ``keys[:, 0] + 1`` itself. It keeps the context tail
+        rotary rows, which the context stream wrote for the same length.
+        """
+        lengths = length.reshape(1)
+        if (self.B != 16 or self.graphs or self.backend != 'flashinfer' or self.N != 1 or
+                getattr(self, '_rope_table', None) is None):
+            self._prepare_geometry(lengths, keys[:, 0] + 1)
+            return
+        if self._jpass_len_enabled:
+            self._jpass_state.lengths = lengths
+        cos, sin = self._rope_table
+        chain_geometry_into(cos, sin, lengths, keys, self._mask_banks, self.ccos[0], self.csin[0],
+                            self.qcos[0], self.qsin[0], self.custom_mask_buffer,
+                            prefix=self.P, tail=0)
+
     @torch.inference_mode()
-    def inject_refresh(self, hidden, khat, entries=None, reset=False, fixed_layout=False, run_config=None):
+    def inject_refresh(self, hidden, khat, entries=None, reset=False, fixed_layout=False, run_config=None,
+                       guard=None):
         """JETSPEC_ADAPTER_REFRESH: write each row's refreshed block entries as extra
         context KV and expose them to the round's remaining passes.
 
@@ -1643,7 +1758,8 @@ class BucketRowDraftHead(RowDraftHead):
                     config_values(self.run_config).get('engine.engine_settings.refresh_inject_inclusive', '0') != '1'):
                 raise ValueError('REFRESH_INJECT_LEAN2 requires N=1 fixed INCLUSIVE refresh')
             from jetspec.engines.jetspec_plus_plus.jetspec.refresh_inject import inject
-            inject(self, hidden, khat, reset, run_config=run_config)
+            inject(self, hidden, khat, reset, run_config=run_config,
+                   **({'guard': guard} if guard is not None else {}))
             return
         context = hidden.reshape(rows, -1)
         slots, cos, sin = self.refresh_slots, self.qcos[0], self.qsin[0]

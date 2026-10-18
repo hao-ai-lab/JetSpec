@@ -160,6 +160,11 @@ class Scheduler:
         seq.extend_count = 0
         seq.extend_eagle_acts = None
         seq.extend_token_ids = None
+        # The re-prefill replays the whole prefix and records its taps again; ship them all
+        # to the draft as a new admission (keeping the old mirror sent a doubled, shifted suffix)
+        seq.jetspec_taps = None
+        seq.jetspec_taps_sent = 0
+        seq.jetspec_round = 0  # the draft admits it anew at round 0
 
     # non-speculative path, should handle completing a block here as well 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):

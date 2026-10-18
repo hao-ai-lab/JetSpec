@@ -185,11 +185,11 @@ COMPOSED_RECIPES = [{'cuda_arch': '8.0',
   'display_name': 'AR',
   'environment': {},
   'method': 'ar',
-  'name': 'ar-eager',
+  'name': 'ar-graphed',
   'passes': 1,
-  'regime': 'eager',
+  'regime': 'graphed',
   'schema': 'jetspec.serve_recipe/1',
-  'unset': []},
+  'unset': ['engine.engine_settings.torchdynamo_disable']},
  {'cuda_arch': '10.0',
   'display_name': 'Hybrid 27B AR FP32 control',
   'environment': {'engine.engine_settings.hybrid_fast_snapshot': '1',
@@ -4200,6 +4200,16 @@ def _without_inert_dependents(environment, selectors):
             result.pop(name)
 
 
+COMPOSED_RECIPES += [
+    dict(recipe, name=recipe['name'].replace('base800k', 'p2-97004').replace('sm80', architecture),
+         cuda_arch=cuda_arch,
+         adapter_artifact='qwen3p8_27b_adapter_p2_97004')
+    for recipe in COMPOSED_RECIPES
+    if recipe['name'] == 'jetspecpp-graphed-pair-27b-base800k-cal28-b16-j1r1-sm80'
+    for architecture, cuda_arch in (('sm80', '8.0'), ('sm100', '10.0'))
+]
+
+
 def _recipe_environment(environment):
     """Project canonical compatibility fields through the existing legacy binding."""
     from jetspec.engines.jetspec_plus_plus.legacy_env import environment_name
@@ -4211,6 +4221,12 @@ def serving_recipe(config, *, root=ROOT):
     """Select artifact/launcher metadata by the resolved model and method."""
     method, model, hardware = config['method'], config['model'], config['hardware']
     family = FAMILIES.get(method['family'], method['family'])
+    # These release registrations retain the original serving bytes and metadata.
+    release_sources = {
+        'jetspecpp_e6_drafter_release': 'jetspecpp_e6_drafter',
+        'jetspecpp_e6_adapter_release': 'jetspecpp_e6_adapter',
+        'qwen3p8_27b_drafter_main6ep_ep6_release': 'qwen3p8_27b_drafter_main6ep_ep6',
+    }
     candidates = []
     named = config['engine'].get('recipe')
     if named:
@@ -4233,8 +4249,10 @@ def serving_recipe(config, *, root=ROOT):
             continue
         if family == 'jetspecpp':
             if (recipe.get('thresholds_sha256') != model.get('thresholds_sha256')
-                    or recipe.get('drafter_artifact') != model.get('drafter', {}).get('artifact')
-                    or recipe.get('adapter_artifact') != model.get('adapter', {}).get('artifact')
+                    or recipe.get('drafter_artifact') != release_sources.get(
+                        model.get('drafter', {}).get('artifact'), model.get('drafter', {}).get('artifact'))
+                    or recipe.get('adapter_artifact') != release_sources.get(
+                        model.get('adapter', {}).get('artifact'), model.get('adapter', {}).get('artifact'))
                     or recipe.get('regime') != 'graphed'):
                 continue
         candidates.append(recipe)
@@ -4251,6 +4269,15 @@ def serving_recipe(config, *, root=ROOT):
                                                                     'gb200': '10.0'}[hardware['gpu']],
                                         recipe['name']))
     recipe = deepcopy(candidates[0])
+    if family == 'jetspecpp':
+        for role in ('drafter', 'adapter'):
+            recipe[role + '_artifact'] = model[role]['artifact']
+        release_bundles = {
+            'jetspecpp_e6_drafter_release': 'jetspecpp_e6_calibration_release',
+            'qwen3p8_27b_drafter_main6ep_ep6_release': 'qwen3p8_27b_calibration_release',
+        }
+        if bundle := release_bundles.get(recipe['drafter_artifact']):
+            recipe['bundle_artifact'] = recipe['bundle_name'] = bundle
     recipe['environment'] = apply_serving_profile(
         {**recipe['environment'], **profile_environment(config)}, config)
     # Current release profiles borrow named metadata, but the method owns their
@@ -4268,6 +4295,11 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
     """Return the environment and legacy argv without probing host artifacts or GPUs."""
     config_root = Path(config_root or Path(root) / 'config')
     recipe = serving_recipe(config, root=root) if launch is None else deepcopy(launch)
+    # Model declarations own new compositions; sealed recipe launches keep their source.
+    if (launch is None and recipe['method'] == 'jetspecpp'
+            and config['model'].get('target_release', {}).get('slice') is not None):
+        recipe['target_release_slice'] = deepcopy(config['model']['target_release']['slice'])
+        recipe.pop('target_release_artifact', None)
     if launch is not None:
         recipe['environment'] = profile_environment(config)
     benchmark, hardware = config['benchmark'], config['hardware']

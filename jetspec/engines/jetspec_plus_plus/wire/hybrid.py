@@ -34,9 +34,11 @@ def state_digest(*tensors):
 def eager_pair(runner):
     """The hybrid pair protocol may execute eagerly without enabling graph knobs."""
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+    # An N=1 protocol: a C>1 serve exchanges its hybrid state through the batch envelope instead.
     return (getattr(runner, 'enforce_eager', False)
             and has_state(runner)
             and pair_enabled(runner)
+            and getattr(getattr(runner, 'config', None), 'max_num_seqs', 1) == 1
             and setting(runner, 'engine.engine_settings.chain_graph', '0') == '0')
 
 
@@ -263,10 +265,127 @@ def target_prefix_kv(runner, sequence, positions):
     return gather_paged_kv(attention.k_cache, attention.v_cache, pages, positions)
 
 
+def target_committed_state(runner, sequence, *, layer_index=None):
+    """Select the sequence's live F3 slot while retaining the C=1 buffers."""
+    gdn = (target_tail(runner)[0] if layer_index is None else
+           runner.model.model.layers[layer_index].linear_attn)
+    if gdn.committed_recurrent.shape[0] == 1:
+        return gdn.committed_recurrent, gdn.committed_conv
+    state = runner.state
+    slot = state.owners.get(sequence.seq_id)
+    if slot is None:
+        raise ValueError('hybrid state owner is not live')
+    if slot.shape != (1,) or slot.dtype != torch.long:
+        raise ValueError('hybrid state owner must name one slot')
+    index = int(slot.item())
+    if (not 0 <= index < state.capacity or index in state.slots.available
+            or index >= gdn.committed_recurrent.shape[0]):
+        raise ValueError('hybrid state slot is not live')
+    if any(other_id != sequence.seq_id and torch.equal(other, slot)
+           for other_id, other in state.owners.items()):
+        raise ValueError('hybrid state slot has a wrong owner')
+    return (gdn.committed_recurrent[index:index + 1],
+            gdn.committed_conv[index:index + 1])
+
+
+def pack_batch_hybrid_outcomes(runner, sequences, lengths, layout):
+    """Append one F6 envelope containing each request row's committed state."""
+    from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomePacket, hash_last16_host
+    from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import OutcomeWire
+    if not sequences or len(sequences) != len(lengths):
+        raise ValueError('hybrid batch sequence count does not match tap counts')
+    layout = replace(layout, sequence_count=len(sequences))
+    wire = OutcomeWire(layout.lanes, layout.hidden, layout.tap_dtype, runner.device,
+                       layout=layout)
+    packets, taps, states = [], [], []
+    for sequence, count, row in zip(sequences, lengths, wire.sequences):
+        length = len(sequence.jetspec_taps)
+        if not 0 <= count <= min(layout.lanes, length):
+            raise ValueError('hybrid batch outcome has an invalid accepted count')
+        packet = OutcomePacket(cmd=1, seq_id=sequence.seq_id,
+            true_k=max(0, sequence.last_spec_step_accepted_len - 1),
+            recovery=sequence.recovery_token_id, round=sequence.jetspec_round,
+            tap_count=count, eos_flag=0, L=length,
+            hash16=hash_last16_host(sequence.token_ids[-16:], len(sequence.token_ids))).pack(
+                torch.empty_like(row.packet))
+        state = {}
+        for section in layout.sections:
+            if section.kind == 'linear_attention':
+                state[section.layer_index] = target_committed_state(
+                    runner, sequence, layer_index=section.layer_index)
+            elif count:
+                lane = torch.arange(layout.lanes, device=runner.device)
+                positions = torch.where(lane < count, length - count + lane, length - count)
+                attention = runner.model.model.layers[section.layer_index].self_attn.attn
+                from jetspec.engines.jetspec_plus_plus.jetspec.rows import device_tensor
+                pages = device_tensor(sequence.block_table, runner.device, dtype=torch.long)
+                state[section.layer_index] = gather_paged_kv(
+                    attention.k_cache, attention.v_cache, pages, positions)
+            else:
+                state[section.layer_index] = tuple(torch.zeros_like(tensor)
+                    for tensor in row.states[section.layer_index])
+        packets.append(packet)
+        taps.append(row.taps[:0])
+        states.append(state)
+    # OutcomeWire's C=1 ABI takes a single row rather than a row list.
+    message = (wire.pack(packets[0], taps[0], states=states[0]) if len(sequences) == 1
+               else wire.pack(packets, taps, states=states))
+    from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+    if setting(runner, 'engine.engine_settings.hybrid_state_audit', '0') == '1':
+        for seq_id, round_id, digest in wire.state_digests():
+            print(f'HYBRID_STATE_TARGET seq={seq_id} round={round_id} sha256={digest}', flush=True)
+    return message
+
+
+def receive_batch_hybrid_outcomes(owner, payload, *, receive):
+    """Validate the entire F6 extension before updating any request owner."""
+    from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset as O
+    from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import OutcomeWire, outcome_layout
+    layout = replace(outcome_layout(owner), sequence_count=len(payload['seq_ids']))
+    wire = OutcomeWire(layout.lanes, layout.hidden, layout.tap_dtype, owner.device, layout=layout)
+    receive(wire.tensor)
+    words = torch.stack([row.packet for row in wire.sequences]).cpu().tolist()
+    seq_ids = payload['seq_ids'].tolist()
+    if len(set(seq_ids)) != len(seq_ids):
+        raise ValueError('hybrid batch outcome has duplicate owners')
+    for index, packet in enumerate(words):
+        seq_id, count, length = packet[O.SEQ_ID], packet[O.TAP_COUNT], packet[O.L]
+        if seq_id != seq_ids[index] or seq_id not in owner.jetspec_sequences:
+            raise ValueError('hybrid batch outcome has a wrong owner')
+        if count != int(payload['tap_lengths'][index]) or not 0 <= count <= layout.lanes:
+            raise ValueError('hybrid batch outcome has an invalid accepted count')
+        if (packet[O.ROUND] != int(payload['rounds'][index])
+                or packet[O.TRUE_K:O.RECOVERY + 1] != payload['cache_keys'][index, 1:].tolist()):
+            raise ValueError('hybrid batch outcome does not match the request round/key')
+        state = owner.jetspec_sequences[seq_id]
+        if not count <= length < state.hybrid_prefix_key.shape[0]:
+            raise ValueError('hybrid batch outcome has an invalid prefix capacity')
+        mirrors = getattr(owner, 'jetspec_tap_mirrors', None)
+        if mirrors is not None and len(mirrors[seq_id]) != length:
+            raise ValueError('hybrid batch delta does not extend the committed prefix')
+    from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+    for row, packet in zip(wire.sequences, words):
+        state = owner.jetspec_sequences[packet[O.SEQ_ID]]
+        # The draft pair exposes one recurrent tail and one attention prefix.
+        recurrent = [section for section in layout.sections if section.kind == 'linear_attention']
+        attention = [section for section in layout.sections if section.kind == 'full_attention']
+        if len(recurrent) != 1 or len(attention) != 1:
+            raise ValueError('hybrid batch draft requires a recurrent/attention tail pair')
+        state.hybrid_recurrent.copy_(row.states[recurrent[0].layer_index][0])
+        state.hybrid_conv.copy_(row.states[recurrent[0].layer_index][1])
+        keys, values = row.states[attention[0].layer_index]
+        dtype = state.hybrid_prefix_key.dtype
+        append_hybrid_kv(state.hybrid_prefix_key, state.hybrid_prefix_value, keys.to(dtype),
+                         values.to(dtype), row.packet[O.L], row.packet[O.TAP_COUNT])
+        if setting(owner, 'engine.engine_settings.hybrid_state_audit', '0') == '1':
+            print(f'HYBRID_STATE_DRAFT seq={packet[O.SEQ_ID]} round={packet[O.ROUND]} '
+                  f'sha256={state_digest(state.hybrid_recurrent, state.hybrid_conv)}', flush=True)
+
+
 def pack_target_hybrid_outcome(runner, sequence, wire, packet, taps, *, prepared_taps=False):
     """Enqueue accepted state and newly accepted K/V, with no device-to-host read."""
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    gdn, _ = target_tail(runner)
+    recurrent, conv = target_committed_state(runner, sequence)
     count = packet[5]
     start = packet[8] - count
     lane = torch.arange(wire.keys.shape[0], device=runner.device)
@@ -274,13 +393,11 @@ def pack_target_hybrid_outcome(runner, sequence, wire, packet, taps, *, prepared
     keys, values = target_prefix_kv(runner, sequence, positions)
     if setting(runner, 'engine.engine_settings.hybrid_state_audit', '0') == "1":
         print("HYBRID_STATE_TARGET " +
-              f"round={int(packet[4].item())} sha256={state_digest(gdn.committed_recurrent, gdn.committed_conv)}",
+              f"round={int(packet[4].item())} sha256={state_digest(recurrent, conv)}",
               flush=True)
     if prepared_taps:
-        return wire.pack_prepared_header(packet, gdn.committed_recurrent,
-                                         gdn.committed_conv, keys, values)
-    return wire.pack(packet, taps, gdn.committed_recurrent,
-                     gdn.committed_conv, keys, values)
+        return wire.pack_prepared_header(packet, recurrent, conv, keys, values)
+    return wire.pack(packet, taps, recurrent, conv, keys, values)
 
 
 def target_prefill_tensors(runner, sequence, positions, layout):
@@ -291,7 +408,7 @@ def target_prefill_tensors(runner, sequence, positions, layout):
     for section in layout.sections:
         layer = layers[section.layer_index]
         if section.kind == 'linear_attention':
-            result.extend((layer.linear_attn.committed_recurrent, layer.linear_attn.committed_conv))
+            result.extend(target_committed_state(runner, sequence, layer_index=section.layer_index))
         else:
             attention = layer.self_attn.attn
             pages = device_tensor(sequence.block_table, runner.device, dtype=torch.long)
@@ -307,18 +424,23 @@ def pack_target_outcome(runner, sequence, wire, packet, taps, *, skip_full_zero=
         if not admission:
             return pack_target_hybrid_outcome(runner, sequence, wire, packet, taps,
                                              prepared_taps=prepared_taps)
-        gdn, _ = target_tail(runner)
+        recurrent, conv = target_committed_state(runner, sequence)
         wire.keys.zero_()
         wire.values.zero_()
-        return wire.pack(packet, taps, gdn.committed_recurrent,
-                         gdn.committed_conv, wire.keys, wire.values)
+        return wire.pack(packet, taps, recurrent, conv, wire.keys, wire.values)
+    if (not admission and wire.layout.sections
+            and setting(runner, 'engine.engine_settings.verify_cut_pack27b', '0') == '1'):
+        message = pack_target_outcome_cut(runner, sequence, wire, packet, taps,
+                                          prepared_taps=prepared_taps)
+        if message is not None:
+            return message
     states = {}
     audits = []
     for section in wire.layout.sections:
         layer = runner.model.model.layers[section.layer_index]
         if section.kind == 'linear_attention':
-            gdn = layer.linear_attn
-            states[section.layer_index] = (gdn.committed_recurrent, gdn.committed_conv)
+            states[section.layer_index] = target_committed_state(
+                runner, sequence, layer_index=section.layer_index)
             if not admission and setting(runner, 'engine.engine_settings.hybrid_state_audit', '0') == '1':
                 audits.append(states[section.layer_index])
         else:
@@ -345,3 +467,104 @@ def pack_target_outcome(runner, sequence, wire, packet, taps, *, skip_full_zero=
     # Retain that operation as well as its bytes; dense rings may skip it.
     return wire.pack(packet, taps, states=states,
                      skip_full_zero=skip_full_zero and not wire.layout.sections)
+
+
+def tail_lane_offsets(wire, device):
+    """Lane offsets per accepted count, built once per wire.
+
+    Row ``c`` is ``where(lane < c, lane - c, -c)``, so ``L + row[c]`` are the
+    accepted tail positions. The rows cover the counts 0..lanes."""
+    table = getattr(wire, '_jetspec_tail_lane_offsets', None)
+    if table is None or table.device != device:
+        lane = torch.arange(wire.layout.lanes, dtype=torch.long)
+        count = torch.arange(wire.layout.lanes + 1, dtype=torch.long)[:, None]
+        host = torch.where(lane < count, lane - count, -count)
+        if device.type == 'cuda':
+            host = host.pin_memory()
+        table = host.to(device, non_blocking=device.type == 'cuda')
+        wire._jetspec_tail_lane_offsets = table
+    return table
+
+
+def tail_slot_table(sequence, block_size, device):
+    """Per-token flat cache slots, page * block_size + offset, kept on the device.
+
+    The table persists on the sequence. A round uploads only the pages whose
+    IDs changed since the last call, so a steady round issues no host copy."""
+    pages = tuple(sequence.block_table)
+    state = getattr(sequence, '_jetspec_tail_slots', None)
+    previous, storage = (), None
+    if state is not None and state[0] == (block_size, device):
+        _, previous, storage = state
+    tokens = len(pages) * block_size
+    changed = next((index for index, (old, new) in enumerate(zip(previous, pages))
+                    if old != new), min(len(previous), len(pages)))
+    if storage is None or storage.numel() < tokens:
+        capacity = max(tokens, 2 * (storage.numel() if storage is not None else 0), block_size)
+        storage = torch.empty(capacity, dtype=torch.long, device=device)
+        changed = 0
+    if changed < len(pages):
+        ids = torch.tensor(pages[changed:], dtype=torch.long)
+        host = (ids[:, None] * block_size + torch.arange(block_size)).reshape(-1)
+        if device.type == 'cuda':
+            host = host.pin_memory()
+        storage[changed * block_size:tokens].copy_(host, non_blocking=device.type == 'cuda')
+    sequence._jetspec_tail_slots = ((block_size, device), pages, storage)
+    return storage[:tokens]
+
+
+def pack_target_outcome_cut(runner, sequence, wire, packet, taps, *, prepared_taps=False):
+    """The stateful round pack with fewer launches and the same packet bytes.
+
+    The knob is engine.engine_settings.verify_cut_pack27b. The accepted tail
+    K/V rows are gathered in one ``index_select`` per cache, straight into the
+    wire, through a persistent device slot table. The old pack instead uploads
+    the whole block table each round and gathers with ten glue kernels plus two
+    copies. A full tap block also skips the redundant zero.
+    Returns ``None`` before any device work when the geometry does not allow
+    it; the caller then runs the old pack."""
+    from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+    if wire.layout.sequence_count != 1:
+        return None
+    row = wire.sequences[0]
+    gathers = []
+    for section in wire.layout.sections:
+        if section.kind == 'linear_attention':
+            continue
+        attention = runner.model.model.layers[section.layer_index].self_attn.attn
+        key_cache, value_cache = attention.k_cache, attention.v_cache
+        destinations = row.states[section.layer_index]
+        if (key_cache.shape != value_cache.shape or key_cache.ndim != 4
+                or key_cache.dtype != value_cache.dtype or key_cache.device != packet.device
+                or value_cache.device != packet.device or len(destinations) != 2
+                or any(cache.stride(0) != cache.shape[1] * cache.stride(1)
+                       for cache in (key_cache, value_cache))
+                or any(target.shape != (wire.layout.lanes, *key_cache.shape[2:])
+                       or target.dtype != key_cache.dtype for target in destinations)):
+            return None
+        gathers.append((section.layer_index, key_cache, value_cache, destinations))
+    states = {}
+    audits = []
+    offsets = None
+    for section in wire.layout.sections:
+        if section.kind == 'linear_attention':
+            states[section.layer_index] = target_committed_state(
+                runner, sequence, layer_index=section.layer_index)
+            if setting(runner, 'engine.engine_settings.hybrid_state_audit', '0') == '1':
+                audits.append(states[section.layer_index])
+    for layer, key_cache, value_cache, (key_out, value_out) in gathers:
+        if offsets is None:
+            # packet[5] is the accepted count c, packet[8] the committed length L.
+            offsets = torch.add(tail_lane_offsets(wire, packet.device).index_select(
+                0, packet[5:6]).view(-1), packet[8:9])
+        slots = tail_slot_table(sequence, key_cache.shape[1], packet.device).index_select(0, offsets)
+        torch.index_select(key_cache.flatten(0, 1), 0, slots, out=key_out)
+        torch.index_select(value_cache.flatten(0, 1), 0, slots, out=value_out)
+        # The wire's own views: the pack's state copies are then no-ops.
+        states[layer] = (key_out, value_out)
+    for state in audits:
+        print('HYBRID_STATE_TARGET ' +
+              f'round={int(packet[4].item())} sha256={state_digest(*state)}', flush=True)
+    if prepared_taps:
+        return wire.pack_prepared_header(packet, states=states)
+    return wire.pack(packet, taps, states=states, skip_full_zero=True)
