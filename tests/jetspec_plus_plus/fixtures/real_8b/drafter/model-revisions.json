@@ -9,16 +9,18 @@
       "revision": "dd9a8125ba11d565e5f6f9ae0b63e68bfb4c7ae5"
     },
     "jetspecpp_e6_drafter": {
-      "repository": "JetSpec-dev/jetspec-plus-plus-qwen3-8b",
-      "revision": "8310b3ba214b93caaa675907ac0adf381347a538"
+      "repository": "JetSpec/jetspec-plus-plus-qwen3-8b",
+      "revision": "43d3aa9d0ddec21ceab16a2bc4dd324893ad6604"
     },
     "jetspecpp_e6_adapter": {
-      "repository": "JetSpec-dev/jetspec-plus-plus-qwen3-8b-adapter",
-      "revision": "71b95a4b5041e768db609b1f2be065f877587ea5"
+      "repository": "JetSpec/jetspec-plus-plus-qwen3-8b",
+      "path": "adapter",
+      "revision": "43d3aa9d0ddec21ceab16a2bc4dd324893ad6604"
     },
     "served_heads_reused_e6v3_b16": {
-      "repository": "Moonlight556/jetspec-served-heads-reused",
-      "revision": "a9b066f1a7de0bf3be89436e9df6ed8b10fe9b23"
+      "repository": "JetSpec/jetspec-plus-plus-qwen3-8b",
+      "path": "calibration",
+      "revision": "43d3aa9d0ddec21ceab16a2bc4dd324893ad6604"
     },
     "served_heads_reused_e6v3_b32": {
       "repository": "Moonlight556/jetspec-served-heads-reused",

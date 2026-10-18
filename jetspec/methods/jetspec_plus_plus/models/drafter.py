@@ -30,8 +30,8 @@ __all__ = ["CHECKPOINT", "REVISION", "load_drafter", "check_state_keys",
            "StockAdaptedMark",
            "load_qwen3_config_with_rope_compat", "restore_rope_theta"]
 
-CHECKPOINT = 'JetSpec-dev/jetspec-plus-plus-qwen3-8b'
-REVISION = '8310b3ba'
+CHECKPOINT = 'JetSpec/jetspec-plus-plus-qwen3-8b'
+REVISION = '43d3aa9d'
 ADAPTED_MARK_TENSOR = 'adapted_position_embedding.weight'
 RETIRED_DRAFTER = 'the 59-tensor drafter is retired'
 
@@ -140,7 +140,9 @@ def load_drafter(checkpoint: str | Path = CHECKPOINT, *, device: str = 'cpu',
         if str(checkpoint) != CHECKPOINT:
             raise FileNotFoundError(f'expected a local checkpoint directory or {CHECKPOINT}')
         from huggingface_hub import snapshot_download
-        checkpoint_path = Path(snapshot_download(CHECKPOINT, revision=revision, local_files_only=True))
+        # The drafter sits at the repository root; adapter/ and calibration/ are separate inputs.
+        checkpoint_path = Path(snapshot_download(CHECKPOINT, revision=revision, local_files_only=True,
+                                                 allow_patterns=['config.json', 'dflash.py', 'model.safetensors']))
     raw_config = json.loads((checkpoint_path / 'config.json').read_text(encoding='utf-8'))
     options = raw_config.get('dflash_config') or {}
     if (raw_config.get('model_type') != 'qwen3'

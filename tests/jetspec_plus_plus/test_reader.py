@@ -164,7 +164,7 @@ def test_cli_writes_read_and_manifest_with_factory(tmp_path):
     assert read['manifest'] == manifest
     assert manifest['schedule'] == 'J3-R3'
     assert manifest['temperature'] == 0
-    assert manifest['drafter_revision'] == '8310b3ba'
+    assert manifest['drafter_revision'] == '43d3aa9d'
     assert manifest['prompts_sha256']
     assert received['drafter_checkpoint'] == 'tiny-drafter'
     assert received['adapter_artifact'] == 'adapter.safetensors'
