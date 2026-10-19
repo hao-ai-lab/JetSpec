@@ -3,15 +3,14 @@ import torch
 from ..ops import reference_op
 
 @reference_op('window_mask')
-def window_mask(anchors, context_length, dtype, size=19):
-    """Byte-for-behaviour translation of the vendored private-window mask
-    (``size`` = 4 stale + 15 current slots; 20 with 16 current slots)."""
+def window_mask(anchors, context_length, dtype, size=15):
+    """Causal private blocks following every verified true prefix row."""
     anchors = torch.as_tensor(anchors).flatten()
     device = anchors.device
     query = torch.arange(len(anchors) * size, device=device)
     key = torch.arange(int(context_length) + len(query), device=device)
     block = query // size
-    prefix = key[None, :] < anchors[block, None] - 4
+    prefix = key[None, :] < anchors[block, None]
     local = key[None, :] - int(context_length)
     private = (local >= 0) & (local // size == block[:, None]) & (local % size <= query[:, None] % size)
     allowed = prefix | private
