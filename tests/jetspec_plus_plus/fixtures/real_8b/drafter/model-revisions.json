@@ -1,0 +1,30 @@
+{
+  "target": {
+    "repository": "Qwen/Qwen3-8B",
+    "revision": "b968826d9c46dd6066d109eabc6255188de91218"
+  },
+  "artifacts": {
+    "mask_original_drafter": {
+      "repository": "Moonlight556/qwen3-8b-base-mask-original-mathregen-s59866",
+      "revision": "dd9a8125ba11d565e5f6f9ae0b63e68bfb4c7ae5"
+    },
+    "jetspecpp_e6_drafter": {
+      "repository": "JetSpec/jetspec-plus-plus-qwen3-8b",
+      "revision": "43d3aa9d0ddec21ceab16a2bc4dd324893ad6604"
+    },
+    "jetspecpp_e6_adapter": {
+      "repository": "JetSpec/jetspec-plus-plus-qwen3-8b",
+      "path": "adapter",
+      "revision": "43d3aa9d0ddec21ceab16a2bc4dd324893ad6604"
+    },
+    "served_heads_reused_e6v3_b16": {
+      "repository": "JetSpec/jetspec-plus-plus-qwen3-8b",
+      "path": "calibration",
+      "revision": "43d3aa9d0ddec21ceab16a2bc4dd324893ad6604"
+    },
+    "served_heads_reused_e6v3_b32": {
+      "repository": "Moonlight556/jetspec-served-heads-reused",
+      "revision": "68efd0487e94cc345180995b6cebf056ddcc76dc"
+    }
+  }
+}
