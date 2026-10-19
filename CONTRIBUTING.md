@@ -36,8 +36,9 @@ optimized inference engine, and target loaders, with a strict one-way dependency
 
 - **`jetspec/core/`** — the lightweight HF reference core: `LLM`, `ModelRunner`,
   sampling, and the tree-attention hook used by reference benchmarks.
-- **`jetspec/inference_engine/`** — the optimized serving engine: paged KV cache,
-  scheduler, Triton tree attention, and CUDA graph paths.
+- **`jetspec/engines/jetspec/`** — the optimized serving engine, organized into
+  `serving/`, `kernels/`, `verify/`, `draft/`, `models/`, and `wire/` roles.
+  `jetspec/inference_engine/` preserves the old public imports as identity shims.
 - **`jetspec/methods/jetspec/`** — causal parallel tree drafting: tree algorithms,
   simple drafters, the draft head and trained draft-head adapter.
 - **`jetspec/methods/jetspec/tree/`** — the engine-agnostic tree-construction *method*. Turns
@@ -129,6 +130,6 @@ gates account for that caveat.
   the existing files. The codebase favors descriptive module/test docstrings that
   explain *why* a unit exists and what property it gates; mirror that.
 - Keep the `engine → tree` dependency one-way; the tree layer must not import from
-  `jetspec.core`, `jetspec.inference_engine`, or `jetspec.methods.jetspec.draft`.
+  `jetspec.core`, `jetspec.engines.jetspec`, or `jetspec.methods.jetspec.draft`.
 - Commit messages are single-line and prefixed by a tag (`[FIX]`, `[FEAT]`,
   `[DOCS]`, `[CHORE]`, etc.) describing the change.
