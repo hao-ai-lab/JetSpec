@@ -1,0 +1,12 @@
+{
+  "autotune_pin_sha256": null,
+  "compile_pin_sha256": null,
+  "cpu_pin": "auto",
+  "devices": [
+    0,
+    1
+  ],
+  "gpu": "a100",
+  "mps": false,
+  "placement": "pair"
+}

@@ -1,0 +1,1130 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "name": "mask_original_drafter",
+      "kind": "published",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "mask-original-s59866",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "5b53c74a9c600b9f0eb68c4313954da928c5b518d5b3c6a606c3979b9a4d6445",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "dflash.py",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "dc9527d7db6bb606ef2931d31319cecb1c394548f8d5c5b2ef476d7ce614b9c9",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "22f08ea39327327caef3d22d034cd7b1e124972bbbaa7285f3d4e5fb7b68495c",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "target_release_weights.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "23040099ed79ea30cd0ca656a5dad01f0a26838bd04f0470d6107a00b136290b",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "jetspecpp_e6_drafter",
+      "kind": "published",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "jetspec-plus-plus-qwen3-8b",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "5dd2439e82c85e21ec20998575bbcdf4b7fceb1ca34be3734b35caa01c8aaa3c",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "dflash.py",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f39e744844a06c0016793535f427fa60e6a1c8df7249193317acb284b567e79a",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "29b4bd22ff77c6d1c2388855daa67d351a6447de3fb4f22ab8ad56833155fb3d",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "jetspecpp_e6_adapter",
+      "kind": "published",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "jetspec-plus-plus-qwen3-8b-adapter",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "893b04ba54b9be76fee4754ea59338d87d340f68562e636637d5e7f8e093eb4d",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "head.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "9d6a89a2db7775385da42549d32984676251bc0b4cdc387bcff2cb6a447d2045",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "converter.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "b0cfa18a802a5e99f1ced9285b5115a3886a76cb1f68646234a89a72d46ecd71",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "served_heads_reused_e6v2_b16",
+      "kind": "published",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "served_heads_reused_e6v2_b16",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "BUNDLE.md",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "7e515f9e8b42797e5a9512e855e3374d1feee8b7a60383e9ea60dfda200dba18",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "bundle-pin.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "617048bec86d8af9de1b378610b35907ad7fcfde2e506385970d11edd98bdaf0",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/checkpoint-0.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "41c85c871acd7bce2904a8f16d4f2beb0a4261044fc30bfd1aa605edbc1c90b7",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/checkpoint-final-model.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "ce1a669caba87a05dbed70096bb375c37a2bc0ec8152d87b72f8b63d02c98210",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/manifest.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "a1b247ce2e436314160579d81dada80744b9a91e38e0a98efccd9afcd49d0558",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed0/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "9756e39568927b03dd9cb7cd4a7c3524a9aa81d59fd84bf783977ae13c9930ba",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed1/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "22667286107f855f86442e7ab01b373906684c31ac75c5e0d0c7a3f12dc3f8d3",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed2/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f9d660112189252a91491e594a3d8f4bc712d4d9e70b68444dd611fdf4bd2b61",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed3/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f8c7d6099e930232b9bfc9e49cb7419af7509e5bfa3662a4e54496fca5d934db",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed4/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "5bc880c26ceb50a61d2ea773a0ac4e2dedf06f940544515dd1d58ea8cf7962a8",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed0/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "a6dea86f1c329b0776a4379c782a7f2e6a7c53a09ae2ec279a03a2eede881a4a",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed1/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "fa14d671fdbf31b8ef7e891d90b02449cfda38c316f1ead35a5e5d57ace70416",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed2/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "b58ab26d9ede7aa7d24580a2e91ce2721e873c7998c25ca418d048295e5b0333",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed3/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "174518a88af7f11692bf8077ab4695459946eeb2e9b63410d339bb445b150d46",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed4/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "6c3bd64e32520d53e01495a4f103b5f7bce49383a865297634509684e799b538",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed0/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "b3713990cb49b750fbaac0e41b6a475bd3c3a7394244453f116c8a072b191f94",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed1/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f5fdad0942f4d0661f61b98d0fe439739b5419437703ea05479cb698ef71c26d",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed2/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "e0d219568f9ed47d14f999e8507363407f527b0788e214cae67eddf62a38b86f",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed3/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "371226348a293728b5da94bce23bdc161c545acfcf876f4db6642491ca342a5e",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed4/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "7bed9de564f1745bdfd80de14bb82380fe1aea4eaa21b1c9ed1e325e05752a03",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "thresholds.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "58157c61e212d2785efc927f8461570d0e84f448720b6a6d616fc70911f8b66f",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "served_heads_reused_e6v3_b16",
+      "kind": "published",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "served_heads_reused_e6v3_b16",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "BUNDLE.md",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "1128b2d9802fc0fdb39fb966c0ceed5d55b5ee687bac64d580715165f6e559ef",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "bundle-pin.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "33aeaa2e8dc62ee7c3e85e0e59c756d0b4a6b2bd0c552dddb4a5813ae09dd7ac",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/checkpoint-0.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "41c85c871acd7bce2904a8f16d4f2beb0a4261044fc30bfd1aa605edbc1c90b7",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/checkpoint-final-model.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "ce1a669caba87a05dbed70096bb375c37a2bc0ec8152d87b72f8b63d02c98210",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/manifest.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "a1b247ce2e436314160579d81dada80744b9a91e38e0a98efccd9afcd49d0558",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed0/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "9756e39568927b03dd9cb7cd4a7c3524a9aa81d59fd84bf783977ae13c9930ba",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed1/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "22667286107f855f86442e7ab01b373906684c31ac75c5e0d0c7a3f12dc3f8d3",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed2/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f9d660112189252a91491e594a3d8f4bc712d4d9e70b68444dd611fdf4bd2b61",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed3/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f8c7d6099e930232b9bfc9e49cb7419af7509e5bfa3662a4e54496fca5d934db",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J0d0/seed4/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "5bc880c26ceb50a61d2ea773a0ac4e2dedf06f940544515dd1d58ea8cf7962a8",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed0/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "a6dea86f1c329b0776a4379c782a7f2e6a7c53a09ae2ec279a03a2eede881a4a",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed1/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "fa14d671fdbf31b8ef7e891d90b02449cfda38c316f1ead35a5e5d57ace70416",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed2/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "b58ab26d9ede7aa7d24580a2e91ce2721e873c7998c25ca418d048295e5b0333",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed3/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "174518a88af7f11692bf8077ab4695459946eeb2e9b63410d339bb445b150d46",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J1/seed4/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "6c3bd64e32520d53e01495a4f103b5f7bce49383a865297634509684e799b538",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed0/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "b3713990cb49b750fbaac0e41b6a475bd3c3a7394244453f116c8a072b191f94",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed1/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "f5fdad0942f4d0661f61b98d0fe439739b5419437703ea05479cb698ef71c26d",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed2/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "e0d219568f9ed47d14f999e8507363407f527b0788e214cae67eddf62a38b86f",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed3/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "371226348a293728b5da94bce23bdc161c545acfcf876f4db6642491ca342a5e",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "kpred/arms/FR/J2/seed4/ckpt.pt",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "7bed9de564f1745bdfd80de14bb82380fe1aea4eaa21b1c9ed1e325e05752a03",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "thresholds.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "d42a9c855c4b802bbc42c557675423031e26869c9990897059a2669b9519a5f5",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "qwen3p8_27b_drafter_main6ep_ep6",
+      "kind": "published",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "qwen3p8-27b-drafter-main6ep-ep6",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "b608f42b8c423885601edee2f2c25bd3b623af677b84b9919877ca3947382568",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "dflash.py",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "2a1d058c7f687d464c71425d47b57d737c0fc98a5bef85909c5eed71abc020ea",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "20361600f809e36a5d33aa436bf56faf8eb8bf6f619d9714cc7d337279201bbe",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "target_release_weights.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "4c1bcc4c722e4831c71f48bc726184b14b797fbfce44119cc414ce1e17b67b60",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "jetspecpp_27b_placeholder_release",
+      "kind": "generated",
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "45021996ba2c5ced6b60e3eea4646ad938f6c96935457b3a70e2fd10cd6b4635",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "jetspecpp_27b_placeholder_heads",
+      "kind": "generated",
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "thresholds.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "58157c61e212d2785efc927f8461570d0e84f448720b6a6d616fc70911f8b66f",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/manifest.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "jetspecpp_27b_base800k_heads_cal28",
+      "kind": "generated",
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "thresholds.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "c746c32768644e9cd4c92b415b8f90c2e984c8fff54a183a7c6587108ecd554e",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "decoder/manifest.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "qwen3p8_27b_adapter_base_800k",
+      "kind": "published",
+      "serving_layout": "trained_c1",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "qwen3p8_27b_adapter_base_800k",
+        "resolves": true
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "e967187b162f8cf0f05cb3f30fce2cc0073eed0a8dcce8a6ec902be651a30c44",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "head.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "ebfaff7dfbbdb44b496b29e98e861ade4185623f46fb68b26c16fd28a3ab24e9",
+            "resolves": true
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "converter.safetensors",
+            "resolves": true
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "89e58efc693176ab66f909ba5a8bfbd301fcb627f274c0d72dc89f240e29c577",
+            "resolves": true
+          }
+        }
+      ]
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "qwen3p8_27b_adapter_p2_97004"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "2c481bc650d82a361c463abc92e909647cd548096fcba1c2492836b35dfb0c2c"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "head.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "0384faef564f5e30930a17cb206239cd33e2e8fb41e2a01e6d0ec5ececa0c651"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "converter.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "89e58efc693176ab66f909ba5a8bfbd301fcb627f274c0d72dc89f240e29c577"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_adapter_p2_97004",
+      "serving_layout": "trained_c1"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "jetspec-plus-plus-qwen3-8b-release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "5dd2439e82c85e21ec20998575bbcdf4b7fceb1ca34be3734b35caa01c8aaa3c"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "dflash.py"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "f39e744844a06c0016793535f427fa60e6a1c8df7249193317acb284b567e79a"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "29b4bd22ff77c6d1c2388855daa67d351a6447de3fb4f22ab8ad56833155fb3d"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_drafter_release"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "jetspec-plus-plus-qwen3-8b-adapter-release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "893b04ba54b9be76fee4754ea59338d87d340f68562e636637d5e7f8e093eb4d"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "head.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "9d6a89a2db7775385da42549d32984676251bc0b4cdc387bcff2cb6a447d2045"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "converter.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "b0cfa18a802a5e99f1ced9285b5115a3886a76cb1f68646234a89a72d46ecd71"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_adapter_release"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "qwen3p8-27b-drafter-main6ep-ep6-release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "b608f42b8c423885601edee2f2c25bd3b623af677b84b9919877ca3947382568"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "dflash.py"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "2a1d058c7f687d464c71425d47b57d737c0fc98a5bef85909c5eed71abc020ea"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "20361600f809e36a5d33aa436bf56faf8eb8bf6f619d9714cc7d337279201bbe"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_drafter_main6ep_ep6_release"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "jetspecpp_e6_calibration_release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "decoder/manifest.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "a1b247ce2e436314160579d81dada80744b9a91e38e0a98efccd9afcd49d0558"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "thresholds.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "d42a9c855c4b802bbc42c557675423031e26869c9990897059a2669b9519a5f5"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_calibration_release",
+      "serving_layout": "target_slice"
+    },
+    {
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "resolves": true,
+        "value": "qwen3p8_27b_calibration_release"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "thresholds.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "c746c32768644e9cd4c92b415b8f90c2e984c8fff54a183a7c6587108ecd554e"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "resolves": true,
+            "value": "decoder/manifest.json"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "resolves": true,
+            "value": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b"
+          }
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_calibration_release",
+      "serving_layout": "target_slice"
+    }
+  ]
+}
