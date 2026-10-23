@@ -43,7 +43,7 @@ This file tells coding agents how this repository is organized and how to run ea
 
 ## JetSpec
 
-- HF reference, the JetSpec engine, benchmark scripts and the vLLM integration: see `jetspec/methods/jetspec/README.md`.
+- HF reference, the JetSpec engine, benchmark scripts and the vLLM integration: see the JetSpec section of the README.
 
 ## Tests
 
