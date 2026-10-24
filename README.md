@@ -11,7 +11,7 @@
 
 [**Paper**](https://arxiv.org/abs/2610.19792) | [**Models**](https://huggingface.co/JetSpec)
 
-<p align="center"><img src="assets/jetspec_plus_plus_pipeline.png" alt="JetSpec++ overlaps foresight drafting and refinement passes with verification" width="760"></p>
+<p align="center"><b>[ Demo video placeholder ]</b></p>
 
 Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup over autoregressive decoding (AR), from Table 3 of the [paper](https://arxiv.org/abs/2610.19792):
 
@@ -23,8 +23,6 @@ Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup
 | Qwen3.8-27B | MATH-500 | 59.3 | 279.8 (4.72x) | **367.2 (6.20x)** |
 
 Table 1 of the paper gives the acceptance length on all seven benchmarks.
-
-<p align="center"><b>[ Demo video placeholder ]</b></p>
 
 </details>
 
