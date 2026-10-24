@@ -35,7 +35,7 @@ JetSpec is an implementation of **causal parallel tree drafting** for fast LLM s
 | Target | Checkpoint | GPUs |
 |---|---|---|
 | Qwen3-8B | [`JetSpec/jetspec-plus-plus-qwen3-8b`](https://huggingface.co/JetSpec/jetspec-plus-plus-qwen3-8b) | A100, B200, GB200 |
-| Qwen3.8-27B (preview) | [`JetSpec/jetspec-plus-plus-qwen3p8-27b`](https://huggingface.co/JetSpec/jetspec-plus-plus-qwen3p8-27b) | A100, B200 |
+| Qwen3.8-27B | [`JetSpec/jetspec-plus-plus-qwen3p8-27b`](https://huggingface.co/JetSpec/jetspec-plus-plus-qwen3p8-27b) | A100, B200 |
 
 ## Installation
 
@@ -56,11 +56,11 @@ python -m jetspec.engines.jetspec_plus_plus generate --model qwen3-8b \
     "How many positive whole-number divisors does 196 have?"
 ```
 
-The command downloads the target and the checkpoint, picks the schedule for your GPU, and prints the answer with its throughput.
+The command downloads the pinned target and checkpoint, picks the schedule for your GPU, and prints the answer with its throughput. The first run also compiles kernels into `~/.cache/jetspec-plus-plus`, which takes several minutes. `--devices` names two GPUs as `nvidia-smi` numbers them (default `0,1`).
 
 ## Evaluation
 
-Speedup over autoregressive decoding on your GPU, on GSM8K, MATH-500, AIME25, HumanEval, MBPP, LiveCodeBench or MT-Bench:
+Speedup over autoregressive decoding on your GPU. `--dataset` takes `gsm8k`, `math500`, `aime25`, `humaneval`, `mbpp`, `livecodebench` or `mt-bench`:
 
 ```bash
 python bench/jetspec_plus_plus/speedup.py --model qwen3-8b --dataset math500
@@ -69,11 +69,11 @@ python bench/jetspec_plus_plus/speedup.py --model qwen3-8b --dataset math500
 The paper's Table 3 on a GB200 pair, against DSpark:
 
 ```bash
-python bench/jetspec_plus_plus/table3.py --model qwen3-8b
-python bench/jetspec_plus_plus/table3.py --model qwen3.8-27b
+python bench/jetspec_plus_plus/table3.py --model qwen3-8b --assets release --host-values host-8b.json
+python bench/jetspec_plus_plus/table3.py --model qwen3.8-27b --assets release --host-values host-27b.json
 ```
 
-[`TABLE3.md`](bench/jetspec_plus_plus/TABLE3.md) describes the protocol and the other baselines.
+[`TABLE3.md`](bench/jetspec_plus_plus/TABLE3.md) describes the host file, the protocol and the other baselines.
 
 ## JetSpec
 
