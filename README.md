@@ -13,6 +13,17 @@
 
 <p align="center"><img src="assets/jetspec_plus_plus_pipeline.png" alt="JetSpec++ overlaps foresight drafting and refinement passes with verification" width="760"></p>
 
+Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup over autoregressive decoding (AR), from Table 3 of the [paper](https://arxiv.org/abs/2610.19792):
+
+| Target | Benchmark | AR (tok/s) | DSpark (tok/s) | JetSpec++ (tok/s) |
+|---|---|---:|---:|---:|
+| Qwen3-8B | GSM8K | 182.3 | 744.3 (4.08x) | **1148.8 (6.30x)** |
+| Qwen3-8B | MATH-500 | 182.7 | 902.1 (4.94x) | **1361.1 (7.45x)** |
+| Qwen3.8-27B | GSM8K | 60.3 | 249.6 (4.14x) | **342.4 (5.68x)** |
+| Qwen3.8-27B | MATH-500 | 59.3 | 279.8 (4.72x) | **367.2 (6.20x)** |
+
+Table 1 of the paper gives the acceptance length on all seven benchmarks.
+
 <p align="center"><b>[ Demo video placeholder ]</b></p>
 
 </details>
