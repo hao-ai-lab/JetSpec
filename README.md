@@ -199,7 +199,7 @@ python bench/jetspec/engine/tps_walltime.py \
   --session
 ```
 
-The [vLLM v1 integration](https://github.com/JetSpec-project/vllm-jetspec) supports MATH-500 testing through `examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh` and HumanEval testing through `examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh` in that checkout.
+The [vLLM v1 integration](https://github.com/JetSpec-project/vllm-jetspec) supports MATH-500 testing through `<vllm-jetspec>/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh` and HumanEval testing through `<vllm-jetspec>/examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
 
 Engine results: single-stream (batch size 1) Qwen3-8B on NVIDIA B200, bf16, `--drafter graphed`, warm steady state, with a pinned CPU reservation.
 
