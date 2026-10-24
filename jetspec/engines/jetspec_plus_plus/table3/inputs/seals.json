@@ -1,0 +1,10 @@
+{
+  "8b/prompts_gsm8k128.json": "f95ef100190abdb8810c5e8b12c0a5efc1525d31a6f272861c158f453cddf2b7",
+  "8b/prompts_math500128.json": "3c2fd08be240ad6a907ebaf5aeb47c7bcff581e63dac06289884ae3dd2767be7",
+  "27b/prompts_gsm8k128.json": "2ac6748d460da9c8fa501161e1843aa856fda5bb1e66d9f8287c8b369422a648",
+  "27b/prompts_math500128.json": "d93fe259357949bcd046ee9b477b632437ea3156998bbdb7a641e2972b7d9f79",
+  "27b-sys/prompts_gsm8k128.json": "8ee27239518c6efa246814ae4b87b76ce1d0e7ed3010601f86bbb9f76be28460",
+  "27b-sys/prompts_math500128.json": "049a0770c3e52cd0966474429062e96bec84f864f7f476afe493bcc31214b227",
+  "policy-rows-min-4.json": "30958c605091bfa444dbce404188093514678a2fdfc9a349a9e594c646a6bd90",
+  "policy-rows-min-16.json": "60275f8a02e5a6cd7fed7b36cfc726821a62a7e083bea04aba780d8aa36887be"
+}
