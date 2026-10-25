@@ -1,73 +1,101 @@
 <p align="center">
-  <img src="assets/jetspec_logo.png" alt="JetSpec" width="180" align="center">
+  <img src="assets/jetspec_logo.png" alt="JetSpec" width="180">
 </p>
 
-<div align="center"><h1>JetSpec: Parallel Tree Drafting</h1></div>
+<div align="center"><h1>JetSpec++: Foresight Parallel Drafting with Self Refinements</h1></div>
 
-<p align="center">
-  <a href="https://jetspec-project.github.io/jetspec-web/">Project Webpage</a> ·
-  <a href="https://arxiv.org/pdf/2606.18394">Paper</a> ·
-  <a href="https://haoailab.com/blogs/parallel-tree-decoding/">Blog</a> ·
-  <a href="https://huggingface.co/JetSpec">Hugging Face</a>
-</p>
+**JetSpec++** is a lossless speculative decoding method that hides almost all of its drafting cost behind verification. It drafts the next block on a second GPU while the target model verifies the current one, and it refines that draft while it waits.
+
+- **Faster:** on a GB200 pair, up to **7.45x** over autoregressive decoding and **1.54x** over DSpark, at up to **1,361 tokens per second** for one request.
+- **Hidden drafting:** the time per round beyond verification falls by up to **84%** relative to DSpark.
+- **Longer acceptance:** the longest acceptance length on all seven benchmarks, **8.94** tokens per round on average at temperature 0, against 6.89 for DSpark.
+
+<details open>
+<summary><strong>JetSpec++</strong></summary>
+
+[**Paper**](https://arxiv.org/abs/2610.19792) | [**Models**](https://huggingface.co/JetSpec)
+
+<p align="center"><b>[ Demo video placeholder ]</b></p>
+
+The fast-engine lane in the video uses a 4-bit target that this repository does not include yet.
+
+Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup over autoregressive decoding (AR), from Table 3 of the [paper](https://arxiv.org/abs/2610.19792):
+
+| Target | Benchmark | AR (tok/s) | DSpark (tok/s) | JetSpec++ (tok/s) |
+|---|---|---:|---:|---:|
+| Qwen3-8B | GSM8K | 182.3 | 744.3 (4.08x) | **1148.8 (6.30x)** |
+| Qwen3-8B | MATH-500 | 182.7 | 902.1 (4.94x) | **1361.1 (7.45x)** |
+| Qwen3.8-27B | GSM8K | 60.3 | 249.6 (4.14x) | **342.4 (5.68x)** |
+| Qwen3.8-27B | MATH-500 | 59.3 | 279.8 (4.72x) | **367.2 (6.20x)** |
+
+Table 1 of the paper gives the acceptance length on all seven benchmarks.
+
+</details>
+
+<details>
+<summary><strong>JetSpec</strong></summary>
+
+[**Paper**](https://arxiv.org/abs/2606.18394) | [**Blog**](https://haoailab.com/blogs/parallel-tree-decoding/) | [**Webpage**](https://jetspec-project.github.io/jetspec-web/) | [**Models**](https://huggingface.co/JetSpec)
 
 JetSpec is an implementation of **causal parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
-<p align="center">
-  <img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="760" align="center">
-</p>
+<p align="center"><img src="assets/end_to_end_speedup_barplot_refined_v2_page.png" alt="End-to-end speedup over autoregressive decoding on Qwen3-8B across benchmarks" width="760"></p>
 
-## Contents
+<p align="center"><img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="760"></p>
 
-- [Introduction](#introduction)
-- [Installation](#installation)
-- [Model Weights](#model-weights)
-- [Repo Overview](#repo-overview)
-- [Usage](#usage)
-  - [HF References](#hf-references)
-  - [JetSpec Inference Engine](#jetspec-inference-engine)
-  - [Benchmarking Scripts](#benchmarking-scripts)
-- [JetSpec++ (new)](#jetspec-new)
-- [Results](#results)
-  - [Engine Results](#engine-results)
-  - [Tree Algorithms](#tree-algorithms)
-- [Acknowledgements](#acknowledgements)
-- [Citation](#citation)
+</details>
 
-## Introduction
+## Supported Models
 
-Speculative decoding is fast when the target accepts many draft tokens and drafting remains cheap. Prior heads often trade off those two terms: autoregressive drafters condition on each path but pay a forward pass per depth, while block-diffusion drafters draft many positions in one pass but score branches independently.
-
-JetSpec keeps the **one-pass drafting efficiency and restores causal branch conditioning**. The draft head reads fused hidden states from the frozen target and emits per-depth logits in a single parallel pass. Tree construction spends a draft budget over high-probability branches, and the target verifies every node in one batched/tree-masked forward.
-
-On Qwen3-8B evaluations, JetSpec reaches up to **9.64x end-to-end speedup on MATH-500**, with strong gains across reasoning, code, and chat workloads: 7.82x on GSM8K, 8.78x on AIME25, 7.12x on HumanEval, 6.73x on MBPP, 7.67x on LCB, and 4.58x on MT-Bench.
-
-
-<p align="center">
-  <img src="assets/end_to_end_speedup_barplot_refined_v2_page.png" alt="End-to-end speedup over autoregressive decoding on Qwen3-8B across benchmarks" width="760">
-</p>
-
+| Target | Checkpoint | GPUs |
+|---|---|---|
+| Qwen3-8B | [`JetSpec/jetspec-plus-plus-qwen3-8b`](https://huggingface.co/JetSpec/jetspec-plus-plus-qwen3-8b) | A100, B200, GB200 |
+| Qwen3.8-27B | [`JetSpec/jetspec-plus-plus-qwen3p8-27b`](https://huggingface.co/JetSpec/jetspec-plus-plus-qwen3p8-27b) | A100, B200 |
 
 ## Installation
 
-Create an environment and install the package:
+JetSpec++ runs on Linux with two GPUs that have peer access. Install the measured environment for your platform, then the package:
 
 ```bash
-cd /root/workspace/JetSpec
-pip install -e '.[bench,kernel]'
+git clone https://github.com/hao-ai-lab/JetSpec.git && cd JetSpec
+pip install --no-deps -r jetspec/engines/jetspec_plus_plus/requirements-x86_64.lock
+pip install --no-deps -e .
 ```
 
-For FlashAttention 2 benchmarks, install the extra after build dependencies are available:
+On GB200, use `requirements-gb200-aarch64.lock` with `--extra-index-url https://download.pytorch.org/whl/cu128`.
+
+## Quick Start
 
 ```bash
-pip install -e '.[bench,flash-attn]'
+python -m jetspec.engines.jetspec_plus_plus generate --model qwen3-8b \
+    "How many positive whole-number divisors does 196 have?"
 ```
 
-If you use `uv`, the project includes extra build dependency metadata for `flash-attn`.
+The command downloads the pinned target and checkpoint, picks the schedule for your GPU, and prints the answer with its throughput. The first run also compiles kernels into `~/.cache/jetspec-plus-plus`, which takes several minutes. `--devices` names two GPUs as `nvidia-smi` numbers them (default `0,1`).
 
-## Model Weights
+## Evaluation
 
-JetSpec draft heads are published under the [`JetSpec`](https://huggingface.co/JetSpec) Hugging Face organization.
+Speedup over autoregressive decoding on your GPU. `--dataset` takes `gsm8k`, `math500`, `aime25`, `humaneval`, `mbpp`, `livecodebench` or `mt-bench`:
+
+```bash
+python bench/jetspec_plus_plus/speedup.py --model qwen3-8b --dataset math500
+```
+
+The paper's Table 3 on a GB200 pair, against DSpark:
+
+```bash
+python bench/jetspec_plus_plus/table3.py --model qwen3-8b --assets release --host-values host-8b.json
+python bench/jetspec_plus_plus/table3.py --model qwen3.8-27b --assets release --host-values host-27b.json
+```
+
+[`TABLE3.md`](bench/jetspec_plus_plus/TABLE3.md) describes the host file, the protocol and the other baselines.
+
+## JetSpec
+
+<details>
+<summary><strong>Supported models, installation, quick start and evaluation for JetSpec</strong></summary>
+
+### Supported Models
 
 | Target family | Draft head |
 |---|---|
@@ -84,29 +112,25 @@ Most benchmark and diagnostic scripts can read the draft head from `JETSPEC_DRAF
 export JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b
 ```
 
+### Installation
 
-## Repo Overview
-
-The project has two execution paths:
-
-- `jetspec/core/`: a lightweight HuggingFace-based reference implementation.
-- `jetspec/engines/jetspec/`: an optimized serving engine with paged KV, custom Triton tree attention, and CUDA graphs for better wall-clock latency and throughput.
-
-```text
-jetspec/
-  core/                    # HuggingFace reference core: LLM, ModelRunner, sampler, tree attention hook
-  methods/jetspec/         # causal parallel tree drafting: tree, drafters, draft head
-  engines/jetspec/         # optimized JetSpec engine: paged KV, scheduler, kernels, CUDA graphs
-  models/                  # target/draft-head loading and model utilities
-  methods/jetspec_plus_plus/  # new: JetSpec++ torch reference method
-  engines/jetspec_plus_plus/  # new: JetSpec++ serving engine
+```bash
+pip install -e '.[bench,kernel]'
 ```
 
-The old import paths (`jetspec.inference_engine`, `jetspec.tree`, `jetspec.draft`, `jetspec.draft_head_adapter`) remain as compatibility shims.
+For FlashAttention 2 benchmarks, install the extra after build dependencies are available:
 
-## Usage
+```bash
+pip install -e '.[bench,flash-attn]'
+```
 
-### HF References
+If you use `uv`, the project includes extra build dependency metadata for `flash-attn`.
+
+### Quick Start
+
+JetSpec has two execution paths: `jetspec/core/`, a lightweight HuggingFace-based reference implementation, and `jetspec/engines/jetspec/`, an optimized serving engine with paged KV, custom Triton tree attention, and CUDA graphs for better wall-clock latency and throughput.
+
+HF reference:
 
 ```python
 from jetspec import LLM, SamplingParams
@@ -119,11 +143,7 @@ out = llm.generate(
 print(out["text"])
 ```
 
-
-
-### JetSpec Inference Engine
-
-The optimized engine uses paged KV, a Triton tree-attention backend, compiled verification, CUDA graphs, and optional session reuse.
+Inference engine, with paged KV, a Triton tree-attention backend, compiled verification, CUDA graphs, and optional session reuse:
 
 ```python
 from jetspec import load_draft_head, DraftHeadTreeDrafter
@@ -154,11 +174,9 @@ print(out["text"])
 print("tokens per forward:", out["tpf"])
 ```
 
-### Benchmarking Scripts
+### Evaluation
 
-The benchmark examples below use `Qwen/Qwen3-8B` with drafter `JetSpec/jetspec-qwen3-8b`.
-
-HF reference benchmark:
+HF reference benchmark. With `--include-dflash-baseline`, it reports the shared AR-greedy baseline, the linear DFlash block baseline using the draft head's `block_size`, and the JetSpec tree construction algorithms selected through `--algos`:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -178,15 +196,7 @@ python bench/jetspec/reference/benchmark.py \
   --include-dflash-baseline
 ```
 
-With `--include-dflash-baseline`, the HF reference benchmark reports the shared AR-greedy baseline, the linear DFlash block baseline using the draft head's `block_size`, and the selected JetSpec tree construction algorithms through `--algos`.
-
-
-
-Optimized JetSpec engine with wall-clock latency and throughput benchmarking.
-The headline throughput uses `--drafter graphed` — a CUDA-graph replay of the
-draft-head forward, per context-capacity bucket. At batch size 1 the tree round is
-host-launch-bound, so graphing the draft head (like the verify stack) is what reaches
-the engine-results numbers; `--drafter eager` is correct but ~2x slower:
+Optimized engine, wall-clock latency and throughput. The headline throughput uses `--drafter graphed`, a CUDA-graph replay of the draft-head forward per context-capacity bucket. `--drafter eager` is correct but about 2x slower:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -204,59 +214,9 @@ python bench/jetspec/engine/tps_walltime.py \
   --session
 ```
 
-Run [`our vLLM v1 integration with JetSpec support`](https://github.com/JetSpec-project/vllm-jetspec) on MATH-500 for performance test:
+The [vLLM v1 integration](https://github.com/JetSpec-project/vllm-jetspec) supports MATH-500 testing through `<vllm-jetspec>/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh` and HumanEval testing through `<vllm-jetspec>/examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
 
-```bash
-VLLM_FORK_DIR=/path/to/vllm-jetspec
-TARGET_MODEL=/path/to/Qwen3-30B-A3B
-DRAFT_MODEL=/path/to/jetspec-draft-head
-PROFILER_DIR=/path/to/output/jetspec-math500
-TP_SIZE=4
-BATCH_SIZE=1
-MAX_TREE_BUDGET=128
-MAX_TOKENS=512
-MAX_SAMPLES=16
-
-cd "${VLLM_FORK_DIR}"
-GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.90}" \
-bash "${VLLM_FORK_DIR}/examples/offline_inference/jetspec_profiling_math500_tree_budget_bsz_sweep.sh" \
-  --model "${TARGET_MODEL}" \
-  --draft-model "${DRAFT_MODEL}" \
-  --profiler-dir "${PROFILER_DIR}" \
-  --tree-attn-kernel triton \
-  --enable-expert-parallel \
-  --disable-cascade-attn \
-  --cudagraph-mode default \
-  --tp-size "${TP_SIZE}" \
-  --batch-sizes "${BATCH_SIZE}" \
-  --max-num-seqs "${BATCH_SIZE}" \
-  --tree-budgets "${MAX_TREE_BUDGET}" \
-  --max-tokens "${MAX_TOKENS}" \
-  --max-samples "${MAX_SAMPLES}" \
-  --num-warmup-runs 1 \
-  --profiler none \
-  --max-model-len 3072 \
-  --max-num-batched-tokens 16384
-```
-
-These scripts belong to the external vLLM integration checkout. The [`vLLM integration`](https://github.com/JetSpec-project/vllm-jetspec) supports MATH-500 testing through the command above and HumanEval testing through `${VLLM_FORK_DIR}/examples/offline_inference/jetspec_profiling_humaneval_tree_unit_kvlayout.sh`.
-
-## JetSpec++ (new)
-
-JetSpec++ is a preview of the next method. It refines a block of draft tokens
-with J passes and R refresh passes, and verifies every proposal against the
-target, so the output is identical to greedy autoregressive decoding.
-
-| Path | Code | Install extra | Guide |
-|---|---|---|---|
-| Torch reference method | `jetspec/methods/jetspec_plus_plus/` | `jetspec-plus-plus` | [method README](jetspec/methods/jetspec_plus_plus/README.md) |
-| Serving engine (Qwen3-8B, Qwen3.8-27B preview) | `jetspec/engines/jetspec_plus_plus/` | per-platform lock file | [engine README](jetspec/engines/jetspec_plus_plus/README.md) |
-
-## Results
-
-### Engine Results
-
-The optimized engine runs single-stream (batch size 1) Qwen3-8B tree-speculative decoding with paged KV and CUDA-graph verification. NVIDIA B200, bf16, the production configuration below (`--drafter graphed`, warm steady-state), with a pinned CPU reservation so the host-bound batch-1 round is reproducible. These closely align with the [`vLLM v1 integration`](https://github.com/JetSpec-project/vllm-jetspec).
+Engine results: single-stream (batch size 1) Qwen3-8B on NVIDIA B200, bf16, `--drafter graphed`, warm steady state, with a pinned CPU reservation.
 
 | dataset | JetSpec engine TPS | accept_len |
 |---|---:|---:|
@@ -268,11 +228,7 @@ The optimized engine runs single-stream (batch size 1) Qwen3-8B tree-speculative
 | LiveCodeBench | **684 tok/s** | 7.66 |
 | MT-Bench | **545 tok/s** | 4.88 |
 
-
-
-### Tree Algorithms
-
-Common algorithms exposed by `bench/jetspec/reference/benchmark.py`:
+Tree algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 
 | Algorithm | Purpose |
 |---|---|
@@ -283,23 +239,26 @@ Common algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 | `class_histogram` | class-conditioned profile-guided tree shaping |
 | `depth_rank_histogram` | offline profile table over `(depth, rank)` acceptance |
 
+</details>
 
-## Acknowledgements
+## For Coding Agents
 
-JetSpec builds on code from causal_parallel_drafting (MIT), vLLM (Apache 2.0)
-and SSD (MIT). The attributions are in
-[`jetspec/THIRD_PARTY_NOTICES`](jetspec/THIRD_PARTY_NOTICES).
+[`AGENTS.md`](AGENTS.md) describes every command, option and component in this repository.
 
 ## Citation
 
 ```bibtex
+@article{feng2026jetspecpp,
+  title   = {JetSpec++: Foresight Parallel Drafting with Self Refinements},
+  author  = {Feng, Zhaoxiang and Hu, Lanxiang and Yuan, Haoran and Qian, Yu-Yang and Yang, Jihui and Zhao, Peng and Zhu, Yibo and Rosing, Tajana and Zhang, Hao},
+  journal = {arXiv preprint arXiv:2610.19792},
+  year    = {2026}
+}
+
 @article{hu2026jetspec,
-  title = {JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting},
-  author = {Hu, Lanxiang and Feng, Zhaoxiang and Wu, Yulun and Yuan, Haoran and Zhao, Yujie and Qian, Yu-Yang and Wang, Bojun and Zhao, Peng and Jiang, Daxin and Zhu, Yibo and Rosing, Tajana and Zhang, Hao},
+  title   = {JetSpec: Breaking the Scaling Ceiling of Speculative Decoding with Parallel Tree Drafting},
+  author  = {Hu, Lanxiang and Feng, Zhaoxiang and Wu, Yulun and Yuan, Haoran and Zhao, Yujie and Qian, Yu-Yang and Wang, Bojun and Zhao, Peng and Jiang, Daxin and Zhu, Yibo and Rosing, Tajana and Zhang, Hao},
   journal = {arXiv preprint arXiv:2606.18394},
-  year = {2026},
-  url = {https://arxiv.org/abs/2606.18394},
-  eprint = {2606.18394},
-  note = {Preprint}
+  year    = {2026}
 }
 ```
