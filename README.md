@@ -4,7 +4,11 @@
 
 <div align="center"><h1>JetSpec++: Foresight Parallel Drafting with Self Refinements</h1></div>
 
-**JetSpec++** is a lossless speculative decoding method that hides drafting behind verification. The draft model runs on a second GPU, drafts the next block before the target finishes verifying the current one, and refines its draft while it waits.
+**JetSpec++** is a lossless speculative decoding method that hides almost all of its drafting cost behind verification. It drafts the next block on a second GPU while the target model verifies the current one, and it refines that draft while it waits.
+
+- **Faster:** on a GB200 pair, up to **7.45x** over autoregressive decoding and **1.54x** over DSpark, at up to **1,361 tokens per second** for one request.
+- **Hidden drafting:** the time per round beyond verification falls by up to **84%** relative to DSpark.
+- **Longer acceptance:** the longest acceptance length on all seven benchmarks, **8.94** tokens per round on average at temperature 0, against 6.89 for DSpark.
 
 <details open>
 <summary><strong>JetSpec++</strong></summary>
@@ -12,6 +16,8 @@
 [**Paper**](https://arxiv.org/abs/2610.19792) | [**Models**](https://huggingface.co/JetSpec)
 
 <p align="center"><b>[ Demo video placeholder ]</b></p>
+
+The fast-engine lane in the video uses a 4-bit target that this repository does not include yet.
 
 Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup over autoregressive decoding (AR), from Table 3 of the [paper](https://arxiv.org/abs/2610.19792):
 
