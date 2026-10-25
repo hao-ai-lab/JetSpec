@@ -1,0 +1,36 @@
+{
+  "schema": "jetspec.serve_recipe/1",
+  "name": "blockhead15-800k-graphed",
+  "method": "blockhead",
+  "display_name": "DSpark-15 (800k)",
+  "regime": "graphed",
+  "passes": 1,
+  "blockhead_artifact": "blockhead800k_checkpoint",
+  "blockhead_file_sha256": {
+    "config.json": "5ce645743b8843bbf400a84e9430f7e8a07dd4066e68bf9a6678b9f79e2226d9",
+    "dspark.py": "9e85e8939f4c777f508ce6aeca0833050e1c7423ada8313c9ba25cff1b8b1981",
+    "dspark_heads.py": "a8448b3fd9542fe6e1d9ecccd06538676a9d1b7dd42b80046343cfb3180784e0",
+    "model.safetensors": "0470b2be9459a422de83920c19611820ebfa854bcc9c65481d68611ab7ab990c"
+  },
+  "cuda_arch": "8.0",
+  "environment": {
+    "JETSPEC_BLOCKHEAD_GRAPH": "1",
+    "JETSPEC_DRAFT_DTYPE": "bf16",
+    "JETSPEC_TARGET_DTYPE": "bf16",
+    "MKL_NUM_THREADS": "4",
+    "OMP_NUM_THREADS": "4",
+    "OPENBLAS_NUM_THREADS": "4",
+    "PYTHONOPTIMIZE": "1",
+    "SSD_ATTENTION_BACKEND": "flashinfer",
+    "TORCHINDUCTOR_COMPILE_THREADS": "2",
+    "W240_SPEC_THREADS": "4",
+    "W240_THREAD_CAPS": "1",
+    "W240_WARMUP": "0"
+  },
+  "blockhead_source": {
+    "hf_repo": "Moonlight556/qwen3-8b-base-seqhead-b15-800k-s584298",
+    "revision": "89eaeb2d01e9c52061bfb9321553e5d5ee35433e",
+    "note": "target release weights (embed_tokens, lm_head) live inside model.safetensors; no separate target_release_weights.safetensors",
+    "causal_head": "config.json declares dflash_config.causal_head false, which is correct for the block head: it loads through the blockhead kit (serving/jetspec/blockhead_serve.py), which reads this key itself, not through JetSpecDrafter.load, so serve's causal_head refusal does not apply"
+  }
+}

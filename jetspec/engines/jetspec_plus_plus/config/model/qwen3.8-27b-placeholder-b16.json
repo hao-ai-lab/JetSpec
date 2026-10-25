@@ -1,0 +1,1058 @@
+{
+  "model_execution": {
+    "defaults": {
+      "adapter_gemm_tune": "0",
+      "adapter_query_layout_fused": "0",
+      "attention_backend": "sdpa",
+      "attn_sm100": "0",
+      "c1_append_fold": "0",
+      "c1_attn_len": "0",
+      "c1_gateup_packed": "0",
+      "c1_gluon": "0",
+      "c1_kv_split_lean": "0",
+      "c1_qk_fused": "0",
+      "c1_qk_warps": "4",
+      "c1_span_kv_fused": "0",
+      "candidate_decode_lean": "0",
+      "chain_admit_host_lean": "0",
+      "chain_post_lean": "0",
+      "ctx_kv_append": "0",
+      "ctx_kv_fused": "0",
+      "decoder_attn_len": "0",
+      "decoder_gqa_view": "0",
+      "decoder_lmhead_kn": "0",
+      "decoder_prefix_merge": "0",
+      "decoder_qkv_fused": "0",
+      "decoder_select_radix": "0",
+      "decoder_single_gateup_packed": "0",
+      "decoder_slot_write": "0",
+      "j0_lmhead_kn": "0",
+      "jpass_attn_len": "0",
+      "k3_hazard_split": "0",
+      "refresh_attn_lean": "0",
+      "refresh_attn_tune": "0",
+      "refresh_gateup_packed": "0",
+      "refresh_inject_inclusive": "0",
+      "refresh_inject_lean2": "0",
+      "refresh_inject_mask_fused": "0",
+      "refresh_kv_pack": "0",
+      "refresh_prep_lean": "0",
+      "refresh_qk_fused": "0",
+      "refresh_swap_glue": "0",
+      "verify_outcome_fused": "0",
+      "verify_plan_lean": "0",
+      "verify_post_lean": "0",
+      "verify_select_lean": "0",
+      "verify_plan_reuse": "0",
+      "hybrid_pair": "1",
+      "hybrid_c1_lean": "1",
+      "hybrid_c1_fused": "1",
+      "hybrid_c1_gluon": "1",
+      "hybrid_decoder_refresh_state_lean": "1",
+      "hybrid_fast_snapshot": "1",
+      "hybrid_fused_norm": "1",
+      "hybrid_verify_triton": "0",
+      "hybrid_verify_flashinfer": "0",
+      "ctx_kv_direct": "0",
+      "draft_streams": "0",
+      "refresh_streams": "0",
+      "verify_select_host": "0",
+      "chain_refresh_key_bucket": "0"
+    },
+    "legacy": {
+      "adapter_gemm_tune": "1",
+      "adapter_query_layout_fused": "1",
+      "attention_backend": "flashinfer",
+      "attn_sm100": "1",
+      "c1_append_fold": "1",
+      "c1_attn_len": "1",
+      "c1_gateup_packed": "1",
+      "c1_gluon": "1",
+      "c1_kv_split_lean": "1",
+      "c1_qk_fused": "1",
+      "c1_qk_warps": "4",
+      "c1_span_kv_fused": "1",
+      "candidate_decode_lean": "1",
+      "chain_admit_host_lean": "1",
+      "chain_post_lean": "1",
+      "ctx_kv_append": "1",
+      "ctx_kv_fused": "1",
+      "decoder_attn_len": "1",
+      "decoder_gqa_view": "1",
+      "decoder_lmhead_kn": "1",
+      "decoder_prefix_merge": "1",
+      "decoder_qkv_fused": "1",
+      "decoder_select_radix": "1",
+      "decoder_single_gateup_packed": "1",
+      "decoder_slot_write": "1",
+      "j0_lmhead_kn": "1",
+      "jpass_attn_len": "1",
+      "k3_hazard_split": "1",
+      "refresh_attn_lean": "1",
+      "refresh_attn_tune": "1",
+      "refresh_gateup_packed": "1",
+      "refresh_inject_inclusive": "1",
+      "refresh_inject_lean2": "1",
+      "refresh_inject_mask_fused": "1",
+      "refresh_kv_pack": "1",
+      "refresh_prep_lean": "1",
+      "refresh_qk_fused": "1",
+      "refresh_swap_glue": "1",
+      "verify_outcome_fused": "1",
+      "verify_plan_lean": "1",
+      "verify_post_lean": "1",
+      "verify_select_lean": "1",
+      "ctx_kv_direct": "1",
+      "draft_streams": "1",
+      "refresh_streams": "1",
+      "verify_select_host": "1",
+      "verify_plan_reuse": "1",
+      "chain_refresh_key_bucket": "1"
+    },
+    "capabilities": {
+      "stateful": true
+    },
+    "sm80": {
+      "attention_backend": "triton",
+      "hybrid_verify_triton": "1"
+    },
+    "sm100": {
+      "attention_backend": "flashinfer",
+      "hybrid_verify_flashinfer": "1"
+    }
+  },
+  "adapter": {
+    "artifact": "qwen3p8_27b_adapter_base_800k",
+    "config_sha256": "e967187b162f8cf0f05cb3f30fce2cc0073eed0a8dcce8a6ec902be651a30c44",
+    "published": true
+  },
+  "artifacts": [
+    {
+      "destination_root": {
+        "namespace": "fetch_destination_relative_path",
+        "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+        "resolves": true,
+        "value": "qwen3p8_27b_adapter_base_800k"
+      },
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+              "resolves": true
+            },
+            "uploaded_bytes": 2760
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": "e967187b162f8cf0f05cb3f30fce2cc0073eed0a8dcce8a6ec902be651a30c44"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+            "resolves": true,
+            "value": "head.safetensors"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+              "resolves": true
+            },
+            "uploaded_bytes": 8934264728
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+            "resolves": true,
+            "value": "head.safetensors"
+          },
+          "sha256": "ebfaff7dfbbdb44b496b29e98e861ade4185623f46fb68b26c16fd28a3ab24e9"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+            "resolves": true,
+            "value": "converter.safetensors"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "tools/export_c1_adapter.py validated byte-preserving export",
+              "resolves": true
+            },
+            "uploaded_bytes": 262154472
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+            "resolves": true,
+            "value": "converter.safetensors"
+          },
+          "sha256": "89e58efc693176ab66f909ba5a8bfbd301fcb627f274c0d72dc89f240e29c577"
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_adapter_base_800k",
+      "provenance": {
+        "attributes": {
+          "description": "Final base-800k 27B C1 adapter, checkpoint-194006: CTXKV_DRIVER_DONE reported by serving5 at 2026-10-03T23:50Z, byte-preserving CPU export serving run 1003-165310-4edc. Reported held-out cosine tap61: math 0.9501, mixed 0.9252, heldout_cosine 0.9569.",
+          "environment_variables": [
+            "JETSPEC_ADAPTER_HEAD",
+            "JETSPEC_ADAPTER_CONFIG"
+          ],
+          "omitted_files": {
+            "names": [
+              ".gitattributes",
+              "MANIFEST.json",
+              "README.md",
+              "metadata.json",
+              "metrics.json",
+              "run_config.json",
+              "run_heldout_taps.jsonl",
+              "run_metadata.json"
+            ],
+            "reason": "Not consumed by the serving loader."
+          },
+          "recipe": "python3 tools/export_c1_adapter.py --checkpoint <checkpoint> --config <arm-config.json> --output <adapter-directory>",
+          "serving_layout": "trained_c1",
+          "source_path": {
+            "namespace": "local-provenance",
+            "resolved_by": "tools/export_c1_adapter.py validated byte-preserving final export, serving CPU run 1003-165310-4edc",
+            "resolves": true,
+            "value": "local-provenance"
+          }
+        },
+        "has_files": true,
+        "order": 36,
+        "repository": {
+          "namespace": "huggingface_repo_id",
+          "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+          "resolves": true
+        },
+        "revision": {
+          "namespace": "huggingface_revision",
+          "resolved_by": "apply_registration.py; offline HF tree at 304bed7ac161783e32237425e3675854cb4fd7ee; inventory sha256 161e7e2a23d3a63e5002a3c3fe5d1c166daf8b4586fec2be7a83bca99681f34d",
+          "resolves": true
+        }
+      },
+      "registration_commit": "304bed7ac161783e32237425e3675854cb4fd7ee",
+      "repository": "JetSpec/jetspec-plus-plus-qwen3p8-27b-adapter",
+      "revision": "304bed7ac161783e32237425e3675854cb4fd7ee",
+      "training_config_sha256": null
+    },
+    {
+      "destination_root": {
+        "namespace": "fetch_destination_relative_path",
+        "resolved_by": "tools/fetch_artifacts.py --dry-run",
+        "resolves": true,
+        "value": "qwen3p8-27b-drafter-main6ep-ep6"
+      },
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "local-provenance",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 1610
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+            "resolves": true,
+            "value": "config.json"
+          },
+          "sha256": "b608f42b8c423885601edee2f2c25bd3b623af677b84b9919877ca3947382568"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
+            "resolves": true,
+            "value": "dflash.py"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "local-provenance",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 19174
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+            "resolves": true,
+            "value": "dflash.py"
+          },
+          "sha256": "2a1d058c7f687d464c71425d47b57d737c0fc98a5bef85909c5eed71abc020ea"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "local-provenance",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 3460432504
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "sha256": "20361600f809e36a5d33aa436bf56faf8eb8bf6f619d9714cc7d337279201bbe"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "tools/fetch_artifacts.py --dry-run",
+            "resolves": true,
+            "value": "target_release_weights.safetensors"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "sha256sum of read-only a91/drafter-ep6; rx run 0930-231901-2e2b, job 6031",
+              "resolves": true
+            },
+            "source_path": {
+              "namespace": "local-provenance",
+              "resolved_by": "Training origin; verified bytes in a91/drafter-ep6",
+              "resolves": true,
+              "value": "local-provenance"
+            },
+            "uploaded_bytes": 5085593832
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+            "resolves": true,
+            "value": "target_release_weights.safetensors"
+          },
+          "sha256": "4c1bcc4c722e4831c71f48bc726184b14b797fbfce44119cc414ce1e17b67b60"
+        }
+      ],
+      "kind": "published",
+      "name": "qwen3p8_27b_drafter_main6ep_ep6",
+      "provenance": {
+        "attributes": {
+          "description": "Private trained Qwen3.8-27B main6ep epoch-6 drafter at its commit-pinned JetSpec HF home, with config, dflash source, model and target release weights at the repository root. Not a release.",
+          "environment_variables": [
+            "JETSPEC_SYNC_DRAFTER"
+          ],
+          "omitted_files": {
+            "names": [
+              ".gitattributes"
+            ],
+            "reason": "Not consumed by the serving loader."
+          },
+          "source_path": {
+            "namespace": "local-provenance",
+            "resolved_by": "serving brief; a91 copy read-only sha256sum receipt",
+            "resolves": true,
+            "value": "local-provenance"
+          }
+        },
+        "has_files": true,
+        "order": 27,
+        "repository": {
+          "namespace": "huggingface_repo_id",
+          "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+          "resolves": true
+        },
+        "revision": {
+          "namespace": "huggingface_revision",
+          "resolved_by": "apply_registration.py; offline HF tree at 79ad9d418e8ab18b69d7a61c62b6f0301491b2ad; inventory sha256 02714518e085d236a0c6378906d53c5db3d22bb6af875d04af340264d8ede6d4",
+          "resolves": true
+        }
+      },
+      "registration_commit": "79ad9d418e8ab18b69d7a61c62b6f0301491b2ad",
+      "repository": "JetSpec/jetspec-plus-plus-qwen3p8-27b",
+      "revision": "79ad9d418e8ab18b69d7a61c62b6f0301491b2ad",
+      "training_config_sha256": null
+    },
+    {
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving generated placeholder bundle on serving",
+            "resolves": true,
+            "value": "thresholds.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving remote sha256 receipt",
+              "resolves": true
+            }
+          },
+          "remote": null,
+          "sha256": "01eaebfbad1d2c7f447e4bf24a55f03b5d55142b128f74f68c63e537c05c4b29"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving generated placeholder bundle on serving",
+            "resolves": true,
+            "value": "decoder/manifest.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving remote sha256 receipt",
+              "resolves": true
+            }
+          },
+          "remote": null,
+          "sha256": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b"
+        }
+      ],
+      "kind": "generated",
+      "name": "jetspecpp_27b_placeholder_heads",
+      "provenance": {
+        "attributes": {
+          "recipe": "tools/make_synthetic_bundle.py --hybrid-target --draft-layers 5 --draft-intermediate 17408"
+        },
+        "has_files": true,
+        "order": 32
+      },
+      "registration_commit": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
+      "repository": "local-artifact",
+      "revision": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
+      "training_config_sha256": null
+    },
+    {
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving generated placeholder bundle on serving",
+            "resolves": true,
+            "value": "model.safetensors"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving remote sha256 receipt",
+              "resolves": true
+            }
+          },
+          "remote": null,
+          "sha256": "45021996ba2c5ced6b60e3eea4646ad938f6c96935457b3a70e2fd10cd6b4635"
+        }
+      ],
+      "kind": "generated",
+      "name": "jetspecpp_27b_placeholder_release",
+      "provenance": {
+        "attributes": {
+          "recipe": "tools/make_synthetic_bundle.py --hybrid-target --draft-layers 5 --draft-intermediate 17408"
+        },
+        "has_files": true,
+        "order": 31
+      },
+      "registration_commit": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
+      "repository": "local-artifact",
+      "revision": "65ebfad1c30e0c1d24a1fc5b89a3a4e8e255ae82",
+      "training_config_sha256": null
+    }
+  ],
+  "decoder_slice": {
+    "source": "target_slice",
+    "target_files": {
+      "config.json": "191e0af232104ed8b65258cf3fb2b842e288008baca7633c11b82a1ac7203aab",
+      "model-00016-of-00018.safetensors": "73cb9a1089fb6155cb648609478d6633be8a5c7d9ca5a05bc8925ce8a553cefe",
+      "model-00017-of-00018.safetensors": "beb51f01056142ac4984bd800507b0dd0fd18de57f8e9ef6ea41d1a3598983a8",
+      "model-00018-of-00018.safetensors": "1d3479509e21494658f9b64d317f5ea8e55c4025d28c702d6c4d0b356ce8ea06",
+      "model.safetensors.index.json": "77042094076611b69791a610065f28b7013b8c621795fa86ddccc8bac7d1b9df"
+    }
+  },
+  "decoder_slice_sha256": "43eb014293a5bace28116f6289ca3b893507ccbe2104a102bb4d370b4a0c308b",
+  "draft_config_sha256": "6d735c6c9b552258a33692c9a2ec5cf9bb045e89814fd5cd5cef26888e39ffc1",
+  "drafter": {
+    "artifact": "qwen3p8_27b_drafter_main6ep_ep6",
+    "config_sha256": "b608f42b8c423885601edee2f2c25bd3b623af677b84b9919877ca3947382568",
+    "published": true
+  },
+  "target": {
+    "dtype": "bf16",
+    "family": "hybrid",
+    "repository": "Qwen/Qwen3.8-27B",
+    "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "taps": [
+      5,
+      19,
+      33,
+      47,
+      61
+    ]
+  },
+  "target_release": {
+    "artifact": "jetspecpp_27b_placeholder_release",
+    "file": "target_release_weights.safetensors"
+  },
+  "thresholds": {
+    "anchor_predictor": {
+      "drej_top1_grouped": {
+        "group_selection": {
+          "gsm8k": {
+            "0.94": {
+              "own_threshold_groups": [
+                "not-drej-top1"
+              ],
+              "pooled_fallback_groups": [
+                "drej-top1"
+              ]
+            },
+            "0.99": {
+              "own_threshold_groups": [
+                "not-drej-top1"
+              ],
+              "pooled_fallback_groups": [
+                "drej-top1"
+              ]
+            }
+          },
+          "math500": {
+            "0.94": {
+              "own_threshold_groups": [
+                "not-drej-top1"
+              ],
+              "pooled_fallback_groups": [
+                "drej-top1"
+              ]
+            },
+            "0.99": {
+              "own_threshold_groups": [],
+              "pooled_fallback_groups": [
+                "not-drej-top1",
+                "drej-top1"
+              ]
+            }
+          }
+        },
+        "gsm8k": {
+          "0.94": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1495,
+              "rule": "Pooled fallback q_hat at coverage 0.94; d_rej group n_group=246 is below minimum 300; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.9310863837599754
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1249,
+              "rule": "Conditional d_rej group q_hat at coverage 0.94; group is decoder pre-deletion top-1 does not equal d_rej (drej_rank==1); n_group=1249 meets minimum 300.",
+              "value": 0.9290421828627586
+            }
+          },
+          "0.99": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1495,
+              "rule": "Pooled fallback q_hat at coverage 0.99; d_rej group n_group=246 is below minimum 1000; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.9997493520204443
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1249,
+              "rule": "Conditional d_rej group q_hat at coverage 0.99; group is decoder pre-deletion top-1 does not equal d_rej (drej_rank==1); n_group=1249 meets minimum 1000.",
+              "value": 0.9992900021607056
+            }
+          }
+        },
+        "math500": {
+          "0.94": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1155,
+              "rule": "Pooled fallback q_hat at coverage 0.94; d_rej group n_group=215 is below minimum 300; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.8500497341156006
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 940,
+              "rule": "Conditional d_rej group q_hat at coverage 0.94; group is decoder pre-deletion top-1 does not equal d_rej (drej_rank==1); n_group=940 meets minimum 300.",
+              "value": 0.8353896141052246
+            }
+          },
+          "0.99": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1155,
+              "rule": "Pooled fallback q_hat at coverage 0.99; d_rej group n_group=215 is below minimum 1000; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.982045691460371
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1155,
+              "rule": "Pooled fallback q_hat at coverage 0.99; d_rej group n_group=940 is below minimum 1000; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.982045691460371
+            }
+          }
+        }
+      },
+      "pooled": {
+        "gsm8k": {
+          "0.94": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1495,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.94.",
+            "value": 0.9310863837599754
+          },
+          "0.99": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1495,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.99.",
+            "value": 1.0
+          }
+        },
+        "math500": {
+          "0.94": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1155,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.94.",
+            "value": 0.8500497341156006
+          },
+          "0.99": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1155,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.99.",
+            "value": 1.0
+          }
+        }
+      }
+    },
+    "anchor_predictor_v1": {
+      "served_g": {
+        "drej_top1_grouped_note": "No grouped rule for V1: revision 1's anchor_predictor/drej_top1_grouped conditions on the decoder's pre-deletion top-1 (drej_rank), which no V1 read stored; only the pooled rule is available for V1.",
+        "pooled": {
+          "gsm8k": {
+            "0.90": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9054545983672142
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9618559069931507
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.999704080139054
+            }
+          },
+          "math500": {
+            "0.90": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.8341862857341766
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9029182195663452
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9933349778875709
+            }
+          }
+        }
+      },
+      "true_window": {
+        "drej_top1_grouped_note": "No grouped rule for V1: revision 1's anchor_predictor/drej_top1_grouped conditions on the decoder's pre-deletion top-1 (drej_rank), which no V1 read stored; only the pooled rule is available for V1.",
+        "pooled": {
+          "gsm8k": {
+            "0.90": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.8398190438747406
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9196712821722031
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9991916848230176
+            }
+          },
+          "math500": {
+            "0.90": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.7718454152345657
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.8595695942640305
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9841666128486395
+            }
+          }
+        }
+      }
+    },
+    "e04_kscore_blend": {
+      "pooled": {
+        "a": {
+          "value": 0.14081040999526265
+        },
+        "argmax": {
+          "value": 1.0932398448477196
+        },
+        "b": {
+          "value": 0.550744040411968
+        },
+        "c": {
+          "value": -0.40565015695219186
+        },
+        "pos": {
+          "value": 0.40013685118584735
+        },
+        "top": {
+          "value": -0.011481179401009393
+        }
+      }
+    },
+    "e04_rowrule_joint": {
+      "pooled": {
+        "tau": {
+          "J0d0": {
+            "value": 0.022204845678061247
+          },
+          "J1": {
+            "value": 0.10601941728964448
+          },
+          "J2": {
+            "value": 0.020702435867860913
+          },
+          "J3": {
+            "value": 0.022204845678061247
+          }
+        },
+        "temperature": {
+          "value": 1.2
+        }
+      }
+    },
+    "eng04_ablation_refit": {
+      "calibration": "U",
+      "calibration_cells": [
+        "c1-b16-j2r1",
+        "c1-b16-j3r1"
+      ],
+      "decoder": "U",
+      "level": 0.93,
+      "refit_sha256": "72ff6b876b1ed897345472b4bd276932eddc4dbe670d272e1ba5c4e18356c391"
+    },
+    "k_predictor": {
+      "J0d0": {
+        "gsm8k": {
+          "0.90": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1556,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac90_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.90.",
+            "value": 0.9539184457583394
+          },
+          "0.95": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1556,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac95_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.95.",
+            "value": 0.9798976985750059
+          },
+          "0.99": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1556,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac99_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.99.",
+            "value": 0.9788677010219544
+          }
+        },
+        "math500": {
+          "0.90": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1328,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac90_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.90.",
+            "value": 0.9516181468963623
+          },
+          "0.95": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1328,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac95_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.95.",
+            "value": 0.9729203462600708
+          },
+          "0.99": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1328,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac99_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.99.",
+            "value": 0.9804479195736349
+          }
+        }
+      },
+      "J1": {
+        "gsm8k": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9809650245649083
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9842315514106303
+          }
+        },
+        "math500": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9813858536060547
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9675860763527453
+          }
+        }
+      },
+      "J2": {
+        "gsm8k": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9737647175788879
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9788677010219544
+          }
+        },
+        "math500": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9695344372568081
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9812049870379269
+          }
+        }
+      }
+    },
+    "numeric_dtype": "float64",
+    "q_hat_definition": "score = 1 - p(true); q_hat is ceil((n+1)*coverage)-th smallest, via code/logs/lacall_eng04.py::q_hat; sets use p >= 1-q_hat",
+    "row_sums": {
+      "gsm8k": {
+        "k0.95_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 7.740445859872612
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 7.635350318471337
+          }
+        },
+        "k0.95_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 37.02070063694268
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 41.18630573248408
+          }
+        },
+        "k0.99_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 11.719745222929935
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 11.979299363057326
+          }
+        },
+        "k0.99_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 54.6687898089172
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 64.15127388535032
+          }
+        }
+      },
+      "math500": {
+        "k0.95_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 7.7631578947368425
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 7.735087719298246
+          }
+        },
+        "k0.95_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 13.86140350877193
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 15.24736842105263
+          }
+        },
+        "k0.99_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 11.005263157894737
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 11.159649122807018
+          }
+        },
+        "k0.99_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 19.00701754385965
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 22.16140350877193
+          }
+        }
+      }
+    },
+    "schema_version": 1,
+    "w314_provenance": {
+      "fitted_on": "w418E + markov head, D1 adapter, decoder o02; j01 served on calibration rail 32-95",
+      "level": 0.93,
+      "refit": "heads-lane jd01 (fitted on w380)",
+      "source_bundle": "j01-o02-joint"
+    }
+  },
+  "thresholds_fit": {
+    "block_sizes": [
+      16
+    ],
+    "k_score": "blend_dec",
+    "row_rule": "joint"
+  },
+  "thresholds_sha256": "01eaebfbad1d2c7f447e4bf24a55f03b5d55142b128f74f68c63e537c05c4b29"
+}

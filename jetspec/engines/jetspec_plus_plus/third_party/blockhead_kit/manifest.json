@@ -1,0 +1,12 @@
+{
+  "rail_commit": "07ce5901000141ac7b300a76a271233efd626740",
+  "files": {
+    "adapter.py": "b9d805d2fcbc373ce17df91953b8b330ccb095ab0cccf6fa5f070ad0d6901ef0",
+    "backbone.py": "7b91ad54404eb39ce7c067a38732268f7086f54ed0147108b620083d6b4c50cb",
+    "draft.py": "79ffca46348b14114685bf00a390c5b57a04a9b30e99930bdf8000f0413cb4e5",
+    "forward_base.py": "3954308134e6b584fcd534124ab86af5d6b192a5ae87c4bca9d1c8877d6842a4",
+    "head.py": "50c5f07520a6f92d5b591b2765b9d784805298c12c3f41828410302f1a5dfa34",
+    "markov.py": "35175bee098a8bab3678dd0d56de17fbcadec96a648c1e5069721972bf2add74",
+    "sampler.py": "46797fe3563cdfbd52c5e01802e16907b6b9db93aa0540eae0bee0db0b09f66a"
+  }
+}

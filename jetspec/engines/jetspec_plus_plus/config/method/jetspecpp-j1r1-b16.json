@@ -1,0 +1,36 @@
+{
+  "method_execution": {
+    "defaults": {
+      "refresh_swap": "1",
+      "refresh_fixed": "1",
+      "chain_miss_redraft": "1",
+      "refresh_swap_lean": "1"
+    }
+  },
+  "agreed_pins": false,
+  "anchor": {
+    "cap": 32,
+    "coverage": 0.99
+  },
+  "block_size": 16,
+  "cache_rows": {
+    "cap": 4,
+    "fill_zero": false,
+    "floor": 0
+  },
+  "family": "jetspecpp",
+  "k_score": "blend_dec",
+  "label": "J2",
+  "miss_redraft": true,
+  "refresh": {
+    "cap": null,
+    "inject_width": 14,
+    "mode": "after_j0",
+    "swap": true
+  },
+  "row_rule": "joint",
+  "schedule": {
+    "j": 1,
+    "r": 1
+  }
+}
