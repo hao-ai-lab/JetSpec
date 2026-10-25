@@ -1,1 +1,13 @@
-from . import accum_logp  # noqa: F401  (registers V0 accum_logp — the full-fanout baseline)
+"""Compatibility exports for jetspec.methods.jetspec.tree.baselines."""
+from importlib import import_module as _import_module
+
+_impl = _import_module("jetspec.methods.jetspec.tree.baselines")
+__all__ = getattr(_impl, "__all__", [name for name in vars(_impl) if not name.startswith("_")])
+
+
+def __getattr__(name):
+    return getattr(_impl, name)
+
+
+def __dir__():
+    return dir(_impl)

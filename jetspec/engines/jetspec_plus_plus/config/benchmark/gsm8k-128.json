@@ -1,0 +1,28 @@
+{
+  "cap": 2048,
+  "chat_template": "qwen3-no-think",
+  "count": 128,
+  "dataset": "gsm8k",
+  "offset": 0,
+  "prompt_files": [
+    {
+      "count": 128,
+      "file": "gsm8k-t0.prompts.json",
+      "sha256": "f95ef100190abdb8810c5e8b12c0a5efc1525d31a6f272861c158f453cddf2b7",
+      "temperature": 0,
+      "turn": 1
+    },
+    {
+      "count": 128,
+      "file": "gsm8k-t1.prompts.json",
+      "sha256": "f95ef100190abdb8810c5e8b12c0a5efc1525d31a6f272861c158f453cddf2b7",
+      "temperature": 1,
+      "turn": 1
+    }
+  ],
+  "repeats": 1,
+  "seed": 0,
+  "stop_at_eos": true,
+  "temperature": 0,
+  "turns": 1
+}

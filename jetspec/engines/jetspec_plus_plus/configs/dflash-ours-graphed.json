@@ -1,0 +1,34 @@
+{
+  "schema": "jetspec.serve_recipe/1",
+  "name": "dflash-ours-graphed",
+  "method": "dflash",
+  "display_name": "DFlash \u00b7 ours",
+  "regime": "graphed",
+  "passes": 1,
+  "blockhead_artifact": "dflash_ours_drafter",
+  "blockhead_file_sha256": {
+    "config.json": "10e862b02d25027758e8bd8aa0c34201824ae242d51f67f5f23583d50cf2b219",
+    "dflash.py": "23af7536bce76196b0c550ac4d51b3d7cb855c25324de675d5fba8c64acd7ddf",
+    "model.safetensors": "79d60fdf4a1b846320689c390487b78436962e65e45df078021debada696b491"
+  },
+  "cuda_arch": "8.0",
+  "environment": {
+    "JETSPEC_BLOCKHEAD_GRAPH": "1",
+    "JETSPEC_DRAFT_DTYPE": "bf16",
+    "JETSPEC_TARGET_DTYPE": "bf16",
+    "MKL_NUM_THREADS": "4",
+    "OMP_NUM_THREADS": "4",
+    "OPENBLAS_NUM_THREADS": "4",
+    "PYTHONOPTIMIZE": "1",
+    "SSD_ATTENTION_BACKEND": "flashinfer",
+    "TORCHINDUCTOR_COMPILE_THREADS": "2",
+    "W240_SPEC_THREADS": "4",
+    "W240_THREAD_CAPS": "1",
+    "W240_WARMUP": "0"
+  },
+  "dflash_source": {
+    "hf_repo": "JetSpec/dflash-qwen3-8b-epoch6-3e-4-no-gamma",
+    "revision": "97b047532326a0cfe037fc0ea3927b34c5b1c6d1",
+    "note": "Bidirectional block-16 backbone; propose positions 1..15 after the anchor, no Markov head."
+  }
+}

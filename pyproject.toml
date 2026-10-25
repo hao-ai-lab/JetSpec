@@ -17,6 +17,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+jetspec-plus-plus = ["safetensors", "huggingface_hub"]
+jetspec-plus-plus-engine = [
+    "torch==2.8.0+cu128", "triton==3.4.0", "transformers==4.57.1",
+    "xxhash==3.5.0", "numpy==2.3.3", "safetensors==0.6.2", "tqdm==4.67.1",
+    "flashinfer-python==0.5.2", "sgl-kernel==0.3.17.post1",
+    "nvidia-cutlass-dsl==4.2.1", "wandb==0.22.0", "hf_transfer==0.1.9",
+    "tiktoken==0.12.0", "datasets==4.6.1", "huggingface_hub==0.36.2",
+    "ninja", "packaging",
+]
 kernel = ["triton"]
 bench = [
     "datasets",
@@ -35,3 +44,9 @@ flash-attn = ["psutil", "packaging", "ninja"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["jetspec*"]
+
+[tool.setuptools.package-data]
+"jetspec.engines.jetspec_plus_plus" = [
+    "README.md", "configs/*.json", "configs/*.txt", "artifacts/*.json",
+    "read/*.json", "config/*/*.json", "draft/method/*.json", "draft/policies/*.json", "*.json",
+]

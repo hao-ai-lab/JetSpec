@@ -1,0 +1,127 @@
+"""The single attachment table: module:qualname, label, side, kind.
+
+Parent spans remain visible. Reports subtract measured children to expose each
+parent's self time; parent durations are never stacked on their children.
+Host is the cheap default. ``both`` retains that host span and adds a buffered
+event pair on the current stream; ``side_stream`` records on ``self.stream``.
+``replay`` uses the component scope in eager and the exact CUDAGraph replay in
+graphed execution.
+"""
+
+# Locate the component from either its category or its stable forwarding path.
+from pathlib import Path as _ToolPath
+import sys as _tool_sys
+_TOOL_ROOT = next((p for p in _ToolPath(__file__).resolve().parents
+                   if (p / "artifacts/manifest.json").is_file() or (p / "artifacts/manifest.json").is_file()), _ToolPath.cwd())
+_tool_sys.path[:0] = [str(_TOOL_ROOT), str(_TOOL_ROOT / 'engine'), str(_ToolPath(__file__).resolve().parent)]
+if __name__ == "__main__" and any(a in ("-h", "--help") for a in _tool_sys.argv[1:]):
+    from jetspec.engines.jetspec_plus_plus.serving.entrypoints import cpu_help as _cpu_help
+    _cpu_help(__file__)
+
+SPANS = [
+    ('torch.cuda:Event.synchronize', 'existing_event_wait', 'draft', 'active_round'),
+    ('jetspec.engines.jetspec_plus_plus.draft.driver:ChainRoundDriver.next', 'round', 'draft', 'chain_driver'),
+    ('jetspec.engines.jetspec_plus_plus.wire.transport:ChainCommandInbox.next', 'wait_for_verify_command', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.wire.transport:OutcomeReceiveRing.take', 'outcome_receive', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.wire.transport:OutcomeReceiveRing.post', 'outcome_receive_post', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.wire.transport:OutcomeReceiveRing.stage_mirror', 'outcome_mirror_enqueue', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.draft.graph:ChainGraph.run', 'chain_graph', 'draft', 'chain_metrics'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:TargetRunner.run_jetspec_mixed_device', 'verify_forward', 'verify', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.models.target:TargetForCausalLM.compute_logits', 'lm_head', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:greedy_accept_device', 'accept_device', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.verify.outcome:launch_outcome_fused', 'commit_outcome_taps_ids', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:Verifier.finish_jetspec_postpublish', 'commit_host_state', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync.publish_device_outcome', 'handoff_envelope', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.wire.outcome_packet:OutcomeWire.pack', 'outcome_wire_pack', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.wire.outcome_packet:OutcomeWireRing.acquire', 'outcome_wire_acquire', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:announce_chain_command', 'outcome_command_announce', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:await_chain_receive', 'outcome_receive_ack', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync._prune_jetspec_request_sends', 'outcome_send_prune', 'verify', 'host'),
+    ('torch.distributed:isend', 'tensor_send_enqueue', 'verify', 'active_round'),
+    ('jetspec.engines.jetspec_plus_plus.wire.protocol:RequestPublisher._write', 'command_store_write', 'verify', 'background_key'),
+    ('torch.cuda:synchronize', 'existing_cuda_wait', 'draft', 'active_round'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head.forward', 'adapter', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head._forward_cached', 'adapter_cached', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head._eager_extend', 'adapter_extend', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head._cache_project', 'adapter_project', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head._cache_project_fused2', 'adapter_project_fused', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head._cache_query', 'adapter_query', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head._d1_append', 'adapter_append', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:unpack_candidate_delivery', 'candidate_decode', 'verify', 'background'),
+    ('jetspec.engines.jetspec_plus_plus.wire.protocol:CandidateMessage.cpu', 'candidate_receive_wait', 'verify', 'message_wait'),
+    ('jetspec.engines.jetspec_plus_plus.wire.protocol:CandidateReceiver._read', 'candidate_store_fetch', 'verify', 'background_key'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:JetSpecDrafter.commit', 'draft_commit', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.serving.model_runner:ModelRunner.recv_cmd', 'command_receive', 'draft', 'background'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:DraftRunner._receive_jetspec_request', 'request_receive', 'draft', 'background'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:unpack_request_wire', 'request_deserialize', 'draft', 'background'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:commit_sequences_batch', 'draft_commit_batch', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:cache_packed_metadata_batch', 'packed_metadata_batch', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:select_live_blocks_batch', 'block_selection_batch', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:PackedBlocks.__getitem__', 'materialize_selected_block', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:JetSpecSequence.replace_taps', 'replace_taps', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.engine.llm_engine:LLMEngine.step', 'engine_step', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.engine.llm_engine:LLMEngine.is_finished', 'scheduler_finished', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.step:SpecDecodeStep.decode', 'round', 'verify', 'round'),
+    ('jetspec.engines.jetspec_plus_plus.verify.step:AutoRegressiveStep.decode', 'round', 'verify', 'round'),
+    ('jetspec.engines.jetspec_plus_plus.comparisons.speculator_blockhead:SpeculatorBlockhead.speculate', 'round', 'draft', 'round'),
+    ('jetspec.engines.jetspec_plus_plus.engine.llm_engine:LLMEngine.exit', 'shutdown', 'verify', 'engine_close'),
+    ('jetspec.engines.jetspec_plus_plus.serving.model_runner:ModelRunner.exit', 'shutdown', 'draft', 'close'),
+    ('jetspec.engines.jetspec_plus_plus.serving.scheduler:Scheduler.schedule', 'scheduler', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.serving.scheduler:Scheduler.postprocess', 'result_publish', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.serving.scheduler:Scheduler.postprocess_speculate', 'postprocess', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync.speculate', 'speculate', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync._pack_jetspec_request', 'request_pack', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync._queue_jetspec_request', 'result_publish', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync._wait_for_jetspec_candidates', 'candidate_wait', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:TargetRunner.stage_jetspec_verify', 'verify_prestage', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:TargetRunner.prepare_staged_verify', 'verify_ids', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync._consume_jetspec_candidate_receive', 'candidate_consume', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync._post_jetspec_candidate_receive', 'candidate_receive', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:select_candidate_block', 'row_selection', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.multirow:select_candidate_drafts', 'candidate_decision', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:Verifier.verify', 'verify_accept_commit', 'verify', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.serving.model_runner:ModelRunner.run', 'verify_forward', 'verify', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:TargetRunner.run_jetspec_mixed', 'verify_forward', 'verify', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.blockhead_serve:TimedLinearBlockhead.propose', 'block_head', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.comparisons.blockhead_graph:StaticBlockheadGraph.propose', 'block_head', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.comparisons.sync_drafter:SyncChainDrafter.propose', 'block_head', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.comparisons.sync_drafter:StaticSyncDrafter.propose', 'block_head', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.comparisons.sync_drafter:SyncChainDrafter.forward_block', 'draft_pass', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.comparisons.sync_drafter:StaticSyncDrafter._run', 'draft_pass', 'draft', 'sync_query'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:greedy_accept', 'accept_decision', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.verify.forward:append_committed_taps', 'commit_taps', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.serving.scheduler:Scheduler.postprocess_speculate', 'kv_commit', 'verify', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:select_live_block', 'block_selection', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:admission_hypotheses', 'k_set_selection', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:decoder_k_selection', 'decoder_k_selection', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:KthRowsDrafter.stage', 'adapter_stage', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:JetSpecDrafter.stage', 'adapter_stage', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:KthRowsDrafter.propose', 'proposal', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:JetSpecDrafter.propose', 'catchup', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.draft.explore.legacy_kpred:KPredictor.predict_p_top1', 'k_predictor', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.draft.explore.legacy_kpred:KPredictor.predict', 'k_predictor', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.models.decoder_head:AnchorDecoder.predict', 'anchor_decoder', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.models.decoder_head:AnchorDecoder._prefix', 'anchor_prefix', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.models.decoder_head:AnchorDecoder._window_layer', 'anchor_window', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.models.decoder_head:anchor_offers', 'row_selection', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.models.fast:fast_keyed_rows', 'row_selection', 'draft', 'both'),
+    ('jetspec.engines.jetspec_plus_plus.models.lac:keyed_rows', 'row_selection', 'draft', 'both'),
+    # serving JETSPEC_ROWS_ASSEMBLY=1 folds the k score, the row rule and the keys into one device
+    # pass; the host functions above stay as its reference path and no longer run in a live round.
+    ('jetspec.engines.jetspec_plus_plus.jetspec.rows:EarlyContextKV.issue', 'context_early', 'draft', 'side_stream'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.rows:BucketRowDraftHead.update', 'context_update', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.rows:FastBucketRowDraftHead.update', 'context_update', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.rows:FastBucketRowDraftHead.refresh_incremental', 'context_refresh', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.rows:RowDraftHead.refresh_context', 'context_refresh', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:admission_refinement', 'refinement', 'draft', 'passes'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:run_refinement_protocol', 'refinement', 'draft', 'passes'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:run_refinement_protocol', 'refinement', 'draft', 'passes'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:BucketPass.__call__', 'bucket_pass', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:refresh_khat', 'refresh_khat', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head.refresh_cached', 'adapter_refresh', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.drafter:ServingCtxKVC1Head.refresh_window', 'adapter_refresh', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.rows:BucketRowDraftHead.inject_refresh', 'context_refresh_inject', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:_candidate_set_from_rows', 'candidate_pack', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.jetspec.live_rows:CandidateWire.pack', 'wire_pack', 'draft', 'host'),
+    ('jetspec.engines.jetspec_plus_plus.draft.rank:DraftRunner._send_jetspec_candidates', 'publish_send', 'draft', 'publish'),
+]

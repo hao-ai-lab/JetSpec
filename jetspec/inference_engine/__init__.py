@@ -1,26 +1,49 @@
-"""JetSpec — a minimal, self-contained high-throughput decode substrate.
+"""Compatibility exports for the JetSpec serving engine."""
+from importlib import import_module
+from importlib.abc import Loader, MetaPathFinder
+from importlib.util import spec_from_loader
+import sys
 
-A second decode *substrate* alongside ``jetspec.core`` (the reference HF/SDPA
-engine). Where ``jetspec.core`` favors clarity and single-clone reproducibility,
-``JetSpec`` favors throughput: a paged KV-cache, a triton tree-attention
-kernel, continuous batching, and a ``torch.compile``-fused + CUDA-graphed
-tree-verify path — a minimal engine this repo owns, rather than depending on an
-external serving fork.
+from jetspec.engines.jetspec import JetSpecEngine, SamplingParams
 
-It consumes the SAME engine-agnostic tree contract as ``jetspec.core``; the
-one-way dependency stays (engine -> tree, never the reverse)::
+__all__ = ['JetSpecEngine', 'SamplingParams']
 
-    from jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
+_MODULES = {
+    'engine': 'engine',
+    'paged_kv_cache': 'serving.paged_kv_cache',
+    'attn_metadata': 'serving.attn_metadata',
+    'scheduler': 'serving.scheduler',
+    'compiled_verify_stack': 'serving.compiled_verify_stack',
+    'paged_attn_backend': 'serving.paged_attn_backend',
+    'graph_capture': 'verify.graph_capture',
+    'paged_tree_attn': 'kernels.paged_tree_attn',
+    'paged_tree_attn_op': 'kernels.paged_tree_attn_op',
+}
 
-so every algorithm in ``jetspec.tree`` runs unchanged on either substrate. The
-choice of engine changes throughput — not what the tree builds, nor whether
-decoding stays lossless.
 
-Status: shipped (N0–N3 + the compiled / CUDA-graph tree-verify path). The SDPA
-path is the default + lossless oracle; the kernel / compiled / cudagraph
-backends are opt-in via ``JetSpecEngine(attn_backend=...)``. See ``DESIGN.md``.
-"""
-from jetspec.core.llm import SamplingParams
-from jetspec.inference_engine.engine import JetSpecEngine
+class _AliasLoader(Loader):
+    def __init__(self, path):
+        self.path = path
 
-__all__ = ["JetSpecEngine", "SamplingParams"]
+    def create_module(self, spec):
+        module = import_module(self.path)
+        self.spec = module.__spec__
+        return module
+
+    def exec_module(self, module):
+        # Keep the canonical spec too, so reload targets the owning module.
+        module.__spec__ = self.spec
+
+
+class _AliasFinder(MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        prefix = __name__ + '.'
+        if fullname.startswith(prefix):
+            moved = _MODULES.get(fullname[len(prefix):])
+            if moved is not None:
+                loader = _AliasLoader('jetspec.engines.jetspec.' + moved)
+                return spec_from_loader(fullname, loader)
+
+
+# Resolve submodules lazily: importing the package must not require Triton.
+sys.meta_path.insert(0, _AliasFinder())
