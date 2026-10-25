@@ -1,0 +1,22 @@
+{
+  "schema": "jetspec.serve_policy/1",
+  "after_swap_fill": {
+    "enabled": false,
+    "mode": "context",
+    "seed": 0
+  },
+  "pin_agreed": {
+    "enabled": true
+  },
+  "rows_min": {
+    "count": 8,
+    "enabled": true
+  },
+  "swap_rule": {
+    "enabled": false
+  },
+  "tail_passes": {
+    "count": 0,
+    "enabled": false
+  }
+}

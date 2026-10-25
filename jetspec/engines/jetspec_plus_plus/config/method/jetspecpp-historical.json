@@ -1,0 +1,12 @@
+{
+  "method_execution": {
+    "defaults": {
+      "refresh_swap": "1",
+      "refresh_fixed": "1",
+      "chain_miss_redraft": "1",
+      "refresh_swap_lean": "1"
+    }
+  },
+  "block_size": 16,
+  "family": "jetspecpp"
+}

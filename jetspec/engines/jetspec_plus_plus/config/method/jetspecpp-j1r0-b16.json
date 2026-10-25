@@ -1,0 +1,57 @@
+{
+  "method_execution": {
+    "defaults": {
+      "refresh_swap": "0",
+      "refresh_fixed": "1",
+      "chain_miss_redraft": "1",
+      "refresh_swap_lean": "0",
+      "chain_refresh_key_bucket": "0",
+      "refresh_attn_lean": "0",
+      "refresh_inject_inclusive": "0",
+      "refresh_inject_lean2": "0",
+      "refresh_kv_pack": "0",
+      "refresh_prep_lean": "0",
+      "refresh_swap_glue": "0"
+    }
+  },
+  "anchor": {
+    "cap": 32,
+    "coverage": 0.99
+  },
+  "block_size": 16,
+  "cache_rows": {
+    "cap": 4
+  },
+  "chain_miss_redraft": true,
+  "family": "jetspecpp",
+  "k_score": "blend_dec",
+  "method_settings": {
+    "adapter_refresh": "after_j0",
+    "anchor": "decoder",
+    "anchor_cap": "32",
+    "anchor_select": "topk",
+    "anchor_select_graph": "1",
+    "anchor_select_home": "one",
+    "chain_fixed_config": "J1-R0",
+    "drafts": "15",
+    "eval_rows": "16",
+    "kpred_frame": "wire",
+    "kpred_renorm": "1",
+    "kscore": "blend_dec",
+    "kset": "predictor",
+    "kset_after_miss": "zero",
+    "kset_cap": "10",
+    "kset_m": "4",
+    "rowrule": "joint",
+    "rows_rule_cap": "4"
+  },
+  "miss_redraft": false,
+  "refresh": {
+    "mode": "after_j0"
+  },
+  "row_rule": "joint",
+  "schedule": {
+    "j": 1,
+    "r": 0
+  }
+}
