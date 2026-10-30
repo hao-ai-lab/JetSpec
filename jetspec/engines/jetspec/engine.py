@@ -329,6 +329,7 @@ class JetSpecEngine:
             self._use_cudagraph = attn_backend in _CUDAGRAPH_BACKENDS
             self._graphed_verify = {}                # (need_hidden, tap_set) -> GraphedVerify
         self._tree_session = None
+        self._ar_session = None
 
     def _resolve_eos(self) -> set:
         """EOS ids from tokenizer + generation_config (mirrors `LLM._resolve_eos`)."""
@@ -347,86 +348,90 @@ class JetSpecEngine:
         return ids
 
     @torch.inference_mode()
-    def generate(self, prompt, sampling_params: SamplingParams = None) -> dict:
+    def generate(self, prompt, sampling_params: SamplingParams = None, *,
+                 session: bool = False, session_prompt_capacity: int = None) -> dict:
         """Greedy/temperature decode over the paged cache. `prompt` is a str
         (tokenized raw) or an already-tokenized `input_ids` tensor (1, T). Returns
-        {token_ids, text}. Token-identical to `LLM.generate` (the N0 gate)."""
+        {token_ids, text}. Token-identical to `LLM.generate` (the N0 gate).
+
+        A graphed AR session reuses the pool and captured graph across prompts.
+        Its prompt capacity and token budget are fixed on first use.
+        """
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):
             input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
         else:
             input_ids = prompt.to(self.device)
         prompt_len = input_ids.shape[1]
-        cache = PagedKVCache(
-            block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype
-        )
-        # N3 kernel path: route the single seq (id 0) through the paged tree-attn
-        # kernel. Prefill runs on the kernel too (qq_bias=None -> pure causal, since
-        # context_len = seq_len - S = 0). attention_mask=None: the kernel masks.
-        # getattr default keeps object.__new__-built engines (test fixtures) on SDPA.
-        # A3-HIDDEN: the compiled backend also rides the kernel substrate for prefill,
-        # then runs the decode forward (N=1) through the compiled AR stack so
-        # `decode_cuda_speedup` compares compiled-vs-compiled with the tree path.
         backend = getattr(self, "attn_backend", "sdpa")
         kernel = backend in _KERNEL_BACKENDS
         compiled = backend in _COMPILED_BACKENDS
+        graphed = compiled and getattr(self, "_use_cudagraph", False)
+        ar_session = getattr(self, "_ar_session", None) if session else None
+        if session:
+            if not graphed:
+                raise ValueError("AR sessions require a CUDA-graphed backend")
+            prompt_capacity = (
+                ar_session["prompt_capacity"] if ar_session is not None
+                else (_round_session_capacity(prompt_len) if session_prompt_capacity is None
+                      else int(session_prompt_capacity)))
+            if prompt_capacity <= 0 or prompt_len > prompt_capacity:
+                raise ValueError(
+                    f"AR session prompt_len={prompt_len} exceeds "
+                    f"session_prompt_capacity={prompt_capacity}")
+            if session_prompt_capacity is not None and int(session_prompt_capacity) != prompt_capacity:
+                raise ValueError("AR session prompt capacity mismatch")
+            if ar_session is not None and ar_session["max_new_tokens"] != sp.max_new_tokens:
+                raise ValueError("AR session max_new_tokens mismatch")
+        else:
+            prompt_capacity = prompt_len
+        if ar_session is not None:
+            cache = ar_session["cache"]
+            cache.reset()
+        else:
+            cache = PagedKVCache(
+                block_size=self.block_size, device=torch.device(self.device), dtype=self.dtype)
         if kernel:
             cache._paged_handoff = True
             cache._handoff_seq_ids = [0]
             cache._jetspec_attn_meta = {"seq_ids": [0], "qq_bias": None}
 
-        # --- prefill: process the whole prompt once, sample the first token ---
-        # (attention_mask stays None for both paths: SDPA builds its own causal
-        # mask from cache_position; the kernel masks internally.)
         pos = torch.arange(prompt_len, device=self.device).unsqueeze(0)
         logits, cache, _ = self.runner.forward(input_ids, cache, pos)
         ar_graph = None
         if compiled:
-            # A3-BUCKET: pre-grow the pool to the whole-run length ONCE so the compiled
-            # AR (N=1) stack's pool-shape guard never trips mid-decode (only seq_lens_k
-            # value grows, not the pool block-count shape). +1 for the lone decode slot.
-            cache.reserve_capacity(prompt_len + sp.max_new_tokens + 1)
-            # Step 1 (path-to-fork-tps): CUDA-graph the N=1 AR forward. The compiled AR
-            # stack is fused but still launches ~36 layers' kernels eagerly per token;
-            # capturing a B=1 graph (GraphedVerify, bucket {1}) collapses that launch
-            # storm into one cudaGraphLaunch — the same win the tree-verify path banks.
-            # Built here (after reserve_capacity, so the k/v pools are address-stable) and
-            # only for the cudagraph backend; the compiled-non-graph path is left untouched
-            # as the losslessness oracle.
-            if getattr(self, "_use_cudagraph", False):
-                from jetspec.engines.jetspec.verify.graph_capture import GraphedVerify
-                cfg = self.model.config
-                head_dim = (getattr(cfg, "head_dim", None)
-                            or cfg.hidden_size // cfg.num_attention_heads)
-                nl = cfg.num_hidden_layers
-                ar_graph = GraphedVerify(
-                    self.compiled_ar,
-                    [cache.pool(i)[0] for i in range(nl)],
-                    [cache.pool(i)[1] for i in range(nl)],
-                    block_table_width=cache.reserved_block_table_width,
-                    head_dim=head_dim, hidden_size=cfg.hidden_size,
-                    device=torch.device(self.device), dtype=self.dtype,
-                    buckets=(1,),
-                )
-        next_tok = sample(logits[:, -1:, :], sp.temperature)  # (1, 1)
+            if ar_session is None:
+                cache.reserve_capacity(prompt_capacity + sp.max_new_tokens + 1)
+            if graphed:
+                from jetspec.engines.jetspec.verify.ar_graph import GraphedAR
+                # Reserve the entire contiguous decode span once. The graph reads
+                # only [0, current_position + 1), so future slots remain invisible.
+                bts, _, _, _ = cache.reserve_tree_slots(
+                    0, max(1, sp.max_new_tokens - 1), prompt_len,
+                    block_table_width=cache.reserved_block_table_width)
+                ar_graph = ar_session["graph"] if ar_session is not None else GraphedAR(
+                    self.compiled_ar, cache, self.model.config.hidden_size,
+                    torch.device(self.device), self.dtype)
+                ar_graph.prepare(bts, prompt_len)
+                if session and ar_session is None:
+                    cache.freeze_pool()
+                    self._ar_session = {
+                        "cache": cache, "graph": ar_graph,
+                        "prompt_capacity": prompt_capacity,
+                        "max_new_tokens": sp.max_new_tokens,
+                    }
+        next_tok = sample(logits[:, -1:, :], sp.temperature)
         out_ids = [int(next_tok.item())]
         cur = prompt_len
 
-        # --- decode: single-token steps reusing the paged cache (no reprocess) ---
         for _ in range(sp.max_new_tokens - 1):
             if out_ids[-1] in self.eos_token_ids:
                 break
-            pos = torch.tensor([[cur]], device=self.device)
-            if compiled:
-                # A3-HIDDEN: compiled N=1 decode — reuse the verify stack with a
-                # single node (qq_bias=None -> pure causal: the kernel makes the
-                # cached prefix [0, cur) always-visible and the lone node attends
-                # itself). Reserve the one slot (the stack scatters its post-RoPE
-                # K/V in-graph), then run the compiled AR stack. Byte-equivalent to
-                # the eager kernel decode forward; compiled so the AR baseline is
-                # fused like the tree verify (a fair decode_cuda_speedup).
-                # Pin the block_table width (fixed by reserve_capacity) so the compiled
-                # AR stack's block_table shape guard stays stable as the seq lengthens.
+            if ar_graph is not None:
+                logits = ar_graph.replay_ar(next_tok)
+            elif compiled:
+                # The compiled, non-graphed backend remains the eager oracle.
+                pos = torch.tensor([[cur]], device=self.device)
                 bts, node_blks, node_offs, slk = cache.reserve_tree_slots(
                     0, 1, cur, block_table_width=cache.reserved_block_table_width)
                 dummy = torch.zeros(1, 1, self.model.config.hidden_size,
@@ -436,24 +441,11 @@ class JetSpecEngine:
                 nlayers = self.model.config.num_hidden_layers
                 k_pools = [cache.pool(i)[0] for i in range(nlayers)]
                 v_pools = [cache.pool(i)[1] for i in range(nlayers)]
-                if ar_graph is not None:
-                    # Step 1: replay the captured B=1 graph. qq_bias is a (1,1) zero —
-                    # the lone node attends itself with +0 bias, identical to the
-                    # qq_bias=None causal path for N=1 (no inter-node masking, prefix
-                    # always-visible). seq_lens_k (slk) grows each round and is staged,
-                    # so the graph reads the lengthening prefix; node_blks/offs stage the
-                    # new slot so the in-graph scatter lands this token's K/V correctly.
-                    qq0 = torch.zeros((1, 1), dtype=torch.float32, device=self.device)
-                    logits = ar_graph.replay(
-                        1, next_tok, cos, sin, bts, cu, slk, qq0,
-                        node_blks, node_offs, 1,
-                    )
-                else:
-                    logits = self.compiled_ar(
-                        next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
-                        None, node_blks, node_offs,
-                    )
+                logits = self.compiled_ar(
+                    next_tok, cos, sin, k_pools, v_pools, bts, cu, slk,
+                    None, node_blks, node_offs)
             else:
+                pos = torch.tensor([[cur]], device=self.device)
                 logits, cache, _ = self.runner.forward(next_tok, cache, pos)
             next_tok = sample(logits[:, -1:, :], sp.temperature)
             out_ids.append(int(next_tok.item()))
@@ -461,7 +453,6 @@ class JetSpecEngine:
 
         text = self.tokenizer.decode(out_ids, skip_special_tokens=True)
         return {"token_ids": out_ids, "text": text}
-
     def _pad_tree_to_bucket(self, seq_step, posN, qq_bias, N: int, B: int):
         """Pad the N real tree rows up to bucket size B (A3-BUCKET). Returns
         `(seq_step_b (1,B), posN_b (1,B), qq_bias_b (B,B))`. No-op (returns the
