@@ -33,7 +33,7 @@ from bench.jetspec.profiling.collect_tree_diagnostics import build_prompts
 from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 from jetspec.core.llm import SamplingParams
 from jetspec.methods.jetspec.draft_head import load_draft_head
-from jetspec.inference_engine.engine import JetSpecEngine
+from jetspec.engines.jetspec.engine import JetSpecEngine
 
 
 BUCKETS = ("shallow", "mid", "deep")
