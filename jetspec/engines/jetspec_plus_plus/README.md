@@ -9,15 +9,14 @@ Three folders hold the serving logic:
 | Path | Logic |
 | --- | --- |
 | `verify/` | Target rank: verification and commit |
-| `draft/` | Draft rank: draft model, rows, chain graphs, round driver |
+| `draft/` | Draft rank: draft model, adapter, rows, chain graphs, round driver |
 | `serving/` | `LLMEngine`, scheduler, KV cache, `ModelRunner` |
 
 A round runs through them in this order:
 
 1. `Scheduler` in `serving/scheduler.py` admits requests.
-2. `SpecDecodeStep` in `verify/step.py` drives verification on the target GPU.
-3. `ChainRoundDriver` in `draft/driver.py` runs the draft passes on the draft GPU.
-4. `wire/` carries packets between the two GPUs.
+2. `SpecDecodeStep` in `verify/step.py` drives verification on the target GPU and sends the outcome through `wire/`.
+3. `ChainRoundDriver` in `draft/driver.py` runs the draft passes on the draft GPU and sends the next rows back.
 
 To read one round in plain torch, see the [torch reference](../../methods/jetspec_plus_plus/README.md).
 
@@ -25,7 +24,8 @@ The other paths support these three:
 
 | Path | Holds |
 | --- | --- |
-| `models/` | Target, adapter and decoder models |
+| `models/` | Target and anchor decoder models |
+| `wire/` | Packets and transport between the two GPUs |
 | `kernels/` | Compiled tensor operations, one folder per model |
 | `entry.py`, `launch/` | The public command, recipe resolution, artifact checks, the child process |
 | `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
@@ -36,7 +36,7 @@ The other paths support these three:
 ## From the command to the first forward pass
 
 1. `__main__.py` calls `entry.main`.
-2. `entry.py` maps the model, schedule and GPU family to an entry in `RECIPES`, then renders the prompt.
+2. `entry.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
 3. `launch/runner.py` checks the artifact hashes, builds the launch plan and starts a child process.
 4. The child runs `launch/bench.py`, which constructs `LLMEngine` from `serving/llm_engine.py`.
 5. `LLMEngine` constructs `TargetRunner` from `verify/forward.py` in the current process and spawns `DraftRunner` from `draft/rank.py`. Both inherit `ModelRunner` from `serving/model_runner.py`.
@@ -53,7 +53,13 @@ hf download JetSpec/jetspec-plus-plus-qwen3-8b --local-dir jspp-8b
 hf download JetSpec/jetspec-plus-plus-qwen3p8-27b --local-dir jspp-27b
 ```
 
-The `generate` command in the root README answers one prompt. The full command reads a prompts file with rows of `index` and `token_ids`:
+To answer one prompt:
+
+```sh
+python -m jetspec.engines.jetspec_plus_plus generate --model qwen3-8b "PROMPT"
+```
+
+The full command reads a prompts file. Its rows need `token_ids`, plus `text` for Qwen3.8-27B:
 
 ```sh
 python -m jetspec.engines.jetspec_plus_plus \
@@ -65,7 +71,7 @@ python -m jetspec.engines.jetspec_plus_plus \
   --cache-root /path/to/compiler-cache
 ```
 
-Choose the target with `--model` and the J/R schedule with `--schedule`. `fast` uses CUDA graphs.
+Choose the target with `--model` and the J/R schedule with `--schedule`. `fast` uses CUDA graphs and accepts on the GPU with fused kernels.
 
 | `--model` | `--schedule` | `--engine` | Compute capability |
 | --- | --- | --- | --- |

@@ -23,9 +23,9 @@ The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three 
 - **Self refinement.** The draft model is trained to correct its own parallel draft. Jacobi passes (`method/passes.py`) redraft the block from its previous version.
   - A context refresh (`method/refresh.py`) predicts the target states of the current draft again between passes.
   - An anchor replacement (`method/swap.py`) replaces the first draft token that the anchor decoder disagrees with.
-  - Pins (`method/pins.py`) keep the tokens that agree.
+  - Pins in `RefreshSwap` (`method/swap.py`) keep the tokens that agree.
 - **Schedules.** `jJ-rR` means J refinement passes after the first draft and R context refreshes. The release defaults are `j1-r0` for Qwen3-8B on A100 and `j1-r1` elsewhere. The paper's Table 3 runs J1-R1 for Qwen3-8B and J3-R3 for Qwen3.8-27B.
-- **Lossless output.** At temperature 0, verification accepts the longest draft prefix that equals the target's greedy tokens (`method/accept.py`), then appends the target's own next token.
+- **Lossless output.** At temperature 0, verification accepts the longest draft prefix that equals the target's greedy tokens, then appends the target's own next token.
 
 ## Environments
 
