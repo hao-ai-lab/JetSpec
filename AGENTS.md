@@ -4,8 +4,8 @@ This file tells coding agents how this repository is organized and how to run ea
 
 ## Repository map
 
-- `jetspec/methods/jetspec_plus_plus/`: JetSpec++ torch reference (adapter, decoder, refinement passes, rounds).
-- `jetspec/engines/jetspec_plus_plus/`: JetSpec++ serving engine (pipelined draft and verify on two GPUs).
+- `jetspec/methods/jetspec_plus_plus/`: JetSpec++ torch reference (adapter, decoder, refinement passes, rounds). It has its own `AGENTS.md`.
+- `jetspec/engines/jetspec_plus_plus/`: JetSpec++ serving engine (pipelined draft and verify on two GPUs). It has its own `AGENTS.md`.
 - `jetspec/methods/jetspec/`, `jetspec/engines/jetspec/`: JetSpec tree drafting and its engine.
 - `bench/jetspec_plus_plus/`: `verify.py`, `tau.py`, `speedup.py`, `reproduce_paper_results.py`.
 
