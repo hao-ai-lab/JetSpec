@@ -126,6 +126,27 @@ class ModelRunner:
         API named after the behavior the rest of the engine relies on.
         """
         need_hidden = output_hidden_states and target_layer_ids is not None
+        if (getattr(past_key_values, 'sequential_verify', False)
+                and attention_mask is not None):
+            start, width = past_key_values.get_seq_length(), input_ids.shape[1]
+            expected = torch.arange(start, start + width, device=input_ids.device)[None]
+            allowed = torch.arange(start + width, device=input_ids.device)[None] <= expected[0, :, None]
+            if (not torch.equal(position_ids, expected)
+                    or not torch.equal(attention_mask[0, 0] == 0, allowed)):
+                raise ValueError('hybrid target supports only causal width-one trees')
+            logits, hidden = [], []
+            past_key_values.snapshots.clear()
+            # GDN commit selects state after the accepted causal prefix.
+            # Single-token target steps also preserve bf16 AR reduction order.
+            for step in range(width):
+                scores, past_key_values, taps = self.forward(input_ids[:, step:step+1],
+                    past_key_values, position_ids=position_ids[:, step:step+1],
+                    output_hidden_states=output_hidden_states, target_layer_ids=target_layer_ids)
+                past_key_values.snapshot()
+                logits.append(scores)
+                if taps is not None:
+                    hidden.append(taps)
+            return torch.cat(logits, 1), past_key_values, torch.cat(hidden, 1) if hidden else None
         use_hook_hidden = need_hidden and _can_capture_target_hidden(self.model, target_layer_ids)
         with (
             _capture_target_hidden(self.model, target_layer_ids if use_hook_hidden else None) as hidden_by_layer,
@@ -147,6 +168,8 @@ class ModelRunner:
                 [hidden_by_layer[int(layer_id)] for layer_id in target_layer_ids],
                 dim=-1,
             )
+            if target_hidden.ndim == 2:
+                target_hidden = target_hidden[None]
         elif need_hidden:
             from jetspec.methods.jetspec.draft_head import extract_context_feature
 

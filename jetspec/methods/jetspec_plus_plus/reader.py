@@ -206,6 +206,8 @@ def main(argv=None, *, drafter_factory=None, llm_factory=None):
     """Write an uncut tau read, its rule-A reduction and a reproducibility manifest."""
     parser = argparse.ArgumentParser(description='JetSpec++ torch tau reader (greedy, B16).')
     parser.add_argument('--target', required=True)
+    parser.add_argument('--model-family', choices=['auto', '8b', '27b'], default='auto',
+                        help='auto detects the local target text config')
     parser.add_argument('--drafter')
     parser.add_argument('--adapter')
     parser.add_argument('--heads-bundle')
@@ -248,7 +250,13 @@ def main(argv=None, *, drafter_factory=None, llm_factory=None):
     from .models.drafter import REVISION
     from .round import JetSpecPPConfig, completed_label
 
-    config = JetSpecPPConfig.paper_eval(schedule=args.schedule, seed=args.seed)
+    family = args.model_family
+    if family == 'auto':
+        target_config = Path(args.target) / 'config.json'
+        raw = json.loads(target_config.read_text()) if target_config.is_file() else {}
+        text = raw.get('text_config', raw)
+        family = '27b' if text.get('model_type') == 'qwen3_5_text' else '8b'
+    config = JetSpecPPConfig.paper_eval(schedule=args.schedule, seed=args.seed, model_family=family)
     if args.max_new_tokens < 1:
         parser.error('--max-new-tokens must be positive')
     prompts_path = Path(args.prompts_file)
@@ -271,6 +279,9 @@ def main(argv=None, *, drafter_factory=None, llm_factory=None):
     # Model/load-time cast, as in the reference reader.
     # The round's fp32 probability math remains in its existing tensor steps.
     dtype = torch.float32 if args.dtype == 'fp32' else torch.bfloat16
+    if llm_factory is None and family == '27b':
+        from .models.hybrid import load_hybrid_llm
+        llm_factory = load_hybrid_llm
     llm = (llm_factory or LLM)(model_name_or_path=args.target, device=args.device,
                                dtype=dtype, attn_implementation='sdpa')
 
@@ -293,7 +304,9 @@ def main(argv=None, *, drafter_factory=None, llm_factory=None):
                 record['pass_label'] = completed_label(row['passes_run'][r])
             round_records.append(record)
     manifest = dict(schema='jetspec.jetspec_plus_plus.manifest/1', target=args.target,
-                    drafter=args.drafter, drafter_revision=REVISION, adapter=args.adapter,
+                    model_family=family,
+                    drafter=args.drafter, drafter_revision=REVISION if family == '8b' else None,
+                    adapter=args.adapter,
                     heads_bundle=args.heads_bundle, prompts_file=str(prompts_path),
                     prompts_sha256=hashlib.sha256(prompts_bytes).hexdigest(),
                     schedule=args.schedule, config=asdict(config), seed=config.seed,

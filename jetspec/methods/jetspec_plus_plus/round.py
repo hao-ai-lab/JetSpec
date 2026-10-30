@@ -56,8 +56,11 @@ class JetSpecPPConfig:
     freeze_converged: bool = False
 
     @classmethod
-    def paper_eval(cls, *, schedule='J1-R1', seed=9504):
+    def paper_eval(cls, *, schedule='J1-R1', seed=9504, model_family='8b'):
         """The uncut B16 pipelined eval profile, with sixteen keyed rows."""
+        if model_family not in ('8b', '27b'):
+            raise ValueError('paper_eval model_family must be 8b or 27b')
+        # Both eval27b B16 recipes share the uncut 8B method policy.
         return cls(schedule=schedule, seed=seed, rows_min=16, refresh_full=True,
                    score_all_anchors=True, reject_after_miss=False, rows_fill_zero=True,
                    freeze_converged=True)
@@ -65,7 +68,7 @@ class JetSpecPPConfig:
     def __post_init__(self):
         Schedule.parse(self.schedule)
         if self.block_size != 16:
-            raise ValueError('the Qwen3-8B method requires B16')
+            raise ValueError('the method requires B16')
         if not 0 < self.refresh_threshold < 1 or not 0 < self.second_refresh_threshold < 1:
             raise ValueError('refresh thresholds must be in (0, 1)')
         if not 0 <= self.rows_min <= self.rows_cap:
