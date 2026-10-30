@@ -2,13 +2,13 @@
 
 Reports REAL wall-clock tokens/sec (time.perf_counter), NOT GPU-self-time —
 i.e. what a user actually sees, including host/Python overhead. Complements
-bench/profiling/compare_engine_with_vllm_integration.py (which reports decode_cuda_speedup =
+bench/jetspec/profiling/compare_engine_with_vllm_integration.py (which reports decode_cuda_speedup =
 GPU-self-time, drafter-excluded). The production configuration behind the
 README Results table:
 
     JETSPEC_FUSE_GEMMS=1 JETSPEC_BACKEND=triton_paged_tree_cudagraph_nogather \
       PYTHONPATH=. JETSPEC_DRAFT_HEAD=JetSpec/jetspec-qwen3-8b \
-      python bench/engine/tps_walltime.py --samples 64 --max-tokens 2048 \
+      python bench/jetspec/engine/tps_walltime.py --samples 64 --max-tokens 2048 \
         --tree-depth 15 --budget 127 --session --prompt-set gsm8k
 
 The same script also runs under torchrun; each rank owns a disjoint prompt shard
