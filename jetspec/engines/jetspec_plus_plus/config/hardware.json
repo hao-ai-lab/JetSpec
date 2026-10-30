@@ -1,0 +1,45 @@
+{
+  "a100-pair": {
+    "autotune_pin_sha256": null,
+    "compile_pin_sha256": null,
+    "cpu_pin": "auto",
+    "devices": [
+      0,
+      1
+    ],
+    "gpu": "a100",
+    "mps": false,
+    "placement": "pair"
+  },
+  "b200-1gpu": {
+    "autotune_pin_sha256": null,
+    "compile_pin_sha256": null,
+    "cpu_pin": "auto",
+    "devices": [
+      0
+    ],
+    "gpu": "b200",
+    "mps": false,
+    "placement": "one_gpu"
+  },
+  "b200-pair": {
+    "extends": "b200-1gpu",
+    "devices": [
+      0,
+      1
+    ],
+    "placement": "pair"
+  },
+  "gb200-pair": {
+    "autotune_pin_sha256": null,
+    "compile_pin_sha256": null,
+    "cpu_pin": "auto",
+    "devices": [
+      0,
+      1
+    ],
+    "gpu": "gb200",
+    "mps": false,
+    "placement": "pair"
+  }
+}
