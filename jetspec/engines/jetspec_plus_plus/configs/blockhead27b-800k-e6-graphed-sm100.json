@@ -1,0 +1,34 @@
+{
+  "schema": "jetspec.serve_recipe/1",
+  "name": "blockhead27b-800k-e6-graphed-sm100",
+  "method": "blockhead",
+  "display_name": "DSpark-27B-800k-e6",
+  "regime": "graphed",
+  "passes": 1,
+  "blockhead_artifact": "dspark_27b_800k_e6_checkpoint",
+  "blockhead_file_sha256": {
+    "config.json": "8d8b5ce97f97e5ac8dbdcffa782701db1c2e2bb525f1cb2960c21371d4e172e7",
+    "dflash.py": "55142e70b6759b386fc469ea2df295c64220345f3824806de1cea6b14b44687d",
+    "dspark.py": "3f10c6f49ba4771d25f7b9d274378b6c500b32b9da6c217baeba28b595a32a0b",
+    "model.safetensors": "bdf456907b0f3023b69af577a88c428e3384a5cc7141b0ea1c234b58594ccb12",
+    "target_release_weights.safetensors": "4c1bcc4c722e4831c71f48bc726184b14b797fbfce44119cc414ce1e17b67b60"
+  },
+  "cuda_arch": "10.0",
+  "environment": {
+    "JETSPEC_BLOCKHEAD_GRAPH": "1",
+    "JETSPEC_BLOCK_SIZE_READ": "16",
+    "JETSPEC_DRAFT_DTYPE": "bf16",
+    "JETSPEC_HYBRID_FAST_SNAPSHOT": "1",
+    "JETSPEC_TARGET_DTYPE": "bf16",
+    "MKL_NUM_THREADS": "4",
+    "OMP_NUM_THREADS": "4",
+    "OPENBLAS_NUM_THREADS": "4",
+    "PYTHONOPTIMIZE": "1",
+    "SSD_ATTENTION_BACKEND": "flashinfer",
+    "SSD_VERIFY_DEVICE": "1",
+    "TORCHINDUCTOR_COMPILE_THREADS": "2",
+    "W240_SPEC_THREADS": "4",
+    "W240_THREAD_CAPS": "1",
+    "W240_WARMUP": "0"
+  }
+}

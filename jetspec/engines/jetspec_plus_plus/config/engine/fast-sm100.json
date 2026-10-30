@@ -1,0 +1,4 @@
+{
+  "extends": "fast",
+  "release_finished_requests": true
+}

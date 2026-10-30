@@ -1,0 +1,14 @@
+{
+  "schema": "jetspec.serve_recipe/1",
+  "name": "ar-graphed",
+  "method": "ar",
+  "display_name": "AR",
+  "regime": "graphed",
+  "passes": 1,
+  "cuda_arch": "8.0",
+  "environment": {
+    "JETSPEC_TARGET_DTYPE": "bf16",
+    "SSD_ATTENTION_BACKEND": "flashinfer",
+    "W240_WARMUP": "0"
+  }
+}

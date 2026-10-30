@@ -1,0 +1,6 @@
+{
+  "cache_rows": {
+    "floor": 4
+  },
+  "extends": "jetspecpp-j1r1-b16"
+}

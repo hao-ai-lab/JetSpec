@@ -1,0 +1,1283 @@
+{
+  "model_execution": {
+    "release_recipes": [
+      {
+        "architecture": "sm80",
+        "block_size": 16,
+        "schedule": {
+          "j": 1,
+          "r": 0
+        },
+        "recipe": "jetspecpp-graphed-pair-e6-b16-chain-r4-j1-lean-sm80"
+      }
+    ],
+    "defaults": {
+      "adapter_gemm_tune": "1",
+      "adapter_query_layout_fused": "1",
+      "attention_backend": "flashinfer",
+      "attn_sm100": "1",
+      "c1_append_fold": "1",
+      "c1_attn_len": "1",
+      "c1_gateup_packed": "1",
+      "c1_gluon": "1",
+      "c1_kv_split_lean": "1",
+      "c1_qk_fused": "1",
+      "c1_qk_warps": "4",
+      "c1_span_kv_fused": "1",
+      "candidate_decode_lean": "1",
+      "chain_admit_host_lean": "1",
+      "chain_post_lean": "1",
+      "ctx_kv_append": "1",
+      "ctx_kv_fused": "1",
+      "decoder_attn_len": "1",
+      "decoder_gqa_view": "1",
+      "decoder_lmhead_kn": "1",
+      "decoder_prefix_merge": "1",
+      "decoder_qkv_fused": "1",
+      "decoder_select_radix": "1",
+      "decoder_single_gateup_packed": "1",
+      "decoder_slot_write": "1",
+      "j0_lmhead_kn": "1",
+      "jpass_attn_len": "1",
+      "k3_hazard_split": "1",
+      "refresh_attn_lean": "1",
+      "refresh_attn_tune": "1",
+      "refresh_gateup_packed": "1",
+      "refresh_inject_inclusive": "1",
+      "refresh_inject_lean2": "1",
+      "refresh_inject_mask_fused": "1",
+      "refresh_kv_pack": "1",
+      "refresh_prep_lean": "1",
+      "refresh_qk_fused": "1",
+      "refresh_swap_glue": "1",
+      "verify_outcome_fused": "1",
+      "verify_plan_lean": "1",
+      "verify_post_lean": "1",
+      "verify_select_lean": "1",
+      "ctx_kv_direct": "1",
+      "draft_streams": "1",
+      "refresh_streams": "1",
+      "verify_select_host": "1",
+      "verify_plan_reuse": "1",
+      "chain_refresh_key_bucket": "1"
+    },
+    "capabilities": {
+      "stateful": false
+    }
+  },
+  "adapter": {
+    "artifact": "jetspecpp_e6_adapter",
+    "config_sha256": "893b04ba54b9be76fee4754ea59338d87d340f68562e636637d5e7f8e093eb4d",
+    "published": true
+  },
+  "artifacts": [
+    {
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "config.json"
+          },
+          "sha256": "5dd2439e82c85e21ec20998575bbcdf4b7fceb1ca34be3734b35caa01c8aaa3c"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "dflash.py"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "dflash.py"
+          },
+          "sha256": "f39e744844a06c0016793535f427fa60e6a1c8df7249193317acb284b567e79a"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "model.safetensors"
+          },
+          "sha256": "29b4bd22ff77c6d1c2388855daa67d351a6447de3fb4f22ab8ad56833155fb3d"
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_drafter",
+      "repository": "local-artifact",
+      "revision": "8310b3ba214b93caaa675907ac0adf381347a538"
+    },
+    {
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "config.json"
+          },
+          "sha256": "893b04ba54b9be76fee4754ea59338d87d340f68562e636637d5e7f8e093eb4d"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "head.safetensors"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "head.safetensors"
+          },
+          "sha256": "9d6a89a2db7775385da42549d32984676251bc0b4cdc387bcff2cb6a447d2045"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "converter.safetensors"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "converter.safetensors"
+          },
+          "sha256": "b0cfa18a802a5e99f1ced9285b5115a3886a76cb1f68646234a89a72d46ecd71"
+        }
+      ],
+      "kind": "published",
+      "name": "jetspecpp_e6_adapter",
+      "repository": "local-artifact",
+      "revision": "71b95a4b5041e768db609b1f2be065f877587ea5"
+    },
+    {
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "config.json"
+          },
+          "sha256": "5b53c74a9c600b9f0eb68c4313954da928c5b518d5b3c6a606c3979b9a4d6445"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "dflash.py"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "dflash.py"
+          },
+          "sha256": "dc9527d7db6bb606ef2931d31319cecb1c394548f8d5c5b2ef476d7ce614b9c9"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "model.safetensors"
+          },
+          "sha256": "22f08ea39327327caef3d22d034cd7b1e124972bbbaa7285f3d4e5fb7b68495c"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "value": "target_release_weights.safetensors"
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "value": "target_release_weights.safetensors"
+          },
+          "sha256": "23040099ed79ea30cd0ca656a5dad01f0a26838bd04f0470d6107a00b136290b"
+        }
+      ],
+      "kind": "published",
+      "name": "mask_original_drafter",
+      "repository": "Moonlight556/qwen3-8b-base-mask-original-mathregen-s59866",
+      "revision": "dd9a8125ba11d565e5f6f9ae0b63e68bfb4c7ae5"
+    },
+    {
+      "destination_root": {
+        "namespace": "fetch_destination_relative_path",
+        "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+        "resolves": true,
+        "value": "served_heads_reused_e6v2_b16"
+      },
+      "files": [
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "BUNDLE.md"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 3478
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/BUNDLE.md"
+          },
+          "sha256": "7e515f9e8b42797e5a9512e855e3374d1feee8b7a60383e9ea60dfda200dba18"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "bundle-pin.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 3788
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/bundle-pin.json"
+          },
+          "sha256": "617048bec86d8af9de1b378610b35907ad7fcfde2e506385970d11edd98bdaf0"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "decoder/checkpoint-0.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 771794717
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/decoder/checkpoint-0.pt"
+          },
+          "sha256": "41c85c871acd7bce2904a8f16d4f2beb0a4261044fc30bfd1aa605edbc1c90b7"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "decoder/checkpoint-final-model.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 771794629
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/decoder/checkpoint-final-model.pt"
+          },
+          "sha256": "ce1a669caba87a05dbed70096bb375c37a2bc0ec8152d87b72f8b63d02c98210"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "decoder/manifest.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 375
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/decoder/manifest.json"
+          },
+          "sha256": "a1b247ce2e436314160579d81dada80744b9a91e38e0a98efccd9afcd49d0558"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J0d0/seed0/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed0/ckpt.pt"
+          },
+          "sha256": "9756e39568927b03dd9cb7cd4a7c3524a9aa81d59fd84bf783977ae13c9930ba"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J0d0/seed1/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed1/ckpt.pt"
+          },
+          "sha256": "22667286107f855f86442e7ab01b373906684c31ac75c5e0d0c7a3f12dc3f8d3"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J0d0/seed2/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed2/ckpt.pt"
+          },
+          "sha256": "f9d660112189252a91491e594a3d8f4bc712d4d9e70b68444dd611fdf4bd2b61"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J0d0/seed3/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed3/ckpt.pt"
+          },
+          "sha256": "f8c7d6099e930232b9bfc9e49cb7419af7509e5bfa3662a4e54496fca5d934db"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J0d0/seed4/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J0d0/seed4/ckpt.pt"
+          },
+          "sha256": "5bc880c26ceb50a61d2ea773a0ac4e2dedf06f940544515dd1d58ea8cf7962a8"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J1/seed0/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed0/ckpt.pt"
+          },
+          "sha256": "a6dea86f1c329b0776a4379c782a7f2e6a7c53a09ae2ec279a03a2eede881a4a"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J1/seed1/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed1/ckpt.pt"
+          },
+          "sha256": "fa14d671fdbf31b8ef7e891d90b02449cfda38c316f1ead35a5e5d57ace70416"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J1/seed2/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed2/ckpt.pt"
+          },
+          "sha256": "b58ab26d9ede7aa7d24580a2e91ce2721e873c7998c25ca418d048295e5b0333"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J1/seed3/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed3/ckpt.pt"
+          },
+          "sha256": "174518a88af7f11692bf8077ab4695459946eeb2e9b63410d339bb445b150d46"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J1/seed4/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J1/seed4/ckpt.pt"
+          },
+          "sha256": "6c3bd64e32520d53e01495a4f103b5f7bce49383a865297634509684e799b538"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J2/seed0/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed0/ckpt.pt"
+          },
+          "sha256": "b3713990cb49b750fbaac0e41b6a475bd3c3a7394244453f116c8a072b191f94"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J2/seed1/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed1/ckpt.pt"
+          },
+          "sha256": "f5fdad0942f4d0661f61b98d0fe439739b5419437703ea05479cb698ef71c26d"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J2/seed2/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed2/ckpt.pt"
+          },
+          "sha256": "e0d219568f9ed47d14f999e8507363407f527b0788e214cae67eddf62a38b86f"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J2/seed3/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed3/ckpt.pt"
+          },
+          "sha256": "371226348a293728b5da94bce23bdc161c545acfcf876f4db6642491ca342a5e"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "kpred/arms/FR/J2/seed4/ckpt.pt"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 16788351
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/kpred/arms/FR/J2/seed4/ckpt.pt"
+          },
+          "sha256": "7bed9de564f1745bdfd80de14bb82380fe1aea4eaa21b1c9ed1e325e05752a03"
+        },
+        {
+          "destination": {
+            "namespace": "artifact_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "thresholds.json"
+          },
+          "provenance": {
+            "sha256": {
+              "namespace": "sha256_file_bytes",
+              "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+              "resolves": true
+            },
+            "uploaded_bytes": 27622
+          },
+          "remote": {
+            "namespace": "huggingface_repo_relative_path",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "served_heads_reused_e6v2_b16/thresholds.json"
+          },
+          "sha256": "01eaebfbad1d2c7f447e4bf24a55f03b5d55142b128f74f68c63e537c05c4b29"
+        }
+      ],
+      "kind": "published",
+      "name": "served_heads_reused_e6v2_b16",
+      "provenance": {
+        "attributes": {
+          "environment_variables": [
+            "JETSPEC_HEADS_DIR",
+            "W314_HEADS_DIR"
+          ],
+          "source_path": {
+            "namespace": "local-provenance",
+            "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+            "resolves": true,
+            "value": "local-provenance"
+          }
+        },
+        "has_files": true,
+        "order": 19,
+        "repository": {
+          "namespace": "huggingface_repo_id",
+          "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+          "resolves": true
+        },
+        "revision": {
+          "namespace": "huggingface_revision",
+          "resolved_by": "serving4 upload inventory serving:serving/serving_rb01/hfup-served_heads_reused_e6v2_b16.json (sha256 30e86fb228782bbbe4ee01a275e3ac54e4e61bc804bf9786269c614a78073316, upload commit 6c9ba5cbe3f21f6605fdb3307c53e5d9edadaf14); every file sha256 and size cross-checked against HfApi.model_info(files_metadata=True) at c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c; tools/fetch_artifacts.py verifies every byte",
+          "resolves": true
+        }
+      },
+      "registration_commit": "c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c",
+      "repository": "Moonlight556/jetspec-served-heads-reused",
+      "revision": "c2dc2c592b592be5dc8ca81abd84bd262c5f8f6c",
+      "training_config_sha256": null
+    }
+  ],
+  "decoder_slice": {
+    "source": "target_slice",
+    "target_files": {
+      "model-00004-of-00005.safetensors": "b5ee7de71fbf17db3d5704e0c8f2bc7d005ca9e1d7ca2aeb19827b0cfcaa917a",
+      "model-00005-of-00005.safetensors": "20c2d6366ab85c90786ccdd829cd2b9e7d30ef3b2ebbb998280e7e4014b542ff",
+      "model.safetensors.index.json": "f9fdbcb91c23971c13ec5d5f2573d2349e8f61f2f049371ec699281748fdb1bc"
+    }
+  },
+  "decoder_slice_sha256": "a1b247ce2e436314160579d81dada80744b9a91e38e0a98efccd9afcd49d0558",
+  "draft_config_sha256": "e39e24f1dc4a0bf5e60869392b0d4502fa6e26c3aa6a51a2fe5565b92943db9e",
+  "drafter": {
+    "artifact": "jetspecpp_e6_drafter",
+    "config_sha256": "5dd2439e82c85e21ec20998575bbcdf4b7fceb1ca34be3734b35caa01c8aaa3c",
+    "published": true
+  },
+  "target": {
+    "dtype": "bf16",
+    "family": "dense",
+    "repository": "Qwen/Qwen3-8B",
+    "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+    "taps": [
+      1,
+      9,
+      17,
+      25,
+      33
+    ]
+  },
+  "target_release": {
+    "artifact": "mask_original_drafter",
+    "file": "target_release_weights.safetensors"
+  },
+  "thresholds": {
+    "anchor_predictor": {
+      "drej_top1_grouped": {
+        "group_selection": {
+          "gsm8k": {
+            "0.94": {
+              "own_threshold_groups": [
+                "not-drej-top1"
+              ],
+              "pooled_fallback_groups": [
+                "drej-top1"
+              ]
+            },
+            "0.99": {
+              "own_threshold_groups": [
+                "not-drej-top1"
+              ],
+              "pooled_fallback_groups": [
+                "drej-top1"
+              ]
+            }
+          },
+          "math500": {
+            "0.94": {
+              "own_threshold_groups": [
+                "not-drej-top1"
+              ],
+              "pooled_fallback_groups": [
+                "drej-top1"
+              ]
+            },
+            "0.99": {
+              "own_threshold_groups": [],
+              "pooled_fallback_groups": [
+                "not-drej-top1",
+                "drej-top1"
+              ]
+            }
+          }
+        },
+        "gsm8k": {
+          "0.94": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1495,
+              "rule": "Pooled fallback q_hat at coverage 0.94; d_rej group n_group=246 is below minimum 300; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.9310863837599754
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1249,
+              "rule": "Conditional d_rej group q_hat at coverage 0.94; group is decoder pre-deletion top-1 does not equal d_rej (drej_rank==1); n_group=1249 meets minimum 300.",
+              "value": 0.9290421828627586
+            }
+          },
+          "0.99": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1495,
+              "rule": "Pooled fallback q_hat at coverage 0.99; d_rej group n_group=246 is below minimum 1000; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.9997493520204443
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1249,
+              "rule": "Conditional d_rej group q_hat at coverage 0.99; group is decoder pre-deletion top-1 does not equal d_rej (drej_rank==1); n_group=1249 meets minimum 1000.",
+              "value": 0.9992900021607056
+            }
+          }
+        },
+        "math500": {
+          "0.94": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1155,
+              "rule": "Pooled fallback q_hat at coverage 0.94; d_rej group n_group=215 is below minimum 300; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.8500497341156006
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 940,
+              "rule": "Conditional d_rej group q_hat at coverage 0.94; group is decoder pre-deletion top-1 does not equal d_rej (drej_rank==1); n_group=940 meets minimum 300.",
+              "value": 0.8353896141052246
+            }
+          },
+          "0.99": {
+            "drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1155,
+              "rule": "Pooled fallback q_hat at coverage 0.99; d_rej group n_group=215 is below minimum 1000; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.982045691460371
+            },
+            "not-drej-top1": {
+              "file": "calib/dev_select_served.npz + calib/math17k_dev_select_T-1.npz key drej_rank",
+              "n_cal": 1155,
+              "rule": "Pooled fallback q_hat at coverage 0.99; d_rej group n_group=940 is below minimum 1000; group is defined by decoder pre-deletion top-1 equals d_rej iff drej_rank==1.",
+              "value": 0.982045691460371
+            }
+          }
+        }
+      },
+      "pooled": {
+        "gsm8k": {
+          "0.94": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1495,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.94.",
+            "value": 0.9310863837599754
+          },
+          "0.99": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1495,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.99.",
+            "value": 1.0
+          }
+        },
+        "math500": {
+          "0.94": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1155,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.94.",
+            "value": 0.8500497341156006
+          },
+          "0.99": {
+            "file": "calib/dev_select_served.npz keys DEC-T:rank, DEC-T:p16",
+            "n_cal": 1155,
+            "rule": "Dataset-local dev-select DEC-T LAC score 1-p(true anchor), rank>16 scored 1; pooled q_hat at coverage 0.99.",
+            "value": 1.0
+          }
+        }
+      }
+    },
+    "anchor_predictor_v1": {
+      "served_g": {
+        "drej_top1_grouped_note": "No grouped rule for V1: revision 1's anchor_predictor/drej_top1_grouped conditions on the decoder's pre-deletion top-1 (drej_rank), which no V1 read stored; only the pooled rule is available for V1.",
+        "pooled": {
+          "gsm8k": {
+            "0.90": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9054545983672142
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9618559069931507
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.999704080139054
+            }
+          },
+          "math500": {
+            "0.90": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.8341862857341766
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9029182195663452
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_served-g.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the served_g read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9933349778875709
+            }
+          }
+        }
+      },
+      "true_window": {
+        "drej_top1_grouped_note": "No grouped rule for V1: revision 1's anchor_predictor/drej_top1_grouped conditions on the decoder's pre-deletion top-1 (drej_rank), which no V1 read stored; only the pooled rule is available for V1.",
+        "pooled": {
+          "gsm8k": {
+            "0.90": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.8398190438747406
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9196712821722031
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1495,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9991916848230176
+            }
+          },
+          "math500": {
+            "0.90": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.90 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.7718454152345657
+            },
+            "0.94": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.94 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.8595695942640305
+            },
+            "0.99": {
+              "file": "calib/v1/dev_select_J0d0.npz",
+              "n_cal": 1155,
+              "rule": "V1 dataset-local dev-select LAC score 1-p(true anchor) from keys rank and p16, rank>16 scored 1; pooled q_hat at coverage 0.99 on the true_window read, via code/logs/lacall_eng04.py::q_hat. Sets use p16 >= 1-q_hat and may be empty.",
+              "value": 0.9841666128486395
+            }
+          }
+        }
+      }
+    },
+    "e04_kscore_blend": {
+      "pooled": {
+        "a": {
+          "value": 0.14081040999526265
+        },
+        "argmax": {
+          "value": 1.0932398448477196
+        },
+        "b": {
+          "value": 0.550744040411968
+        },
+        "c": {
+          "value": -0.40565015695219186
+        },
+        "pos": {
+          "value": 0.40013685118584735
+        },
+        "top": {
+          "value": -0.011481179401009393
+        }
+      }
+    },
+    "e04_rowrule_joint": {
+      "pooled": {
+        "tau": {
+          "J0d0": {
+            "value": 0.022204845678061247
+          },
+          "J1": {
+            "value": 0.10601941728964448
+          },
+          "J2": {
+            "value": 0.020702435867860913
+          },
+          "J3": {
+            "value": 0.022204845678061247
+          }
+        },
+        "temperature": {
+          "value": 1.2
+        }
+      }
+    },
+    "eng04_ablation_refit": {
+      "calibration": "U",
+      "calibration_cells": [
+        "c1-b16-j2r1",
+        "c1-b16-j3r1"
+      ],
+      "decoder": "U",
+      "level": 0.93,
+      "refit_sha256": "72ff6b876b1ed897345472b4bd276932eddc4dbe670d272e1ba5c4e18356c391"
+    },
+    "k_predictor": {
+      "J0d0": {
+        "gsm8k": {
+          "0.90": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1556,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac90_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.90.",
+            "value": 0.9539184457583394
+          },
+          "0.95": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1556,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac95_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.95.",
+            "value": 0.9798976985750059
+          },
+          "0.99": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1556,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac99_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.99.",
+            "value": 0.9788677010219544
+          }
+        },
+        "math500": {
+          "0.90": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1328,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac90_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.90.",
+            "value": 0.9516181468963623
+          },
+          "0.95": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1328,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac95_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.95.",
+            "value": 0.9729203462600708
+          },
+          "0.99": {
+            "file": "calib/eval_J0d0.parquet",
+            "n_cal": 1328,
+            "rule": "Copied byte-for-value from the J0 ENS parquet lac99_q; original rule is dataset-local dev-select score 1-P_ENS(true_k) q_hat at coverage 0.99.",
+            "value": 0.9804479195736349
+          }
+        }
+      },
+      "J1": {
+        "gsm8k": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9809650245649083
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9842315514106303
+          }
+        },
+        "math500": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9813858536060547
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J1.npz (derived from calib/kpred/arms/FR/J1/seed0/logits_dev.npy, calib/kpred/arms/FR/J1/seed1/logits_dev.npy, calib/kpred/arms/FR/J1/seed2/logits_dev.npy, calib/kpred/arms/FR/J1/seed3/logits_dev.npy, calib/kpred/arms/FR/J1/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9675860763527453
+          }
+        }
+      },
+      "J2": {
+        "gsm8k": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9737647175788879
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1556,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9788677010219544
+          }
+        },
+        "math500": {
+          "0.95": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.95.",
+            "value": 0.9695344372568081
+          },
+          "0.99": {
+            "file": "calib/kpred_dev_select_J2.npz (derived from calib/kpred/arms/FR/J2/seed0/logits_dev.npy, calib/kpred/arms/FR/J2/seed1/logits_dev.npy, calib/kpred/arms/FR/J2/seed2/logits_dev.npy, calib/kpred/arms/FR/J2/seed3/logits_dev.npy, calib/kpred/arms/FR/J2/seed4/logits_dev.npy)",
+            "n_cal": 1328,
+            "rule": "Five-seed arithmetic mean of pred.metrics.P_from_logits, then score 1-P_ENS(true_k); dataset-local dev-select q_hat at coverage 0.99.",
+            "value": 0.9812049870379269
+          }
+        }
+      }
+    },
+    "numeric_dtype": "float64",
+    "q_hat_definition": "score = 1 - p(true); q_hat is ceil((n+1)*coverage)-th smallest, via code/logs/lacall_eng04.py::q_hat; sets use p >= 1-q_hat",
+    "row_sums": {
+      "gsm8k": {
+        "k0.95_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 7.740445859872612
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 7.635350318471337
+          }
+        },
+        "k0.95_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 37.02070063694268
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 41.18630573248408
+          }
+        },
+        "k0.99_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 11.719745222929935
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 11.979299363057326
+          }
+        },
+        "k0.99_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 54.6687898089172
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 628,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 64.15127388535032
+          }
+        }
+      },
+      "math500": {
+        "k0.95_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 7.7631578947368425
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 7.735087719298246
+          }
+        },
+        "k0.95_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 13.86140350877193
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 15.24736842105263
+          }
+        },
+        "k0.99_anchor0.94": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 11.005263157894737
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 11.159649122807018
+          }
+        },
+        "k0.99_anchor0.99": {
+          "per_k_anchor_row_sum": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean sum over k in the J0 LAC k-set of the count among the stored top-32 pre-deletion probabilities meeting the pooled anchor cutoff; remove d_rej only at the true-k offset, without renormalizing; hypothetical offsets retain all tokens; k=15 has no anchor output and contributes zero rows.",
+            "value": 19.00701754385965
+          },
+          "section7_true_k_product": {
+            "file": "calib/eval_J0d0.parquet + calib/eval_top32.parquet; true-k d_rej from runs/eng04_p11/derived/eval/lab_d_rej.npy",
+            "n_cal": 570,
+            "rule": "Eligible eval blocks (true k<15): mean of |S_k| times the anchor-set size at the true-k offset, using the same stored top-32 pre-deletion threshold and true-k-only d_rej removal as the per-k sum.",
+            "value": 22.16140350877193
+          }
+        }
+      }
+    },
+    "schema_version": 1,
+    "w314_provenance": {
+      "fitted_on": "w418E + markov head, D1 adapter, decoder o02; j01 served on calibration rail 32-95",
+      "level": 0.93,
+      "refit": "heads-lane jd01 (fitted on w380)",
+      "source_bundle": "j01-o02-joint"
+    }
+  },
+  "thresholds_fit": {
+    "block_sizes": [
+      16
+    ],
+    "k_score": "blend_dec",
+    "row_rule": "joint"
+  },
+  "thresholds_sha256": "01eaebfbad1d2c7f447e4bf24a55f03b5d55142b128f74f68c63e537c05c4b29"
+}

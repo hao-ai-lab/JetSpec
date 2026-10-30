@@ -1,0 +1,11 @@
+{
+  "autotune_pin_sha256": null,
+  "compile_pin_sha256": null,
+  "cpu_pin": "auto",
+  "devices": [
+    0
+  ],
+  "gpu": "b200",
+  "mps": false,
+  "placement": "one_gpu"
+}
