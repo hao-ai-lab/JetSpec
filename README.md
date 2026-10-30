@@ -4,16 +4,15 @@
 
 <div align="center"><h1>JetSpec++: Foresight Parallel Drafting with Self Refinements</h1></div>
 
+[**Paper**](https://arxiv.org/abs/2610.19792) | [**Webpage**](https://jetspec-project.github.io/jetspecpp-web/) | [**Models**](https://huggingface.co/collections/JetSpec/jetspec-plus-plus-releases)
+
+## Overview
+
 **JetSpec++** is a lossless speculative decoding method that hides almost all of its drafting cost behind verification. It drafts the next block on a second GPU while the target model verifies the current one, and it refines that draft while it waits.
 
 - **Faster:** on a GB200 pair, up to **7.45x** over autoregressive decoding and **1.54x** over DSpark, at up to **1,361 tokens per second** for one request.
 - **Hidden drafting:** the time per round beyond verification falls by up to **84%** relative to DSpark.
 - **Longer acceptance:** the longest acceptance length on all seven benchmarks, **8.94** tokens per round on average at temperature 0, against 6.89 for DSpark.
-
-<details open>
-<summary><strong>JetSpec++</strong></summary>
-
-[**Paper**](https://arxiv.org/abs/2610.19792) | [**Webpage**](https://jetspec-project.github.io/jetspecpp-web/) | [**Models**](https://huggingface.co/JetSpec)
 
 https://github.com/user-attachments/assets/61a97034-f137-4464-aaf0-8ce8cbf223db
 
@@ -27,21 +26,6 @@ Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup
 | Qwen3.8-27B | MATH-500 | 59.3 | 279.8 (4.72x) | **367.2 (6.20x)** |
 
 Table 1 of the paper gives the acceptance length on all seven benchmarks.
-
-</details>
-
-<details>
-<summary><strong>JetSpec</strong></summary>
-
-[**Paper**](https://arxiv.org/abs/2606.18394) | [**Blog**](https://haoailab.com/blogs/parallel-tree-decoding/) | [**Webpage**](https://jetspec-project.github.io/jetspec-web/) | [**Models**](https://huggingface.co/JetSpec)
-
-JetSpec is an implementation of **causal parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
-
-<p align="center"><img src="assets/end_to_end_speedup_barplot_refined_v2_page.png" alt="End-to-end speedup over autoregressive decoding on Qwen3-8B across benchmarks" width="760"></p>
-
-<p align="center"><img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="760"></p>
-
-</details>
 
 ## Supported Models
 
@@ -88,12 +72,23 @@ python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --
 
 [`reproduce_paper_results.md`](bench/jetspec_plus_plus/reproduce_paper_results.md) describes the host file, the protocol and the other baselines.
 
-The [serving engine README](jetspec/engines/jetspec_plus_plus/README.md) maps the code, follows a command to the first forward pass and lists the steps to add a model.
+## Code
 
-## JetSpec
+- **Method logic:** [`jetspec/methods/jetspec_plus_plus/`](jetspec/methods/jetspec_plus_plus/) is the readable torch reference. To read one round, start at `_prepare` in [`drafter.py`](jetspec/methods/jetspec_plus_plus/drafter.py), then read `RoundDriver.run` in [`round.py`](jetspec/methods/jetspec_plus_plus/round.py).
+- **Engine logic:** [`jetspec/engines/jetspec_plus_plus/`](jetspec/engines/jetspec_plus_plus/) is the two-GPU serving engine. Its [README](jetspec/engines/jetspec_plus_plus/README.md) maps the code, follows a command to the first forward pass and lists the steps to add a model.
 
 <details>
-<summary><strong>Supported models, installation, quick start and evaluation for JetSpec</strong></summary>
+<summary><strong>JetSpec</strong></summary>
+
+### Overview
+
+[**Paper**](https://arxiv.org/abs/2606.18394) | [**Blog**](https://haoailab.com/blogs/parallel-tree-decoding/) | [**Webpage**](https://jetspec-project.github.io/jetspec-web/) | [**Models**](https://huggingface.co/JetSpec)
+
+JetSpec is an implementation of **causal parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
+
+<p align="center"><img src="assets/end_to_end_speedup_barplot_refined_v2_page.png" alt="End-to-end speedup over autoregressive decoding on Qwen3-8B across benchmarks" width="760"></p>
+
+<p align="center"><img src="assets/engine_demo_light.gif" alt="JetSpec-demo" width="760"></p>
 
 ### Supported Models
 
@@ -239,11 +234,16 @@ Tree algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 | `class_histogram` | class-conditioned profile-guided tree shaping |
 | `depth_rank_histogram` | offline profile table over `(depth, rank)` acceptance |
 
+### Code
+
+- **Method logic:** [`jetspec/methods/jetspec/`](jetspec/methods/jetspec/) holds tree drafting, and [`jetspec/core/`](jetspec/core/) is the HuggingFace-based reference.
+- **Engine logic:** [`jetspec/engines/jetspec/`](jetspec/engines/jetspec/) is the optimized serving engine. Its [README](jetspec/engines/jetspec/README.md) and [design notes](jetspec/engines/jetspec/DESIGN.md) describe it.
+
 </details>
 
 ## For Coding Agents
 
-[`AGENTS.md`](AGENTS.md) describes every command, option and component in this repository.
+[`AGENTS.md`](AGENTS.md) describes every command, option and component in this repository. The [method](jetspec/methods/jetspec_plus_plus/AGENTS.md) and [engine](jetspec/engines/jetspec_plus_plus/AGENTS.md) folders each have their own `AGENTS.md`.
 
 ## Citation
 
