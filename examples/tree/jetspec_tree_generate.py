@@ -15,7 +15,8 @@ published head `JetSpec/jetspec-qwen3-8b`.
 """
 import sys
 
-from jetspec import load_draft_head, DraftHeadTreeDrafter
+from jetspec.methods.jetspec.draft_head import load_draft_head
+from jetspec.methods.jetspec.draft_head_adapter import DraftHeadTreeDrafter
 from jetspec.inference_engine import JetSpecEngine, SamplingParams
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "Qwen/Qwen3-8B"

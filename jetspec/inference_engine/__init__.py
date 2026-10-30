@@ -10,9 +10,9 @@ external serving fork.
 It consumes the SAME engine-agnostic tree contract as ``jetspec.core``; the
 one-way dependency stays (engine -> tree, never the reverse)::
 
-    from jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
+    from jetspec.methods.jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
 
-so every algorithm in ``jetspec.tree`` runs unchanged on either substrate. The
+so every algorithm in ``jetspec.methods.jetspec.tree`` runs unchanged on either substrate. The
 choice of engine changes throughput — not what the tree builds, nor whether
 decoding stays lossless.
 

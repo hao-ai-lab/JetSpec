@@ -113,8 +113,8 @@ def _maybe_extend_tree(tree, draft_logits, tree_drafter, committed, target_hidde
     its per-depth top-2 gaps clear `gap_threshold`. Cost when it fires: one
     extra drafter forward; strict no-op otherwise (returns the tree unchanged).
     """
-    # tree contract (engine -> tree, one-way): public jetspec.tree API only.
-    from jetspec.tree import should_extend, splice_extension
+    # tree contract (engine -> tree, one-way): public jetspec.methods.jetspec.tree API only.
+    from jetspec.methods.jetspec.tree import should_extend, splice_extension
 
     cond_fn = getattr(tree_drafter, "propose_logits_conditioned", None)
     if cond_fn is None:
@@ -616,8 +616,8 @@ class JetSpecEngine:
         `algo` / `algo_kwargs` / `prompt_info` / `profile_table` / `target_layer_ids`
         mirror `LLM.generate_tree`; all bundled algorithms recover accum_logp at
         their identity knobs, so the choice is lossless regardless."""
-        # tree contract (engine -> tree, one-way): import only the public jetspec.tree API
-        from jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
+        # tree contract (engine -> tree, one-way): import only the public jetspec.methods.jetspec.tree API
+        from jetspec.methods.jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
 
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):
@@ -1091,7 +1091,7 @@ class JetSpecEngine:
                 # measured depth when deep spliced trees are enabled (the gated
                 # .item() above). temperature>0 stays on the CPU oracle
                 # (gpu_tree_accept is greedy-only).
-                from jetspec.tree._core.accept import gpu_tree_accept
+                from jetspec.methods.jetspec.tree._core.accept import gpu_tree_accept
                 greedy = target_logits.argmax(dim=-1).squeeze(0)      # (N,) device
                 if logical_kv and getattr(self, "_use_cudagraph", False) \
                         and N >= _GRAPH_ACCEPT_MIN_N \
@@ -1409,8 +1409,8 @@ class JetSpecEngine:
         Hidden-state-conditioned (DraftHead) drafting is N1-only for now: this batched
         route runs the no-hidden path (`target_hidden=None`), which is what the stub
         drafters that gate it exercise."""
-        # tree contract (engine -> tree, one-way): import only the public jetspec.tree API
-        from jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
+        # tree contract (engine -> tree, one-way): import only the public jetspec.methods.jetspec.tree API
+        from jetspec.methods.jetspec.tree import get_algorithm, build_ancestor_matrix, tree_accept
 
         sp = sampling_params or SamplingParams()
         # Tokenize / normalize prompts to input_id lists.

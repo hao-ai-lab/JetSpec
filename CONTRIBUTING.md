@@ -35,14 +35,17 @@ engine, and an engine-agnostic tree layer, with a strict one-way dependency
   sampling, and the tree-attention hook used by reference benchmarks.
 - **`jetspec/inference_engine/`** — the optimized serving engine: paged KV cache,
   scheduler, Triton tree attention, and CUDA graph paths.
-- **`jetspec/tree/`** — the engine-agnostic tree-construction *method*. Turns
+- **`jetspec/methods/jetspec/`** — causal parallel tree drafting: tree algorithms,
+  simple drafters, the draft head and trained draft-head adapter.
+- **`jetspec/methods/jetspec/tree/`** — the engine-agnostic tree-construction *method*. Turns
   per-depth draft logits into a verification tree and selects the accepted path.
   Pure torch/numpy; imports nothing from an engine. **Import it only through the
-  public API `jetspec.tree` — never `jetspec.tree._core`** (the `_core` package is
+  public API `jetspec.tree` — never `jetspec.methods.jetspec.tree._core`** (the `_core` package is
   internal and may change without notice).
 - **`jetspec/models/`** — target/draft-head model loading and model utilities.
-- **`jetspec/draft.py`** and **`jetspec/draft_head_adapter.py`** — simple test
-  drafters and trained draft-head adapters.
+- **`jetspec/tree/`**, **`jetspec/draft.py`**, **`jetspec/draft_head_adapter.py`**
+  and **`jetspec/models/draft_head.py`** — compatibility shims to the JetSpec
+  method package. Existing public imports stay supported.
 
 Top-level scripts are grouped by purpose:
 
@@ -121,6 +124,6 @@ gates account for that caveat.
   the existing files. The codebase favors descriptive module/test docstrings that
   explain *why* a unit exists and what property it gates; mirror that.
 - Keep the `engine → tree` dependency one-way; the tree layer must not import from
-  `jetspec.core`, `jetspec.inference_engine`, or `jetspec.draft`.
+  `jetspec.core`, `jetspec.inference_engine`, or `jetspec.methods.jetspec.draft`.
 - Commit messages are single-line and prefixed by a tag (`[FIX]`, `[FEAT]`,
   `[DOCS]`, `[CHORE]`, etc.) describing the change.
