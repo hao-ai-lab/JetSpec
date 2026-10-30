@@ -1,22 +1,14 @@
-# JetSpec++ torch reference method
+# JetSpec++ torch reference
 
-JetSpec++ refines a block of draft tokens with J passes and R refresh passes.
-An adapter stages predicted target hidden states for the next round, while an
-anchor decoder and refresh swap update the block; pins preserve agreed tokens
-and keyed rows select proposals using BLEND k mass. The shared torch core
-verifies each proposal against the target and emits the accepted tokens plus
-the target correction, preserving greedy autoregressive output.
-
-This package provides the readable torch method, local artifact loaders and an
-acceptance-length reader for greedy decoding.
+This folder holds the JetSpec++ method in readable torch, with local artifact loaders and an acceptance-length reader. The shared torch core verifies each proposal against the target and emits the accepted tokens plus the target correction, which preserves greedy autoregressive output.
 
 ## One round
 
 The shared torch core calls `JetSpecPPDrafter` in `drafter.py` once per round. It passes the verified context and the target's hidden states.
 
-1. **Take the block.** `_prepare` uses the row that the last `observe` selected. On a miss, or in the first round, `RoundDriver.run` in `round.py` drafts the block from the verified context.
+1. **Take the block.** On a hit, `_prepare` uses the block that was pre-drafted for this outcome. On a miss, or in the first round, `RoundDriver.run` in `round.py` drafts the block from the verified context.
 2. **Score the outcomes.** An outcome is an accepted length and an anchor token. `refresh_decoder_logits` in `models/decoder.py` reads the adapter's predicted states, and `blend` in `method/kmass.py` gives each accepted length its probability.
-3. **Select the rows.** `joint_rule` and `select_rows` in `method/rows.py` keep the most likely outcomes.
+3. **Select the rows.** A row is one pre-drafted block for one outcome. `joint_rule` and `select_rows` in `method/rows.py` keep the most likely outcomes.
 4. **Draft the rows.** For each outcome, `build_protocol_hypothesis_contexts` in `context.py` builds the predicted context, and `RoundDriver.run` drafts one row. The rows wait in a cache.
 5. **Verify.** The core verifies the block. `observe` looks up the accepted length and the target's next token in the cache. A match is a hit, and that row becomes the next block.
 

@@ -4,11 +4,11 @@
 
 <div align="center"><h1>JetSpec++: Foresight Parallel Drafting with Self Refinements</h1></div>
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2610.19792"><strong>Paper</strong></a> |
-  <a href="https://jetspec-project.github.io/jetspecpp-web/"><strong>Webpage</strong></a> |
-  <a href="https://huggingface.co/collections/JetSpec/jetspec-plus-plus-releases"><strong>Models</strong></a>
-</p>
+<h3 align="center">
+  <a href="https://arxiv.org/abs/2610.19792">Paper</a> |
+  <a href="https://jetspec-project.github.io/jetspecpp-web/">Webpage</a> |
+  <a href="https://huggingface.co/JetSpec">Models</a>
+</h3>
 
 ## Overview
 
@@ -28,7 +28,6 @@ Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup
 | Qwen3-8B | MATH-500 | 182.7 | 902.1 (4.94x) | **1361.1 (7.45x)** |
 | Qwen3.8-27B | GSM8K | 60.3 | 249.6 (4.14x) | **342.4 (5.68x)** |
 | Qwen3.8-27B | MATH-500 | 59.3 | 279.8 (4.72x) | **367.2 (6.20x)** |
-
 
 ## Supported Models
 
@@ -56,7 +55,7 @@ python -m jetspec.engines.jetspec_plus_plus generate --model qwen3-8b \
     "How many positive whole-number divisors does 196 have?"
 ```
 
-The command downloads the pinned target and checkpoint, picks the schedule for your GPU, and prints the answer with its throughput. The first run also compiles kernels into `~/.cache/jetspec-plus-plus`, which takes several minutes. `--devices` names two GPUs as `nvidia-smi` numbers them (default `0,1`). `examples/jetspec_plus_plus/` has a launch script for each model.
+The command downloads the pinned target and checkpoint, picks the schedule for your GPU, and prints the answer with its throughput. That throughput covers one short prompt on a fresh engine, so use `speedup.py` below for a steady number. The first run also compiles kernels into `~/.cache/jetspec-plus-plus`, which takes several minutes. `--devices` names two GPUs as `nvidia-smi` numbers them (default `0,1`). `examples/jetspec_plus_plus/` has a launch script for each model.
 
 ## Evaluation
 
@@ -66,31 +65,29 @@ Speedup over autoregressive decoding on your GPU. `--dataset` takes `gsm8k`, `ma
 python bench/jetspec_plus_plus/speedup.py --model qwen3-8b --dataset math500
 ```
 
-The paper's Table 3 on a GB200 pair, against DSpark:
+The paper's Table 3 on a GB200 pair, against DSpark. The [guide](bench/jetspec_plus_plus/reproduce_paper_results.md) explains the host file:
 
 ```bash
 python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3-8b --assets release --host-values host-8b.json
 python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --assets release --host-values host-27b.json
 ```
 
-[`reproduce_paper_results.md`](bench/jetspec_plus_plus/reproduce_paper_results.md) describes the host file, the protocol and the other baselines.
-
 ## Code
 
-- **Method:** [`jetspec/methods/jetspec_plus_plus/`](jetspec/methods/jetspec_plus_plus/) holds the method in readable torch. Its README walks through one round.
-- **Engine:** [`jetspec/engines/jetspec_plus_plus/`](jetspec/engines/jetspec_plus_plus/) holds the two-GPU serving engine. Its README maps the code and follows a command to the first forward pass.
+- **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/README.md) holds the method in readable form.
+- **Engine:** the [serving engine](jetspec/engines/jetspec_plus_plus/README.md) runs the method on two GPUs.
 
 <details>
-<summary><strong>JetSpec</strong></summary>
+<summary><h2>JetSpec</h2></summary>
 
 ### Overview
 
-<p align="center">
-  <a href="https://arxiv.org/abs/2606.18394"><strong>Paper</strong></a> |
-  <a href="https://haoailab.com/blogs/parallel-tree-decoding/"><strong>Blog</strong></a> |
-  <a href="https://jetspec-project.github.io/jetspec-web/"><strong>Webpage</strong></a> |
-  <a href="https://huggingface.co/JetSpec"><strong>Models</strong></a>
-</p>
+<h3 align="center">
+  <a href="https://arxiv.org/abs/2606.18394">Paper</a> |
+  <a href="https://haoailab.com/blogs/parallel-tree-decoding/">Blog</a> |
+  <a href="https://jetspec-project.github.io/jetspec-web/">Webpage</a> |
+  <a href="https://huggingface.co/JetSpec">Models</a>
+</h3>
 
 JetSpec is an implementation of **causal parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
@@ -245,7 +242,7 @@ Tree algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 ### Code
 
 - **Method:** [`jetspec/methods/jetspec/`](jetspec/methods/jetspec/) holds tree drafting.
-- **Engine:** [`jetspec/engines/jetspec/`](jetspec/engines/jetspec/) holds the optimized serving engine. Its README describes the design.
+- **Engine:** the [serving engine](jetspec/engines/jetspec/README.md) adds paged KV, Triton tree attention and compiled verification.
 
 </details>
 
