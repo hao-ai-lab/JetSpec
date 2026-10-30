@@ -4,7 +4,11 @@
 
 <div align="center"><h1>JetSpec++: Foresight Parallel Drafting with Self Refinements</h1></div>
 
-[**Paper**](https://arxiv.org/abs/2610.19792) | [**Webpage**](https://jetspec-project.github.io/jetspecpp-web/) | [**Models**](https://huggingface.co/collections/JetSpec/jetspec-plus-plus-releases)
+<p align="center">
+  <a href="https://arxiv.org/abs/2610.19792"><strong>Paper</strong></a> |
+  <a href="https://jetspec-project.github.io/jetspecpp-web/"><strong>Webpage</strong></a> |
+  <a href="https://huggingface.co/collections/JetSpec/jetspec-plus-plus-releases"><strong>Models</strong></a>
+</p>
 
 ## Overview
 
@@ -16,7 +20,7 @@
 
 https://github.com/user-attachments/assets/61a97034-f137-4464-aaf0-8ce8cbf223db
 
-Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup over autoregressive decoding (AR), from Table 3 of the [paper](https://arxiv.org/abs/2610.19792):
+Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup over autoregressive decoding (AR):
 
 | Target | Benchmark | AR (tok/s) | DSpark (tok/s) | JetSpec++ (tok/s) |
 |---|---|---:|---:|---:|
@@ -25,7 +29,6 @@ Decode speed on a GB200 pair at batch size 1 and temperature 0, with the speedup
 | Qwen3.8-27B | GSM8K | 60.3 | 249.6 (4.14x) | **342.4 (5.68x)** |
 | Qwen3.8-27B | MATH-500 | 59.3 | 279.8 (4.72x) | **367.2 (6.20x)** |
 
-Table 1 of the paper gives the acceptance length on all seven benchmarks.
 
 ## Supported Models
 
@@ -74,15 +77,20 @@ python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --
 
 ## Code
 
-- **Method logic:** [`jetspec/methods/jetspec_plus_plus/`](jetspec/methods/jetspec_plus_plus/) is the readable torch reference. To read one round, start at `_prepare` in [`drafter.py`](jetspec/methods/jetspec_plus_plus/drafter.py), then read `RoundDriver.run` in [`round.py`](jetspec/methods/jetspec_plus_plus/round.py).
-- **Engine logic:** [`jetspec/engines/jetspec_plus_plus/`](jetspec/engines/jetspec_plus_plus/) is the two-GPU serving engine. Its [README](jetspec/engines/jetspec_plus_plus/README.md) maps the code, follows a command to the first forward pass and lists the steps to add a model.
+- **Method:** [`jetspec/methods/jetspec_plus_plus/`](jetspec/methods/jetspec_plus_plus/) holds the method in readable torch. Its README walks through one round.
+- **Engine:** [`jetspec/engines/jetspec_plus_plus/`](jetspec/engines/jetspec_plus_plus/) holds the two-GPU serving engine. Its README maps the code and follows a command to the first forward pass.
 
 <details>
 <summary><strong>JetSpec</strong></summary>
 
 ### Overview
 
-[**Paper**](https://arxiv.org/abs/2606.18394) | [**Blog**](https://haoailab.com/blogs/parallel-tree-decoding/) | [**Webpage**](https://jetspec-project.github.io/jetspec-web/) | [**Models**](https://huggingface.co/JetSpec)
+<p align="center">
+  <a href="https://arxiv.org/abs/2606.18394"><strong>Paper</strong></a> |
+  <a href="https://haoailab.com/blogs/parallel-tree-decoding/"><strong>Blog</strong></a> |
+  <a href="https://jetspec-project.github.io/jetspec-web/"><strong>Webpage</strong></a> |
+  <a href="https://huggingface.co/JetSpec"><strong>Models</strong></a>
+</p>
 
 JetSpec is an implementation of **causal parallel tree drafting** for fast LLM speculative decoding inference with up to 10x acceptance length, and 1000+ TPS on coding and math tasks using B200 GPUs. A causal-parallel draft head proposes a token tree, and the frozen target model verifies the whole tree in one forward pass under a tree-causal attention mask. The accepted path is selected in accordance with the target's own logits, so decoding is lossless by construction.
 
@@ -236,8 +244,8 @@ Tree algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 
 ### Code
 
-- **Method logic:** [`jetspec/methods/jetspec/`](jetspec/methods/jetspec/) holds tree drafting, and [`jetspec/core/`](jetspec/core/) is the HuggingFace-based reference.
-- **Engine logic:** [`jetspec/engines/jetspec/`](jetspec/engines/jetspec/) is the optimized serving engine. Its [README](jetspec/engines/jetspec/README.md) and [design notes](jetspec/engines/jetspec/DESIGN.md) describe it.
+- **Method:** [`jetspec/methods/jetspec/`](jetspec/methods/jetspec/) holds tree drafting.
+- **Engine:** [`jetspec/engines/jetspec/`](jetspec/engines/jetspec/) holds the optimized serving engine. Its README describes the design.
 
 </details>
 

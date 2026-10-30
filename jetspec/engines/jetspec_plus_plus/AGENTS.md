@@ -1,16 +1,6 @@
 # AGENTS.md
 
-This folder is the JetSpec++ serving engine. It runs the method on two GPUs with CUDA graphs and fused kernels. The [root `AGENTS.md`](../../../AGENTS.md) has the commands and the results, and the [README](README.md) has the code map.
-
-## Read the engine
-
-1. Read "From the command to the first forward pass" in the README. It follows one launch.
-2. `Scheduler` in `serving/scheduler.py` admits requests.
-3. `SpecDecodeStep` in `verify/step.py` drives verification on the target GPU.
-4. `ChainRoundDriver` in `draft/driver.py` runs the draft passes on the draft GPU.
-5. `wire/` carries packets between the two GPUs.
-
-To read the method without the engine, use `jetspec/methods/jetspec_plus_plus/`.
+This folder is the JetSpec++ serving engine. Read the [README](README.md) first: it maps the code and follows a command to the first forward pass. The [root `AGENTS.md`](../../../AGENTS.md) has the commands and the results.
 
 ## Rules
 

@@ -4,6 +4,52 @@ The serving engine packages the authors' model, draft, verification, scheduling,
 and transport implementation for local inference. It serves the dense Qwen3-8B
 and the hybrid Qwen3.8-27B targets.
 
+## Code map
+
+| Path | Holds |
+| --- | --- |
+| `entry.py`, `__main__.py` | The public command |
+| `launch/` | Recipe resolution, artifact checks, the child process |
+| `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
+| `serving/` | `LLMEngine`, scheduler, KV cache, `ModelRunner` |
+| `draft/` | Draft rank, draft model, rows, chain graphs, round driver |
+| `verify/` | Target rank, verification, commit |
+| `models/` | Target, adapter and decoder models |
+| `wire/` | Packets and transport between the two GPUs |
+| `kernels/` | Compiled tensor operations, one folder per model |
+| `runtime/` | Run settings, run records, DSpark serving |
+| `analysis/`, `trace/` | Reports from finished reads |
+| `third_party/` | Pinned DSpark code, checked by hash |
+
+## From the command to the first forward pass
+
+1. `__main__.py` calls `entry.main`.
+2. `entry.py` maps the model, schedule and GPU family to an entry in `RECIPES`, then renders the prompt.
+3. `launch/runner.py` checks the artifact hashes, builds the launch plan and starts a child process.
+4. The child runs `launch/bench.py`, which constructs `LLMEngine` from `serving/llm_engine.py`.
+5. `LLMEngine` constructs `TargetRunner` from `verify/forward.py` in the current process and spawns `DraftRunner` from `draft/rank.py`. Both inherit `ModelRunner` from `serving/model_runner.py`.
+6. `ModelRunner` warms up, then allocates the KV cache. The first forward pass is the warmup prefill through `TargetForCausalLM` in `models/target.py`.
+
+During serving, `Scheduler` in `serving/scheduler.py` admits requests, `SpecDecodeStep` in `verify/step.py` drives verification, and `ChainRoundDriver` in `draft/driver.py` runs the draft passes.
+
+To read one round in plain torch, see the [torch reference](../../methods/jetspec_plus_plus/README.md).
+
+## Model names
+
+The public name Qwen3.8-27B uses the checkpoint type `qwen3_5_text`, the hybrid layout. Its recurrent layer is the Gated DeltaNet (GDN) in `models/gdn.py`. `models/registry.py` selects `TargetForCausalLM` for both targets. `kernels/qwen3_8b/` and `kernels/qwen3p8_27b/` hold the operations specific to each target.
+
+## Add a model
+
+1. Check that the target fits `ModelSpec` in `draft/method/model_spec.py`.
+2. Add checkpoint parsing to `models/registry.py` and weight mapping to `models/target_loader.py`.
+3. Add new layer or state arithmetic to `models/target_layers.py` and `models/state.py` only if the target needs it.
+4. Train a drafter, an adapter and a calibration, then pin their hashes in `config/model.json` and `artifacts/manifest.json`.
+5. Add the model, its recipes and its defaults to `entry.py`. List each kernel family that you tested.
+6. Extend the torch reference loader in `jetspec/methods/jetspec_plus_plus/drafter.py`.
+7. Validate on GPUs: the eager target, reference rounds, graph replay, draft hits and misses, and EOS and token-cap stops.
+
+## Install and run
+
 Install the exact measured environment, then this package, without dependency
 resolution. A resolved install picks other versions and can change the output
 tokens.
@@ -97,47 +143,3 @@ Measure speedup with `python bench/jetspec_plus_plus/speedup.py` and the same
 artifact flags. The benchmark stops at EOS by default, runs AR on the first GPU,
 and reports the ratio of measured decode throughput. It takes the same `--model`,
 `--schedule` and `--engine` flags and uses the AR baseline of the same model.
-
-## Code map
-
-| Path | Holds |
-| --- | --- |
-| `entry.py`, `__main__.py` | The public command |
-| `launch/` | Recipe resolution, artifact checks, the child process |
-| `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
-| `serving/` | `LLMEngine`, scheduler, KV cache, `ModelRunner` |
-| `draft/` | Draft rank, draft model, rows, chain graphs, round driver |
-| `verify/` | Target rank, verification, commit |
-| `models/` | Target, adapter and decoder models |
-| `wire/` | Packets and transport between the two GPUs |
-| `kernels/` | Compiled tensor operations, one folder per model |
-| `runtime/` | Run settings, run records, DSpark serving |
-| `analysis/`, `trace/` | Reports from finished reads |
-| `third_party/` | Pinned DSpark code, checked by hash |
-
-## From the command to the first forward pass
-
-1. `__main__.py` calls `entry.main`.
-2. `entry.py` maps the model, schedule and GPU family to an entry in `RECIPES`, then renders the prompt.
-3. `launch/runner.py` checks the artifact hashes, builds the launch plan and starts a child process.
-4. The child runs `launch/bench.py`, which constructs `LLMEngine` from `serving/llm_engine.py`.
-5. `LLMEngine` constructs `TargetRunner` from `verify/forward.py` in the current process and spawns `DraftRunner` from `draft/rank.py`. Both inherit `ModelRunner` from `serving/model_runner.py`.
-6. `ModelRunner` warms up, then allocates the KV cache. The first forward pass is the warmup prefill through `TargetForCausalLM` in `models/target.py`.
-
-During serving, `Scheduler` in `serving/scheduler.py` admits requests, `SpecDecodeStep` in `verify/step.py` drives verification, and `ChainRoundDriver` in `draft/driver.py` runs the draft passes.
-
-To read one round in plain torch, start at `_prepare` in `jetspec/methods/jetspec_plus_plus/drafter.py`. Then read `RoundDriver.run` in `round.py`, and `observe` back in `drafter.py`.
-
-## Model names
-
-The public name Qwen3.8-27B uses the checkpoint type `qwen3_5_text`, the hybrid layout. Its recurrent layer is the Gated DeltaNet (GDN) in `models/gdn.py`. `models/registry.py` selects `TargetForCausalLM` for both targets. `kernels/qwen3_8b/` and `kernels/qwen3p8_27b/` hold the operations specific to each target.
-
-## Add a model
-
-1. Check that the target fits `ModelSpec` in `draft/method/model_spec.py`.
-2. Add checkpoint parsing to `models/registry.py` and weight mapping to `models/target_loader.py`.
-3. Add new layer or state arithmetic to `models/target_layers.py` and `models/state.py` only if the target needs it.
-4. Train a drafter, an adapter and a calibration, then pin their hashes in `config/model.json` and `artifacts/manifest.json`.
-5. Add the model, its recipes and its defaults to `entry.py`. List each kernel family that you tested.
-6. Extend the torch reference loader in `jetspec/methods/jetspec_plus_plus/drafter.py`.
-7. Validate on GPUs: the eager target, reference rounds, graph replay, draft hits and misses, and EOS and token-cap stops.

@@ -1,22 +1,6 @@
 # AGENTS.md
 
-This folder is the JetSpec++ torch reference. It holds the method in readable form, without the serving engine. The [root `AGENTS.md`](../../../AGENTS.md) has the commands and the results.
-
-## Read one round
-
-Start at `_prepare` in `drafter.py`. Then read `RoundDriver.run` in `round.py`, and `observe` back in `drafter.py`.
-
-## Code map
-
-| Path | Holds |
-| --- | --- |
-| `drafter.py` | The drafter that the shared torch core calls |
-| `round.py` | One round, in `RoundDriver` |
-| `context.py` | The hypothesis contexts |
-| `method/` | Row selection, Jacobi passes, context refresh, anchor replacement, pins, acceptance |
-| `models/` | The adapter, the anchor decoder and the draft model |
-| `artifacts.py` | Artifact loaders and hash checks |
-| `reader.py` | The acceptance-length reader |
+This folder is the JetSpec++ torch reference. Read the [README](README.md) first: it walks through one round and maps the files. The [root `AGENTS.md`](../../../AGENTS.md) has the commands and the results.
 
 ## Check a change
 
