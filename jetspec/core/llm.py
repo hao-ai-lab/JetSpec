@@ -1,9 +1,17 @@
-"""Offline single-stream LLM — a small JetSpec-style API.
+"""Ported from the JetSpec++ reference implementation.
+
+Offline single-stream LLM — a small JetSpec-style API.
 
 Plain autoregressive greedy/temperature decode over an HF `DynamicCache`
 (prefill the prompt once, then single-token decode steps reusing the cache).
 This is the 1x baseline; the draft head + tree verify build on the same seam.
 Single sequence, batch=1 (the offline-inference regime).
+
+Public API: LLM(...), SamplingParams(temperature=0, max_new_tokens=256),
+make_cache(model), make_static_cache(model, max_cache_len),
+emit_verified_block(new_ids, block, eos_token_ids, max_new_tokens) -> int.
+LLM.generate_tree(..., prompt_index=None, seed=None) forwards proposal metadata
+and calls drafter.observe(acc, correction) when defined.
 """
 from dataclasses import dataclass
 import time
@@ -14,6 +22,20 @@ from transformers import DynamicCache, StaticCache
 from jetspec.models.qwen3 import load_target
 from jetspec.core.model_runner import ModelRunner
 from jetspec.core.sampler import sample
+
+__all__ = ["LLM", "SamplingParams", "make_cache", "make_static_cache", "emit_verified_block"]
+
+
+def emit_verified_block(new_ids, block, eos_token_ids, max_new_tokens):
+    """Append only the verified tokens emitted before EOS or the token cap."""
+    before = len(new_ids)
+    for token in block:
+        if len(new_ids) >= max_new_tokens:
+            break
+        new_ids.append(int(token))
+        if int(token) in eos_token_ids:
+            break
+    return len(new_ids) - before
 
 
 def _resolve_model_config(model):
@@ -63,6 +85,9 @@ def make_cache(model) -> DynamicCache:
 
     Safe to call for non-compiled models too — it just returns a regular DynamicCache.
     """
+    factory = getattr(model, 'new_cache', None)
+    if factory is not None:
+        return factory()
     cache = DynamicCache()
     config = getattr(model, "config", None) or getattr(getattr(model, "_orig_mod", None), "config", None)
     n = getattr(config, "num_hidden_layers", 0) if config is not None else 0
@@ -85,6 +110,10 @@ class SamplingParams:
 
 def _select_kv_cache(cache, prefix_len: int, accepted_tree_indices: torch.Tensor) -> None:
     """Keep cached prefix in place and compact accepted tree nodes after it."""
+    commit = getattr(cache, 'commit_tree', None)
+    if commit is not None:
+        commit(prefix_len, accepted_tree_indices)
+        return
     accepted_tree_indices = accepted_tree_indices.to(dtype=torch.long)
     accepted_len = int(accepted_tree_indices.numel())
     new_len = int(prefix_len) + accepted_len
@@ -322,20 +351,21 @@ class LLM:
                       target_layer_ids=None, sampling_params: SamplingParams = None,
                       return_stats: bool = False, profile_phases: bool = False,
                       prompt_info: dict = None, profile_table: dict = None,
-                      tree_attn: str = "sdpa", return_text: bool = True) -> dict:
+                      tree_attn: str = "sdpa", return_text: bool = True,
+                      prompt_index: int = None, seed: int = None) -> dict:
         """Tree speculative decode. Each round: the tree drafter emits per-depth
         logits, the tree algorithm builds a DraftTree, the target verifies all
         nodes against a persistent KV cache, and tree_accept takes the longest
         greedy-agreeing root-to-leaf path + a correction. Returns
         {token_ids, text, tpf}.
 
-        `algo` selects a registered tree algorithm (see `jetspec.tree.list_algorithms`);
+        `algo` selects a registered tree algorithm (see `jetspec.methods.jetspec.tree.list_algorithms`);
         `algo_kwargs` passes its constructor knobs (e.g. {"beta": 2.0} for
         top2gap_fanout). `prompt_info` (optional dict: task label / reasoning mode
         / decoded text) is forwarded to the algorithm's build() for the
         prompt-adaptive (semantic_aware) algorithms; None → they use their
         logit-fingerprint fallback. `profile_table` (optional dict: offline
-        per-(depth,rank) acceptance, from bench/profiling/collect_depth_rank_stats.py) is forwarded to
+        per-(depth,rank) acceptance, from bench/jetspec/profiling/collect_depth_rank_stats.py) is forwarded to
         the profile-guided algorithms (depth_rank_histogram); None → they recover
         accum_logp. All bundled algorithms recover accum_logp at their identity
         knobs, so the choice is lossless regardless.
@@ -348,8 +378,8 @@ class LLM:
         Verification always uses the persistent-cache wall-clock path. Historical
         full-recompute diagnostics belong in benchmark/debug scripts rather than
         this core execution path."""
-        # tree contract (engine -> tree, one-way): import only the public jetspec.tree API
-        from jetspec.tree import get_algorithm
+        # tree contract (engine -> tree, one-way): import only the public jetspec.methods.jetspec.tree API
+        from jetspec.methods.jetspec.tree import get_algorithm
 
         sp = sampling_params or SamplingParams()
         if isinstance(prompt, str):
@@ -364,7 +394,7 @@ class LLM:
         return self._generate_tree_kv_cached(
             committed, tree_drafter, block_size, tree_width, budget, algo_obj,
             target_layer_ids, sp, return_stats, prompt_info, profile_table,
-            tree_attn, profile_phases, return_text,
+            tree_attn, profile_phases, return_text, prompt_index, seed,
         )
 
     @torch.inference_mode()
@@ -372,7 +402,8 @@ class LLM:
                                  budget, algo_obj, target_layer_ids, sp,
                                  return_stats, prompt_info, profile_table,
                                  tree_attn: str = "sdpa", profile_phases: bool = False,
-                                 return_text: bool = True) -> dict:
+                                 return_text: bool = True, prompt_index: int = None,
+                                 seed: int = None) -> dict:
         """Tree spec decode over a PERSISTENT target KV cache (the wall-clock path).
 
         Mirrors `generate_chain`'s persistent-cache verify, extended to trees: each
@@ -385,8 +416,8 @@ class LLM:
 
         Lossless by construction (commits the verify forward's own greedy along the
         accepted path). Dispatched from `generate_tree`; args are already parsed there."""
-        # tree contract (engine -> tree, one-way): import only the public jetspec.tree API
-        from jetspec.tree import build_ancestor_matrix, gpu_tree_accept, tree_accept
+        # tree contract (engine -> tree, one-way): import only the public jetspec.methods.jetspec.tree API
+        from jetspec.methods.jetspec.tree import build_ancestor_matrix, gpu_tree_accept, tree_accept
         if tree_attn == "triton":
             from jetspec.core.tree_attention_kernel import (
                 use_attention_implementation,
@@ -397,6 +428,11 @@ class LLM:
         neg = torch.finfo(dtype).min
         D = max(1, block_size - 1)
         need_hidden = target_layer_ids is not None and block_size > 1
+        proposal_kwargs = {}
+        if prompt_index is not None:
+            proposal_kwargs["prompt_index"] = prompt_index
+        if seed is not None:
+            proposal_kwargs["seed"] = seed
 
         # Precompute sliding-window config for the SDPA verify mask.
         # torch.compile wraps the model; check both the wrapper and _orig_mod.
@@ -487,7 +523,7 @@ class LLM:
             draft_logits = _phase(
                 "draft",
                 lambda: tree_drafter.propose_logits(
-                    committed, D, target_hidden=target_hidden
+                    committed, D, target_hidden=target_hidden, **proposal_kwargs
                 ).to(self.device),
             )  # (1, D, V)
             if decode_start is None:
@@ -585,6 +621,10 @@ class LLM:
                 accepted_indices = torch.tensor(accepted_path, dtype=torch.long, device=self.device)
                 correction = torch.tensor(correction_int, dtype=tree.token_ids.dtype, device=self.device)
 
+            observe = getattr(tree_drafter, "observe", None)
+            if observe is not None:
+                observe(acc, correction)
+
             # GATHER: keep prefix in place and compact the accepted tree tail.
             _phase("kv_select", lambda: _select_kv_cache(cache, past_len, accepted_indices))
             if need_hidden:
@@ -600,12 +640,9 @@ class LLM:
             block = torch.cat([accepted, correction.reshape(1).to(dtype=tree.token_ids.dtype, device=self.device)])
             committed = torch.cat([committed, block.view(1, -1)], dim=1)
             rounds += 1
-            accept_lengths.append(int(block.numel()))   # acc + 1, matches reference accept-len
             tree_sizes.append(int(N))
-            for t in block.tolist():
-                new_ids.append(int(t))
-                if int(t) in self.eos_token_ids:
-                    break
+            accept_lengths.append(emit_verified_block(new_ids, block.tolist(), self.eos_token_ids,
+                                                      sp.max_new_tokens))
             if new_ids and new_ids[-1] in self.eos_token_ids:
                 break
         new_ids = new_ids[: sp.max_new_tokens]
