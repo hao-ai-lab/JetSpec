@@ -31,9 +31,12 @@ BIN_TILE = 16
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.decoder_select import (
-        _bf16_key, _radix_find_pivot, _radix_hist, _radix_offsets, _radix_threshold,
-        _radix_totals_coalesced)
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _bf16_key
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _radix_find_pivot
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _radix_hist
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _radix_offsets
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _radix_threshold
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _radix_totals_coalesced
 
     @triton.jit
     def _probability(value, maximum, total):

@@ -18,7 +18,7 @@ from jetspec.engines.jetspec_plus_plus.wire.triton_offsets import (  # noqa: F40
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.chain_publish import (_publish_fused)
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_publish import _publish_fused
 
 
 class ChainPublisher:

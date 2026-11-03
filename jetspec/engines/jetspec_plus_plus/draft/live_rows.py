@@ -772,7 +772,7 @@ class KthRowsDrafter:
         eval_swap = None
         launches = refreshes = 0
         if eval_mode:
-            from jetspec.engines.jetspec_plus_plus.draft.admission_swap import prepare_eager_swap
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.admission_swap import prepare_eager_swap
             # Admission has an exact prefix and no predicted tail. Reuse the same
             # decoder swap and graph-backed draft bucket as the serving round.
             saved_hidden = sequence.staged.predicted_hidden
@@ -1262,7 +1262,7 @@ class BucketPass:
         head_type=FastBucketRowDraftHead if host_fast else BucketRowDraftHead
         if live_of is not None:
             # JETSPEC_BATCH_ROWS_LIVE: N rows of the flat bucket head ``live_of`` (rows_live.py)
-            from jetspec.engines.jetspec_plus_plus.draft.rows_live import CompactRowHead
+            from jetspec.engines.jetspec_plus_plus.draft.batch.compact_rows import CompactRowHead
             if ((host_fast) or (refresh) or (not flat)):
                 raise ValueError('a live-rows pass is a flat pass without refresh')
             self.head=CompactRowHead(live_of,rows=N,shelf=live_shelf)
@@ -1283,7 +1283,7 @@ class BucketPass:
         d=self.drafter
         if self.wide:
             if getattr(self, '_t14_entry', False):
-                from jetspec.engines.jetspec_plus_plus.kernels.embed_gather import embedding_norm
+                from jetspec.engines.jetspec_plus_plus.kernels.rows.embed_gather import embedding_norm
                 from jetspec.engines.jetspec_plus_plus.draft.rows import fused_kernels
                 norm = self.head.head.layers[0].input_layernorm
                 hidden, normalized = embedding_norm(self.ids, d.embed_tokens.weight,
@@ -1420,7 +1420,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
                 and refresh_at and refresh_at[0] == 1
                 and kernel_enabled('refresh_prep_lean', '1'))
     if fuse_t17:
-        from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import allocate_refresh
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import allocate_refresh
         outputs['_t17_refresh'] = allocate_refresh(rows, lanes, keys.device, lanes,
             refresh_khat_threshold(False, run_config=run_config))
     if fused_head and (not k3 or keys.device.type != 'cuda'):
@@ -2063,7 +2063,7 @@ def rows_chain_body(rp, tokens, offers_ids, offers_p64, offers_pack, dec_logits,
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
     if kernel_enabled('rows_k3', '1') and dec_logits.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.joint_row_rule import rows_k3_body
+        from jetspec.engines.jetspec_plus_plus.kernels.rows.joint_row_rule import rows_k3_body
         from jetspec.engines.jetspec_plus_plus.draft.serve_policy import rows_min_count
         from jetspec.engines.jetspec_plus_plus.runtime.profile import enabled as profile_enabled
         return rows_k3_body(

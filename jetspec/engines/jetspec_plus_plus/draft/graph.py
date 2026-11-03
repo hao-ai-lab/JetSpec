@@ -23,16 +23,16 @@ from jetspec.engines.jetspec_plus_plus.wire.contract import ChainKey
 from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
 from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset
 from jetspec.engines.jetspec_plus_plus.wire.contract import patch_round_params_from_outcome
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_CAPACITY
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_DRIFT
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_PACKET
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_PENDING
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_CONTROL
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_AFTER_MISS
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_ERR_ROW_MISSING
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_CAPACITY
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_DRIFT
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_PACKET
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_PENDING
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_CONTROL
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_AFTER_MISS
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_ERR_ROW_MISSING
 from jetspec.engines.jetspec_plus_plus.wire.contract import HASH_WEIGHTS
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import append_outcome
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import fill_front_from_outcome
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import append_outcome
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import fill_front_from_outcome
 
 
 SEGMENTS = CHAIN_SEGMENTS

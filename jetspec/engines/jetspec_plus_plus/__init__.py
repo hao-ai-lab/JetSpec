@@ -7,7 +7,7 @@ _EXPORTS = {
     "Sequence": ('jetspec.engines.jetspec_plus_plus.serving.sequence', 'Sequence'),
     "SequenceStatus": ('jetspec.engines.jetspec_plus_plus.serving.sequence', 'SequenceStatus'),
     "ModelRunner": ('jetspec.engines.jetspec_plus_plus.serving.model_runner', 'ModelRunner'),
-    "Config": ('jetspec.engines.jetspec_plus_plus.serving.config', 'Config'),
+    "Config": ('jetspec.engines.jetspec_plus_plus.runtime.config', 'Config'),
     "infer_model_family": ('jetspec.engines.jetspec_plus_plus.serving.misc', 'infer_model_family'),
     "Attention": ('jetspec.engines.jetspec_plus_plus.models.attention', 'Attention'),
     "set_context": ('jetspec.engines.jetspec_plus_plus.models.context', 'set_context'),

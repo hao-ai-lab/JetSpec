@@ -192,7 +192,11 @@ def _rotary(x, cos, sin):
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.row_cache import (_context_kv_postprocess_kernel, _kv_rotary_into_cache_kernel, _kv_rotary_into_slots_kernel, _top1_probability_kernel, _kv_rotary_into_cache_at_kernel)
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _context_kv_postprocess_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_cache_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_slots_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _top1_probability_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_cache_at_kernel
 
 
 def kv_rotary_into_cache(normalized_key, projected_value, cos, sin, key_out, value_out, *,
@@ -630,7 +634,7 @@ def chain_geometry_into(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, m
     if (keys.dtype != torch.int64 or mask_bytes != count * block_bytes or
             tuple(qcos.shape) != (count * 16, dim) or mask.numel() < mask_bytes):
         raise ValueError('chain geometry shapes disagree with the mask banks')
-    from jetspec.engines.jetspec_plus_plus.kernels import chain_geometry
+    from jetspec.engines.jetspec_plus_plus.kernels.chain import chain_geometry
     if not cos.is_cuda or chain_geometry.triton is None:
         _chain_geometry_reference(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, mask,
                                   prefix=prefix, tail=tail, key_offset=key_offset)
@@ -921,7 +925,7 @@ class RowDraftHead(nn.Module):
                                 length=self._jpass_state.lengths, prefix=self.P)
                 return output[0].transpose(0, 1)
         if getattr(self, '_jpass_len_enabled', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.jpass_len_attention import attend
+            from jetspec.engines.jetspec_plus_plus.kernels.passes.jpass_len_attention import attend
             return attend(q, cache, self.custom_mask_buffer, self._jpass_state.lengths,
                           groups=self.N, prefix=self.P, scale=attn.head_dim ** -0.5)
         return self.wrapper.run(q, cache)

@@ -196,7 +196,7 @@ class RefreshSwap(ServingRefreshSwap):
                 None if self.dense_pins else self.pin_slot, self.rule_bias,
                 self.pin_mask if self.dense_pins else None)
         elif wrote_ids:
-            from jetspec.engines.jetspec_plus_plus.draft.swap_write import decide_and_write
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.swap_write import decide_and_write
             khat_used, slot, new, apply = decide_and_write(result, ids, khat, slot_counts, active)
         else:
             decision = compact_decision if self.lean else swap_decision

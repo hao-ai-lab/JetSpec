@@ -115,7 +115,7 @@ def norm_rotary(x, module, cos, sin):
             or module.norm_round != "after_weight"):
         return _c1_rotary(module(x).transpose(1, 2), cos, sin)
     if kernel_enabled('hybrid_c1_gluon', '1') and cos.shape[-1] == 64:
-        from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import gluon_block
         if gluon_block.available(x):
             return gluon_block.norm_rotary(x, module, cos, sin)
     _, tokens, heads, dim = x.shape
@@ -142,7 +142,7 @@ def write_kv(key, value, module, cos, sin, cache, slots, groups):
                       .repeat_interleave(groups, dim=1))
         return
     if kernel_enabled('hybrid_c1_gluon', '1') and cos.shape[-1] == 64:
-        from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import gluon_block
         if gluon_block.available(key):
             return gluon_block.write_kv(key, value, module, cos, sin, cache, slots, groups)
     _head_norm_rope[(tokens, heads)](
@@ -159,7 +159,7 @@ def gate_mul(attended, gate, heads, dim):
     # The Q projection interleaves query and gate per head. Preserve that view.
     out = torch.empty_like(attended)
     # draft_fuse_w1h27: attach to flat output storage, retained by attended[0] views.
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import enabled as hybrid_w1
+    from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import enabled as hybrid_w1
     if hybrid_w1(attended) and heads * dim % 256 == 0:
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import allocate_activation, _arguments
         produced = allocate_activation(out)

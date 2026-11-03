@@ -94,8 +94,8 @@ class StaticBlockheadGraph:
             self._kv_rotary_into_cache = kv_rotary_into_cache
             self._kv_rotary_into_cache_slots = kv_rotary_into_cache_slots
         if self.attn_len:
-            from jetspec.engines.jetspec_plus_plus.kernels.jpass_len_attention import attend
-            from jetspec.engines.jetspec_plus_plus.kernels.jpass_len_attention import blockhead_mask
+            from jetspec.engines.jetspec_plus_plus.kernels.passes.jpass_len_attention import attend
+            from jetspec.engines.jetspec_plus_plus.kernels.passes.jpass_len_attention import blockhead_mask
             self._attend = attend
             self._blockhead_mask = blockhead_mask
             if self.capacity % 64:

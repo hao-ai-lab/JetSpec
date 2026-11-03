@@ -99,7 +99,7 @@ def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_mer
              and width <= 64 and width < vocab and cap & (cap - 1) == 0
              and kernel_enabled('decoder_select_radix', '1'))
     if radix:
-        from jetspec.engines.jetspec_plus_plus.kernels.decoder_select import radix_topk
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import radix_topk
         values, ids = radix_topk(bf16_logits, probabilities, rejected, width,
                                 logit_pivot=True, bin_tile=16)
     else:
@@ -285,7 +285,7 @@ def _chain_body_t4(logits, rejected, q_a, q_b, cap, width, chain):
              and (not isinstance(q_a, torch.Tensor) or q_a.dtype == torch.float64))
     out = targets if fused and all(value is not None for value in targets) else None
     if out is not None and kernel_value('draft_fuse_t4', '0') == '2':
-        from jetspec.engines.jetspec_plus_plus.kernels import select_stats
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import select_stats
         if (select_stats.available(logits, rejected, width, cap)
                 and kernel_enabled('decoder_select_radix', '1')):
             return _chain_body_stats(logits, rejected, q_a, q_b, cap, width, chain, out)
@@ -303,7 +303,7 @@ def _chain_body_t4(logits, rejected, q_a, q_b, cap, width, chain):
 def _chain_body_stats(logits, rejected, q_a, q_b, cap, width, chain, out):
     """Unit T4 level 2: one BF16 logits read gives the select statistics, the radix pass 0,
     the K3 hazard's unfiltered statistics and the chain's dec_logits copy (tau gate)."""
-    from jetspec.engines.jetspec_plus_plus.kernels import select_stats
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder import select_stats
     from jetspec.engines.jetspec_plus_plus.draft.heads.anchor_select_fused import select_post
     rows, vocab = logits.shape
     device = logits.device
@@ -326,7 +326,8 @@ def _chain_body_stats(logits, rejected, q_a, q_b, cap, width, chain, out):
 
 def _chain_body_t5(logits, rejected, q_a, q_b, cap, width, chain):
     """Opt-in T5 radix restructure; unsupported inputs keep the existing select."""
-    from jetspec.engines.jetspec_plus_plus.kernels import select_stats, select_radix_fused
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder import select_stats
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder import select_radix_fused
     if not (select_stats.available(logits, rejected, width, cap)
             and kernel_enabled('anchor_select_fused', '1')
             and kernel_enabled('decoder_select_radix', '1')

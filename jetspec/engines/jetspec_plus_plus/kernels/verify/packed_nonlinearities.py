@@ -8,7 +8,7 @@ directly. Each one is bitwise equal to its contiguous kernel (``gdn_gate.gate_be
 import torch
 from torch.nn import functional as F
 
-from jetspec.engines.jetspec_plus_plus.kernels import verify_mlp_glue
+from jetspec.engines.jetspec_plus_plus.kernels.verify import mlp_projection as verify_mlp_glue
 from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import gdn_gate
 
 triton = gdn_gate.triton
@@ -40,10 +40,13 @@ if triton is not None and libdevice is not None:
 
 
 if verify_mlp_glue.triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.verify_mlp_glue import _product, _ratio, libdevice as _mlp_libdevice
-    from .nvfp4._w4a8_quant import store_activation_row
-    from .verify_w1 import store_bf16_vector, store_activation_vector
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import producer_start
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _product
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _ratio
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import libdevice as _mlp_libdevice
+    from jetspec.engines.jetspec_plus_plus.kernels.nvfp4._w4a8_quant import store_activation_row
+    from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import store_bf16_vector
+    from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import store_activation_vector
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import producer_start
 
     @triton.jit
     def _silu_mul_rows(GATE, UP, Y, gate_row, up_row, features: tl.constexpr, BLOCK: tl.constexpr,

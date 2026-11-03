@@ -37,7 +37,7 @@ def g27_rotary(query, key, positions, table, *, refresh_positions=None):
     cos, sin = table
     rotary = cos.shape[-1]
     if query.is_cuda and triton is not None:
-        from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import _g27_rotary
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _g27_rotary
         qout, kout = torch.empty_like(query), torch.empty_like(key)
         extra = () if refresh_positions is None else refresh_positions
         _g27_rotary[(query.shape[0], query.shape[1] + key.shape[1])](
@@ -71,7 +71,7 @@ def g27_attention_inputs(pk, pv, key, value, length, tails, *, lanes, slots=0):
     all_value = value.new_empty(width, heads, dim)
     bias = key.new_empty(1, 1, tokens, width)
     if key.is_cuda and triton is not None:
-        from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import _g27_attention_inputs
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _g27_attention_inputs
         copies = triton.cdiv(width * heads * dim, 256)
         masks = triton.cdiv(tokens * width, 256)
         _g27_attention_inputs[(copies + masks,)](
@@ -102,7 +102,7 @@ def g27b_refresh_mask(prep, length, start, window, width):
     tokens = row.numel()
     mask = prep['data'].new_empty(1, 1, tokens, width)
     if mask.is_cuda and triton is not None:
-        from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import _g27b_refresh_mask
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _g27b_refresh_mask
         _g27b_refresh_mask[(triton.cdiv(tokens * width, 256),)](
             row, slot, tail, length, start, mask, tokens, width, window,
             float(torch.finfo(mask.dtype).min), 256)
@@ -133,7 +133,12 @@ def reference_window_mask_rope(length: torch.Tensor, cos_table: torch.Tensor,
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import (_window_mask_rope, _mask_token_guard, _j0_prep, _c1_front_prep, _c1_mask, _context_copy_mark)
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _window_mask_rope
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _mask_token_guard
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _j0_prep
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _c1_front_prep
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _c1_mask
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _context_copy_mark
 
 
 def window_mask_rope(length: torch.Tensor, cos_table: torch.Tensor,
@@ -277,7 +282,7 @@ def context_gather_mark(old_length, length, prefix, tail, embedding, context,
     t, dim = tail.shape[1], cos.shape[1]
     block = source.numel() - t
     if length.is_cuda and triton is not None:
-        from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import _context_gather_mark
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _context_gather_mark
         _context_gather_mark[(block + t, triton.cdiv(width, 256))](
             old_length, length, prefix, tail, embedding, context,
             cos_table, sin_table, ccos, csin, hidden, cos, sin, source, slots, previous,

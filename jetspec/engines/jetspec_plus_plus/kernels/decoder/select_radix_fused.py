@@ -12,7 +12,7 @@ The larger final merge is a timing tradeoff that requires a served A/B gate.
 """
 import torch
 
-from jetspec.engines.jetspec_plus_plus.kernels import select_stats
+from jetspec.engines.jetspec_plus_plus.kernels.decoder import select_stats
 
 try:
     import triton
@@ -23,8 +23,10 @@ except ImportError:
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.decoder_select import _radix_hist, _bf16_key
-    from jetspec.engines.jetspec_plus_plus.kernels.select_stats import _stats, _probability
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _radix_hist
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import _bf16_key
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.select_stats import _stats
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.select_stats import _probability
 
     @triton.jit
     def _hist_threshold(HIST, PREFIX, row, C: tl.constexpr, BLOCK: tl.constexpr,

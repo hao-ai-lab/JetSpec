@@ -2004,7 +2004,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 False, None)
         lean = None
         if cache is None and batch == 1 and kernel_enabled('hybrid_c1_lean', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import hybrid_c1_lean as lean
+            from jetspec.engines.jetspec_plus_plus.kernels.chain import hybrid_single_query as lean
         live = window_slots is not None
         total = mask.shape[-1] if live else length + (
             count if self.resolved_config.get("window_causal_over_tokens", False) else 0)
@@ -2256,7 +2256,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         add_norm = fused._lean_ops_extension().add_rms_norm if fold else None
         if t1 is not None:
             # draft_fuse_t1: the query attention arm and the residual norms (Q4, Q8)
-            from jetspec.engines.jetspec_plus_plus.kernels import adapter_attention_fused as t1_ops
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter import adapter_attention_fused as t1_ops
             if fold:
                 add_norm = t1_ops.add_norm_operation(add_norm)
             if t1 == 'dense':
@@ -2304,7 +2304,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         loop_ext = fused._loop_extension() if rope_norm or kv_stack is not None else None
         head_ops = loop_ext
         if rope_norm and kernel_enabled('c1_gluon', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import c1_gluon
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter import head_rope as c1_gluon
             if c1_gluon.available(u):
                 head_ops = c1_gluon
         plan = self._d1_lean_plan()
@@ -3150,7 +3150,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
         if config_values(self.run_config).get('engine.engine_settings.front_static', "0") != "1":
             raise ValueError("C1 chain body requires JETSPEC_FRONT_STATIC=1")
-        from jetspec.engines.jetspec_plus_plus.kernels.adapter_attention_fused import route as t1_route
+        from jetspec.engines.jetspec_plus_plus.kernels.adapter.adapter_attention_fused import route as t1_route
         t1 = t1_route(kernel_value('draft_fuse_t1', '0'), bucket.head.P)
         use_len_attention = (kernel_enabled('c1_attn_len', '1')
                              and rp.is_cuda and (bucket.head.P >= 2048 if t1 is None
@@ -3904,7 +3904,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         from jetspec.engines.jetspec_plus_plus.kernels.attn_sm100 import flashinfer_enabled
         head_ops = loop_ext
         if kernel_enabled('c1_gluon', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import c1_gluon
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter import head_rope as c1_gluon
             if c1_gluon.available(rows):
                 head_ops = c1_gluon
         use_flashinfer = allow_flashinfer and flashinfer_enabled(
@@ -3929,7 +3929,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         linear = draft_linear
         if kernel_enabled('refresh_gemm_tune', '1'):
             if not hasattr(self, "_refresh_gemm"):
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_gemm import RefreshGemm
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_gemm import RefreshGemm
 
                 self._refresh_gemm = RefreshGemm(rows.device)
             linear = partial(draft_linear, implementation=self._refresh_gemm.linear)
@@ -3987,7 +3987,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             if finish:
                 ops['finish_streams'] = fused.finish_streams
             if refresh_meta is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import attend as attend_lean_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import attend as attend_lean_refresh
                 tune = kernel_enabled('refresh_attn_tune', '1')
                 ops['attention'] = lambda q, k, v, scale, groups: attend_lean_refresh(
                     q, k[:, ::groups, :keys_total], v[:, ::groups, :keys_total],
@@ -3997,7 +3997,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                     q, k[:, :, :keys_total], v[:, :, :keys_total], scale,
                     self._flashinfer_refresh_plan, start_slot, window_rows, suffix_meta)
             else:
-                from jetspec.engines.jetspec_plus_plus.kernels.attn_sm80 import enabled as sm80_enabled
+                from jetspec.engines.jetspec_plus_plus.kernels.adapter.attn_sm80 import enabled as sm80_enabled
                 from jetspec.engines.jetspec_plus_plus.kernels.attn_sm100 import native_enabled
                 if (rows.device.type != 'cuda' or native_enabled(rows.device)
                         or (keys_total > 512 and sm80_enabled(rows.device, rows.dtype))):
@@ -4089,7 +4089,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                                              key_out, value_out, tokens, kv_heads, groups, kn_eps,
                                              start_slot)
             if refresh_meta is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import attend as attend_lean_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import attend as attend_lean_refresh
 
                 attended = attend_lean_refresh(
                     q, k[:, ::groups, :keys_total], v[:, ::groups, :keys_total],

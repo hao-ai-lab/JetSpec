@@ -21,7 +21,7 @@ except ImportError:  # The CPU suite runs without Triton.
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import producer_start
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import producer_start
 
     @triton.jit
     def _rms_norm(X, R, W, Y, S, x_row, x_head, r_row, heads, eps, offset, inverse,

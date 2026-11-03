@@ -26,10 +26,11 @@ _scratch = {}
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.verify_mlp_glue import _product, _ratio
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _product
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _ratio
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4._w4a8_quant import store_activation_row
     from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import store_activation_packed
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import producer_start
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import producer_start
 
     @triton.jit
     def _split_attention(Q, KC, VC, TABLE, LENS, ACC, ML, scale_log2, q_token,

@@ -5,7 +5,7 @@ try:
     import triton
     import triton.language as tl
     from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _module_rms_scale
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import _packed_rms_scale
+    from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import _packed_rms_scale
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import store_mx8
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4._w4a8_quant import _launch_dependents
 except ImportError:

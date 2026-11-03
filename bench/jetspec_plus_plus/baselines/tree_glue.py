@@ -1,6 +1,6 @@
 
 import torch
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from transformers import AutoTokenizer
 
 @torch.inference_mode()
@@ -21,7 +21,7 @@ def make_glue_decode_input_ids(
     return out 
 
 import torch
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from transformers import AutoTokenizer
 
 def get_forked_recovery_tokens_from_logits(config: Config, logits: torch.Tensor, cache_hits: torch.Tensor, returned_tokens: torch.Tensor, tokenizer: AutoTokenizer):

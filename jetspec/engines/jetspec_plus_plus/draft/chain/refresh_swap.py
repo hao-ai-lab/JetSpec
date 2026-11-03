@@ -122,7 +122,8 @@ def decision_errors(observed, expected):
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.compact_head import (_compact_head, _compact_merge)
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.compact_head import _compact_head
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.compact_head import _compact_merge
 
 
 def allocate_compact(rows, slots, vocab, device):
@@ -344,13 +345,13 @@ class RefreshSwap:
         if (config_values(getattr(self, 'run_config', None)).get(
                 'engine.engine_settings.draft_fuse_t10', '0') == '1'
                 and legacy_write and self.lean and not self.check and not self.multi_refresh):
-            from jetspec.engines.jetspec_plus_plus.draft.swap_write import decide_and_finish
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.swap_write import decide_and_finish
             return decide_and_finish(result, ids, khat, slot_counts, active,
                                      self.pin_slot, self.pin_token, finished, inclusive=inclusive)
         wrote_ids = (legacy_write and self.lean and not self.check and
                      kernel_enabled('refresh_swap_write_fused', '1'))
         if wrote_ids:
-            from jetspec.engines.jetspec_plus_plus.draft.swap_write import decide_and_write
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.swap_write import decide_and_write
             khat_used, slot, new, apply = decide_and_write(result, ids, khat, slot_counts, active)
         else:
             decision = compact_decision if self.lean else swap_decision

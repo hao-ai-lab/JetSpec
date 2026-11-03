@@ -78,7 +78,7 @@ def available(x):
 def norm_rotary(x, module, cos, sin):
     """Head offset RMSNorm and partial RoPE without a statistics temporary."""
     if not _blackwell(x):
-        from jetspec.engines.jetspec_plus_plus.kernels.hybrid_c1_lean import norm_rotary as reference
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.hybrid_single_query import norm_rotary as reference
         return reference(x, module, cos, sin)
     _, tokens, heads, dim = x.shape
     out = x.new_empty(1, heads, tokens, dim)
@@ -92,7 +92,7 @@ def norm_rotary(x, module, cos, sin):
 def write_kv(key, value, module, cos, sin, cache, slots, groups):
     """Fuse head norm, partial RoPE and repeated KV-head cache writes."""
     if not _blackwell(key):
-        from jetspec.engines.jetspec_plus_plus.kernels.hybrid_c1_lean import write_kv as reference
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.hybrid_single_query import write_kv as reference
         return reference(key, value, module, cos, sin, cache, slots, groups)
     k, v = cache
     _, tokens, heads, dim = key.shape

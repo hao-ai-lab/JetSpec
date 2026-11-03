@@ -1,6 +1,6 @@
 import torch
 from jetspec.engines.jetspec_plus_plus.models.sampling import apply_sampler_x_rescaling
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 
 def verify(
     logits_p: torch.Tensor,

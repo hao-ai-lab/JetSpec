@@ -125,7 +125,9 @@ class _DrafterView:
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.live_rows import (_q_rotary_scatter_kernel, _kv_rotary_slots_kernel, _compact_rows_kernel)
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.live_rows import _q_rotary_scatter_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.live_rows import _kv_rotary_slots_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.live_rows import _compact_rows_kernel
 
 
 def kv_rotary_into_slots(fused, attn, source, cos, sin, cache, slots, projected=None):

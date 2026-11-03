@@ -62,7 +62,7 @@ def front_prep(rp, committed, pending, weight, ids, positions, slots, query_slot
     """Gather embeddings and prepare all C1 front metadata in one launch."""
     lanes, width = embeddings.shape[-2:]
     if embeddings.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.chain_glue import _c1_front_prep
+        from jetspec.engines.jetspec_plus_plus.kernels.chain.dispatch import _c1_front_prep
         bucket = mask.shape[-1] if write_mask else 0
         _c1_front_prep[(triton.cdiv(lanes * max(width, bucket), 256),)](
             rp, committed, pending, ids, positions, slots, capacity, lanes, 256,
