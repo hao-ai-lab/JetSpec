@@ -25,8 +25,8 @@ SOURCE_SITES = {
     "hash": "jetspec.engines.jetspec_plus_plus.verify.forward:_verify_jetspec_device:hash16_committed",
     "eos": "jetspec.engines.jetspec_plus_plus.verify.forward:_verify_jetspec_device:eos_and_limit",
     "packet_mirror": "jetspec.engines.jetspec_plus_plus.verify.forward:_verify_jetspec_device:host_words.copy_",
-    "presync_pack": "jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync.pack_device_outcome_presync",
-    "publish_head": "jetspec.engines.jetspec_plus_plus.verify.multirow:SpeculatorAsync.publish_device_outcome",
+    "presync_pack": "jetspec.engines.jetspec_plus_plus.verify.speculator.outcome_publisher:OutcomePublisher.pack_device_outcome_presync",
+    "publish_head": "jetspec.engines.jetspec_plus_plus.verify.speculator.outcome_publisher:OutcomePublisher.publish_device_outcome",
 }
 
 
@@ -73,7 +73,7 @@ def summarize_trace(events, meta=None):
         name = _active_range(spans, launch["ts"])
         kernels.append({"name": str(e.get("name", ""))[:160],
                         "range": name, "launch_site": launch.get("name"),
-                        "source_site": ("jetspec.engines.jetspec_plus_plus.verify.multirow:_queue_jetspec_request:dist.isend"
+                        "source_site": ("jetspec.engines.jetspec_plus_plus.verify.speculator.request_channel:RequestChannel._queue_jetspec_request:dist.isend"
                                         if name and name.startswith("send_")
                                         else SOURCE_SITES.get(name)),
                         "launch_us": launch["ts"], "start_us": e["ts"],
