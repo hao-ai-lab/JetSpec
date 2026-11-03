@@ -1262,7 +1262,7 @@ class BucketPass:
         head_type=FastBucketRowDraftHead if host_fast else BucketRowDraftHead
         if live_of is not None:
             # JETSPEC_BATCH_ROWS_LIVE: N rows of the flat bucket head ``live_of`` (rows_live.py)
-            from jetspec.engines.jetspec_plus_plus.draft.rows_live import CompactRowHead
+            from jetspec.engines.jetspec_plus_plus.draft.batch.compact_rows import CompactRowHead
             if ((host_fast) or (refresh) or (not flat)):
                 raise ValueError('a live-rows pass is a flat pass without refresh')
             self.head=CompactRowHead(live_of,rows=N,shelf=live_shelf)
