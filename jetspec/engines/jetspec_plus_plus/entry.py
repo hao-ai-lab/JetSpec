@@ -27,9 +27,6 @@ RECIPES = {
     ('qwen3-8b', 'j1-r1', 'fast', 'sm100-aarch64'): dict(
         method='jetspecpp-j1r1-b16-floor4', model='qwen3-8b-release', engine='fast-sm100',
         hardware='gb200-pair', benchmark='gsm8k-128'),
-    ('qwen3-8b', 'j1-r1', 'reference', 'sm80'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
-    ('qwen3-8b', 'j1-r1', 'reference', 'sm100'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
-    ('qwen3-8b', 'j1-r1', 'reference', 'sm100-aarch64'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3',
     ('qwen3-8b', 'ar', 'fast', 'sm80'): 'ar-graphed',
     ('qwen3-8b', 'ar', 'fast', 'sm100'): 'ar-graphed',
     ('qwen3-8b', 'ar', 'fast', 'sm100-aarch64'): 'ar-graphed',
@@ -58,7 +55,7 @@ DEFAULT_SCHEDULE = {('qwen3-8b', 'sm80'): 'j1-r0', ('qwen3-8b', 'sm100'): 'j1-r1
                     ('qwen3.8-27b', 'sm100-aarch64'): 'j1-r1'}
 MODELS = ('qwen3-8b', 'qwen3.8-27b')
 SCHEDULES = ('j1-r0', 'j1-r1', 'ar')
-ENGINES = ('fast', 'reference')
+ENGINES = ('fast',)
 
 
 def parser():
@@ -66,7 +63,7 @@ def parser():
     result.add_argument('--model', choices=MODELS, default='qwen3-8b', help='target model')
     result.add_argument('--schedule', choices=SCHEDULES,
                         help='J/R schedule, or ar for the autoregressive baseline; defaults to the fastest measured one')
-    result.add_argument('--engine', choices=ENGINES, default='fast', help='fast (CUDA graphs) or reference verification')
+    result.add_argument('--engine', choices=ENGINES, default='fast', help='fast (CUDA graphs)')
     for role in ('target', 'drafter', 'adapter', 'heads-bundle', 'target-release', 'host-values'):
         result.add_argument('--' + role, default=os.environ.get('JSPP_' + role.upper().replace('-', '_')))
     result.add_argument('--prompts-json', required=True)

@@ -61,8 +61,7 @@ Top-level scripts are grouped by purpose:
 - **`bench/jetspec/reference/`** — HF/reference benchmarks and raw HF FA2 sanity checks.
 - **`bench/jetspec/engine/`** — optimized JetSpec engine throughput scripts.
 - **`bench/jetspec_plus_plus/`** — user commands: `verify.py` checks AR equality,
-  `tau.py` reads acceptance length, `speedup.py` measures speedup over AR and
-  `reproduce_paper_results.py` reproduces the paper's Table 3.
+  `tau.py` reads acceptance length, `speedup.py` measures speedup over AR.
 - **`examples/basic/`**, **`examples/tree/`**, **`examples/engine/`** — runnable
   examples grouped by scope.
 - **`examples/jetspec_plus_plus/`** — one-prompt generation and launch scripts.

@@ -148,12 +148,5 @@
     "kind": "fast",
     "profile": "current",
     "record": "none"
-  },
-  "reference": {
-    "extends": "fast",
-    "kind": "reference",
-    "engine_settings": {
-      "attention_backend": "flashinfer"
-    }
   }
 }

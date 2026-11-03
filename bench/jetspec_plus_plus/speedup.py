@@ -35,7 +35,7 @@ def parser():
                         help='JetSpec++ J/R schedule; auto measures every validated one on this GPU')
     result.add_argument('--tune-count', type=int, default=4,
                         help='prompts per schedule for --schedule auto (the first is the cold one)')
-    result.add_argument('--engine', default='fast', help='fast or reference')
+    result.add_argument('--engine', choices=('fast',), default='fast', help='fast')
     for role in ('target', 'drafter', 'adapter', 'heads-bundle', 'target-release', 'host-values'):
         result.add_argument('--' + role)
     result.add_argument('--prompts-json', help='prompt rows (default: the bundled prompts of --dataset)')

@@ -65,13 +65,12 @@ python -m jetspec.engines.jetspec_plus_plus \
   --cache-root /path/to/compiler-cache
 ```
 
-Choose the target with `--model`, the J/R schedule with `--schedule`, and the verification with `--engine`. `fast` uses CUDA graphs, and `reference` checks every round against plain verification.
+Choose the target with `--model` and the J/R schedule with `--schedule`. `fast` uses CUDA graphs.
 
 | `--model` | `--schedule` | `--engine` | Compute capability |
 | --- | --- | --- | --- |
 | `qwen3-8b` | `j1-r0` (default on 8.x) | `fast` | 8.x |
 | `qwen3-8b` | `j1-r1` (default on 10.x) | `fast` | 8.x, 10.x, 10.x on Arm |
-| `qwen3-8b` | `j1-r1` | `reference` | 8.x, 10.x, 10.x on Arm |
 | `qwen3.8-27b` | `j1-r1` (default) | `fast` | 8.x, 10.x, 10.x on Arm |
 | either | `ar` (graphed autoregressive baseline, one GPU) | `fast` | 8.x, 10.x, 10.x on Arm |
 
