@@ -15,7 +15,8 @@ def combined_glue(rp, pending, prefix, staged, cos_table, sin_table,
     """Write concatenated hidden/rotary buffers and both masks in one launch."""
     lanes, rows = prefix.shape[1], staged.shape[1]
     if not rp.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import prefix_glue, window_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import prefix_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import window_glue
         prefix_glue(rp, pending, cos_table, sin_table, prefix_mask, positions,
                     prefix_slots, cos[:, :lanes], sin[:, :lanes], rejected,
                     length_offset=length_offset, count_offset=count_offset,

@@ -3048,7 +3048,7 @@ def q_norm_rotary(fused, projected, weight, cos, sin, eps, heads, dim,
     specialized = rounding == ("after_weight" if norm_offset else "before_weight")
     if specialized and norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
         from types import SimpleNamespace
-        from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import gluon_block
         query = projected.view(*projected.shape[:2], heads, dim * (2 if gated else 1))[..., :dim]
         if gluon_block.available(query):
             return gluon_block.norm_rotary(
@@ -3078,7 +3078,7 @@ def kv_norm_rotary_cache(key, value, weight, cos, sin, eps, heads, groups, dim,
     specialized = rounding == ("after_weight" if norm_offset else "before_weight")
     if specialized and norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
         from types import SimpleNamespace
-        from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import gluon_block
         shaped_key = key.view(*key.shape[:2], heads, dim)
         if gluon_block.available(shaped_key):
             return gluon_block.write_kv(
@@ -3225,7 +3225,7 @@ def adapter_query(head, embeddings, cos, sin, mask, length, window_slots=None,
                       and item["norm_round"] == 'after_weight'
                       and projected_q.is_cuda and projected_q.dtype == torch.bfloat16)
         if joint_norm and kernel_enabled('hybrid_c1_gluon', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder import gluon_block
             shaped_q = projected_q.view(1, count, heads, dim * (2 if gated else 1))[..., :dim]
             joint_norm = not gluon_block.available(shaped_q)
         if not joint_norm:
@@ -3321,7 +3321,7 @@ def adapter_cache_extend(head, dirty, cos, sin, slots):
             normalized = normalized_blocks[block]
         key, value = layer.project_kv(normalized[None])
         if block == 0 and batched is not None and kernel_enabled('hybrid_c1_gluon', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import gluon_block
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder import gluon_block
             if gluon_block.available(key.view(1, tokens, layer.num_key_value_heads, layer.head_dim)):
                 batched = None
         if batched is not None:

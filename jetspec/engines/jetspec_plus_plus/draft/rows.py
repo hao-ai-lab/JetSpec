@@ -192,7 +192,11 @@ def _rotary(x, cos, sin):
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.row_cache import (_context_kv_postprocess_kernel, _kv_rotary_into_cache_kernel, _kv_rotary_into_slots_kernel, _top1_probability_kernel, _kv_rotary_into_cache_at_kernel)
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _context_kv_postprocess_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_cache_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_slots_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _top1_probability_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_cache_at_kernel
 
 
 def kv_rotary_into_cache(normalized_key, projected_value, cos, sin, key_out, value_out, *,

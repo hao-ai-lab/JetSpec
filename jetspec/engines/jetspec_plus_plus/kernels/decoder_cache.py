@@ -27,7 +27,7 @@ def project_into_cache(layer, fused, hidden, pending, rope, cache, prefix_slots,
     cos, sin = rope
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t12', '1'):
-        from jetspec.engines.jetspec_plus_plus.kernels.decoder_staging import qkv_postprocess
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.combined_staging import qkv_postprocess
         query, _, _ = qkv_postprocess(
             fused, qp, kp, vp, attn.q_norm.weight, attn.k_norm.weight, cos, sin,
             attn.q_norm.variance_epsilon, attn.k_norm.variance_epsilon,

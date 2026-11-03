@@ -56,7 +56,7 @@ def gate_mul(value, gate, *, activation='sigmoid'):
     """Fuse activation and multiply with the eager BF16 rounding between them."""
     if triton is None or not value.is_cuda or value.dtype != torch.bfloat16:
         return value * (gate.sigmoid() if activation == 'sigmoid' else torch.nn.functional.silu(gate))
-    from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import _geometry
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import _geometry
     heads, at, ah = _geometry(value)
     _, gt, gh = _geometry(gate)
     output = torch.empty_like(value, memory_format=torch.contiguous_format)

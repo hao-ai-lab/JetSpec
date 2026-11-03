@@ -122,7 +122,8 @@ def decision_errors(observed, expected):
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.compact_head import (_compact_head, _compact_merge)
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.compact_head import _compact_head
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.compact_head import _compact_merge
 
 
 def allocate_compact(rows, slots, vocab, device):

@@ -2063,7 +2063,7 @@ def rows_chain_body(rp, tokens, offers_ids, offers_p64, offers_pack, dec_logits,
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
     if kernel_enabled('rows_k3', '1') and dec_logits.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.joint_row_rule import rows_k3_body
+        from jetspec.engines.jetspec_plus_plus.kernels.rows.joint_row_rule import rows_k3_body
         from jetspec.engines.jetspec_plus_plus.draft.serve_policy import rows_min_count
         from jetspec.engines.jetspec_plus_plus.runtime.profile import enabled as profile_enabled
         return rows_k3_body(

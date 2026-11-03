@@ -46,7 +46,7 @@ from jetspec.engines.jetspec_plus_plus.models.fast import dataset_entry
 from jetspec.engines.jetspec_plus_plus.wire.contract import FrontInputs
 from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
 from jetspec.engines.jetspec_plus_plus.wire.contract import TokenBuffers
-from jetspec.engines.jetspec_plus_plus.kernels.decoder_select import register_offer_twins
+from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import register_offer_twins
 
 register_offer_twins()
 
@@ -422,7 +422,7 @@ def _decoder_packed_project(attn, fused, source, rope, *, prefix=False):
     kv_heads = attn.k_proj.out_features // head_dim
     if (not prefix and source.is_cuda and source.dtype == torch.bfloat16
             and source.shape[0] == 1 and kernel_enabled('draft_fuse_t12', '1')):
-        from jetspec.engines.jetspec_plus_plus.kernels.decoder_staging import qkv_postprocess
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.combined_staging import qkv_postprocess
         return qkv_postprocess(fused, *parts, attn.q_norm.weight, attn.k_norm.weight,
                                cos, sin, attn.q_norm.variance_epsilon,
                                attn.k_norm.variance_epsilon,
@@ -1049,7 +1049,7 @@ def _check_reused_fallback(layers, root, expected_sha256, *, run_config=None):
 
 def tail_mlp(layer, hidden, gate_glue=None):
     if gate_glue is None and kernel_value('draft_fuse_g27d', '0') == '1' and hidden.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import decoder_tail as gate_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_tail as gate_glue
     source = layer.post_attention_layernorm(hidden)
     if kernel_value('draft_fuse_g27f', '0') == '1':
         from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.activation_quant import share_activation
@@ -1071,7 +1071,7 @@ def gdn_project(gdn, hidden):
     z = gdn.in_proj_z(hidden).reshape(-1, gdn.value_dim)
     b = gdn.in_proj_b(hidden)
     if kernel_value('draft_fuse_g27d', '0') == '1' and hidden.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.decoder_tail import gdn_controls
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_tail import gdn_controls
         a = gdn.in_proj_a(hidden)
         beta, g = gdn_controls(a, b, gdn.dt_bias, gdn.A_log)
         return raw, z, beta, g
@@ -1130,7 +1130,7 @@ def stateful_attention_project(layer, hidden, positions, rope_theta, *, refresh_
 
 def stateful_attention_finish(layer, hidden, attended, gate, gate_glue=None):
     if gate_glue is None and kernel_value('draft_fuse_g27d', '0') == '1' and hidden.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import decoder_tail as gate_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_tail as gate_glue
     product = attended if gate is None else (
         gate_glue.gate_mul(attended, gate) if gate_glue is not None else attended * gate.sigmoid())
     return tail_mlp(layer, hidden + layer.self_attn.o_proj(product.reshape(hidden.shape[0], -1)),
@@ -1713,16 +1713,16 @@ class AnchorDecoder(MethodAnchorDecoder):
         gdn = gdn_layer.linear_attn
         gate_glue = None
         if state.get('refresh_gates', False):
-            from jetspec.engines.jetspec_plus_plus.kernels import decoder_refresh as gate_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_refresh as gate_glue
         state_glue = None
         if state.get('refresh_state_lean', False):
-            from jetspec.engines.jetspec_plus_plus.kernels import decoder_refresh as state_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_refresh as state_glue
         if prefix['recurrent'].dtype != torch.float32:
             raise ValueError('decoder GDN recurrent state must stay fp32')
         row, index, is_block = state['row'], state['index'], state['is_block']
         counts, tails = slot_counts.long(), tail_counts.long()
         if state.get('refresh_staging', False) or state.get('refresh_copy_staging', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import stage_hidden
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import stage_hidden
             hidden = stage_hidden(tail, block, counts, lanes=lanes, slots=slots,
                                   out=state['hidden_input'])
         else:
@@ -1736,7 +1736,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         # positions address committed conv; positive slot positions address only
         # that row. This includes the carry when tail_counts < kernel width.
         if state.get('refresh_staging', False) or state.get('refresh_copy_staging', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import stage_conv
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import stage_conv
             conv_input = stage_conv(raw, prefix['conv'], tails, lanes=lanes,
                                     slots=slots, out=state['conv_input'])
         else:
@@ -1791,7 +1791,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                 outputs.append(output)
             tail_output = torch.cat(outputs, 1)
         if state.get('refresh_selected_states', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import selected_states
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import selected_states
             initial = selected_states(k[:lanes][None], v[:lanes][None], g[:lanes][None],
                                       beta[:lanes][None], prefix['recurrent'], tails)
         else:
@@ -2276,12 +2276,12 @@ class AnchorDecoder(MethodAnchorDecoder):
         combined_glue = (fused_glue and kernel_enabled('draft_fuse_t12', '1')
                          and kernel_enabled('decoder_prefix_merge', '1'))
         if fused_glue:
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import prefix_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import prefix_glue
             table = self._rope_table
             if table is None or not all(value.is_contiguous() for value in table):
                 raise RuntimeError('decoder glue requires a prewarmed contiguous rotary table')
             if combined_glue:
-                from jetspec.engines.jetspec_plus_plus.kernels.decoder_staging import combined_glue as stage_combined
+                from jetspec.engines.jetspec_plus_plus.kernels.decoder.combined_staging import combined_glue as stage_combined
                 stage_combined(
                     rp, tokens.pending_draft_ids, prefix_hidden, front.staged_hidden, *table,
                     state['combined_hidden'], state['combined_cos'], state['combined_sin'],
@@ -2324,7 +2324,7 @@ class AnchorDecoder(MethodAnchorDecoder):
             if combined_glue:
                 pass  # Both sets of inputs already share the combined staging launch.
             elif fused_glue:
-                from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import window_glue
+                from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import window_glue
                 window_glue(length, front.staged_hidden,
                             *self._rope_table, state['hidden'],
                             state['masks'][front.decoder_bucket], state['slots'],
@@ -2375,7 +2375,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                         and self._rope_table is not None
                         and all(table.is_contiguous() for table in self._rope_table))
         if fused_glue:
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import window_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import window_glue
             window_glue(length, front.staged_hidden,
                         *self._rope_table, state['hidden'],
                         state['masks'][front.decoder_bucket], state['slots'],
