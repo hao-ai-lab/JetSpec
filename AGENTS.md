@@ -7,7 +7,7 @@ This file tells coding agents how this repository is organized and how to run ea
 - `jetspec/methods/jetspec_plus_plus/`: JetSpec++ torch reference (adapter, decoder, refinement passes, rounds). It has its own `AGENTS.md`.
 - `jetspec/engines/jetspec_plus_plus/`: JetSpec++ serving engine (pipelined draft and verify on two GPUs). It has its own `AGENTS.md`.
 - `jetspec/methods/jetspec/`, `jetspec/engines/jetspec/`: JetSpec tree drafting and its engine.
-- `bench/jetspec_plus_plus/`: `verify.py`, `tau.py`, `speedup.py`, `reproduce_paper_results.py`.
+- `bench/jetspec_plus_plus/`: `verify.py`, `tau.py`, `speedup.py`.
 
 ## How JetSpec++ works
 
@@ -54,7 +54,6 @@ The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three 
 
 - `speedup.py`: JetSpec++ against graphed AR on the same GPU type. Defaults: 32 prompts, at most 2,048 tokens, stop at EOS, `--schedule auto`, which reads 4 prompts with each supported schedule and keeps the fastest.
 - `speedup.py --dataset`: on Qwen3-8B, `gsm8k` and `math500` use the paper's Table 3 prompts. On Qwen3.8-27B they use user-only exports, because the Table 3 prompts add a system turn. `aime25`, `humaneval`, `mbpp`, `livecodebench` and `mt-bench` (first turn) use the evaluation exports. For Qwen3.8-27B these exports are rendered again with the target's chat template.
-- `reproduce_paper_results.py`: the paper's Table 3 protocol on a GB200 pair. Default arms: AR, DSpark and JetSpec++. `--baselines all` adds DFlash and SSD for 8B. `--assets release` uses the published checkpoints. See `bench/jetspec_plus_plus/reproduce_paper_results.md`.
 
 ## Measured results
 
@@ -63,7 +62,6 @@ The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three 
   - Qwen3.8-27B: 342.4 tok/s on GSM8K (5.68x) and 367.2 tok/s on MATH-500 (6.20x). DSpark: 249.6 and 279.8 tok/s.
   - Per round, the time beyond verification is 0.61 ms for JetSpec++ and 3.76 ms for DSpark (Qwen3-8B, GSM8K).
 - **Paper, Table 1:** acceptance length on seven benchmarks at verification budgets 16 and 32, temperatures 0 and 1. At budget 16, JetSpec++ averages 8.94 tokens per round at temperature 0, against 6.89 for DSpark.
-- **Reproduction:** `reproduce_paper_results.py` on a GB200 pair gives every tok/s cell within -3.1% to +3.4% of the paper, with tau and hit within 1.6%.
 - **Release checkpoints, `speedup.py`:** Qwen3-8B on an A100 pair gives 7.56x on MATH-500 (AR 83.2, JetSpec++ 629.3 tok/s). On GSM8K, Qwen3-8B gives 5.78x on A100 and 5.86x on B200; Qwen3.8-27B gives 4.18x on A100 and 3.44x on B200.
 - **Token streams:** greedy JetSpec++ output can differ from greedy AR output in bf16. Every divergence checked on MATH-500 (Qwen3-8B and Qwen3.8-27B) is a pair of tokens that are the target's fp32 top 2. The one-token AR kernels and the 16-token verify kernels round differently.
 
