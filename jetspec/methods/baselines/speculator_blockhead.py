@@ -60,13 +60,8 @@ class SpeculatorBlockhead(SpeculatorBase):
                 from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import _run_manifest
 
                 capacity = capacity_for(max_context or 768)
-                if self.batched:
-                    from jetspec.methods.baselines.blockhead_batch_graph import BatchedBlockheadGraph
-                    drafter = BatchedBlockheadGraph(
-                        loaded.drafter, capacity=capacity, max_num_seqs=max_num_seqs)
-                else:
-                    drafter = StaticBlockheadGraph(loaded.drafter.drafter, capacity=capacity,
-                                                   run_config=self.run_config)
+                drafter = StaticBlockheadGraph(loaded.drafter.drafter, capacity=capacity,
+                                               run_config=self.run_config)
                 _run_manifest().record_value("blockhead_graph_cache_capacity", capacity, run_config=self.run_config)
             else:
                 drafter = loaded.drafter
@@ -128,49 +123,11 @@ class SpeculatorBlockhead(SpeculatorBase):
         if forward is None:
             forward = getattr(getattr(linear, "drafter", None), "_fwd", None)
         batch_proposal = None
-        if self.batched:
-            if self.check_equivalence:
-                self._sequence_caches = {seq.seq_id: self._sequence_caches[seq.seq_id]
-                                         for seq in seqs if seq.seq_id in self._sequence_caches}
-            contexts = []
-            taps = []
-            for seq in seqs:
-                self._prepare_sequence(seq)
-                if seq.recovery_token_id is None:
-                    raise ValueError("block-head recovery token is missing")
-                if seq.jetspec_taps is None:
-                    raise ValueError("block-head target taps are missing")
-                taps.append(pack_target_taps(seq.jetspec_taps, ctx_len=seq.num_tokens))
-                contexts.append(torch.tensor(
-                    [seq.token_ids + [int(seq.recovery_token_id)]],
-                    dtype=torch.int64, device=self.device))
-            batch_proposal = self.drafter.propose_batch(
-                contexts, self.lookahead, target_hidden=taps)
-            if batch_proposal.tokens.shape != (len(seqs), self.lookahead):
-                raise ValueError("block-head batch proposal shape mismatch")
-            batch_tokens = batch_proposal.tokens.tolist()  # one device-to-host sync per round
-            serial_tokens = None
-            if self.check_equivalence:
-                serial_tokens = []
-                for seq, context, target_hidden in zip(seqs, contexts, taps):
-                    if seq.jetspec_round == 0:
-                        self.drafter.reset_cache()
-                    else:
-                        forward.cache = self._sequence_caches[seq.seq_id]
-                    control = self.drafter.propose(
-                        context, self.lookahead, target_hidden=target_hidden)
-                    self._sequence_caches[seq.seq_id] = forward.cache
-                    serial_tokens.append(control.tokens.tolist())
-        elif self.max_num_seqs > 1:
-            self._sequence_caches = {seq.seq_id: self._sequence_caches[seq.seq_id]
-                                     for seq in seqs if seq.seq_id in self._sequence_caches}
         for row, seq in enumerate(seqs):
             if batch_proposal is None:
                 self._prepare_sequence(seq)
                 if seq.jetspec_round == 0:
                     self.drafter.reset_cache()
-                elif self.max_num_seqs > 1 and forward is not None:
-                    forward.cache = self._sequence_caches[seq.seq_id]
                 if seq.recovery_token_id is None:
                     raise ValueError("block-head recovery token is missing")
                 if seq.jetspec_taps is None:
@@ -182,18 +139,12 @@ class SpeculatorBlockhead(SpeculatorBase):
                     dtype=torch.int64, device=self.device)
                 proposal = self.drafter.propose(
                     context_ids, self.lookahead, target_hidden=target_hidden)
-                if self.max_num_seqs > 1 and forward is not None:
-                    self._sequence_caches[seq.seq_id] = forward.cache
                 if proposal.tokens.numel() != self.lookahead:
                     raise ValueError(
                         "block-head proposal width mismatch: "
                         f"expected={self.lookahead} actual={proposal.tokens.numel()}")
                 draft_tokens = proposal.tokens.tolist()
                 draft_logits = proposal.logits
-            else:
-                proposal = batch_proposal
-                draft_tokens = batch_tokens[row]
-                draft_logits = proposal.logits[row : row + 1]
 
             completion_before = seq.num_completion_tokens
             tokens = [int(seq.recovery_token_id), *draft_tokens]
@@ -216,14 +167,6 @@ class SpeculatorBlockhead(SpeculatorBase):
             domino_ms = getattr(proposal, "domino_ms", None)
             if domino_ms is not None:
                 anatomy["domino_ms"] = domino_ms
-            if batch_proposal is not None:
-                anatomy["batched"] = True
-                anatomy["batch_draft_ms"] = proposal.head_ms + proposal.markov_ms
-                if serial_tokens is not None:
-                    anatomy["draft_mismatch_count"] = sum(
-                        a != b for a, b in zip(draft_tokens, serial_tokens[row]))
-                    anatomy["serial_draft_tokens"] = serial_tokens[row]
-                    anatomy["batch_draft_tokens"] = draft_tokens
             anatomies.append(anatomy)
             if self.metrics is not None:
                 record = {
@@ -233,9 +176,6 @@ class SpeculatorBlockhead(SpeculatorBase):
                     "step_index": len(self.metrics["target_step_times"]),
                     "verify_index": len(self.metrics["target_verify_times"]),
                 }
-                if self.max_num_seqs > 1:
-                    record["accepted_index"] = len(
-                        self.metrics["accepted_suffix_lens_with_recovery"]) + row
                 self.metrics["blockhead_round_records"].append(record)
         return SpeculateResult(
             speculations=speculations[0] if len(seqs) == 1 else torch.cat(speculations),

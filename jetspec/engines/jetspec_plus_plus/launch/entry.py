@@ -204,16 +204,10 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
             if value not in ('on', 'off'):
                 raise ValueError(f'{flag} must be on or off')
             argv.extend([flag, value])
-    if run_config.concurrency > 1 and not run_config.batch_capacity.supports_batch:
-        profile = config['engine'].get('profile', 'current')
-        raise ValueError(f'engine profile {profile!r} is missing supports_batch=true '
-                         f'for benchmark.concurrency={run_config.concurrency}')
     if benchmark['stop_at_eos']:
         argv.extend(['--stop-at-eos', 'on'])
     if hardware.get('mps'):
         argv.extend(['--mps-root', str(Path(output).absolute().parent / 'mps')])
-    if run_config.concurrency > 1:
-        argv.extend(['--batch', str(run_config.concurrency)])
     return dict(recipe=recipe, environment=recipe['environment'], serve_argv=argv,
                 launch_overlay=run_config.batch_overlay())
 

@@ -636,8 +636,6 @@ class KthRowsDrafter:
             if profile_enabled():
                 ks = ks[:int(config_values(self.run_config).get('method.method_settings.eval_rows', '16'))]
             # every prefilled sequence gets its own exact rows (admission batches the prompts)
-            # JETSPEC_BATCH_DRAFT_GRAPH (armed by prewarm_batch_graphs): the rows replay the
-            # captured N=1 bucket of the miss redraft's shelf instead of an eager bucket
             admission = ({'graphs': True, 'admission': True}
                          if self.__dict__.get('_batch_admission_graphs', False) else {})
             output = [self._exact_anchor0_rows(sequence, ks=ks, passes=passes, **admission, run_config=(run_config if run_config is not None else getattr(self, 'run_config', None)))
@@ -758,8 +756,6 @@ class KthRowsDrafter:
             # evict only their own kind, so an admission no longer evicts the fallback's bucket
             # and the next miss does not rebuild it on the critical path (~6 ms)
             kind = [old for old in buckets if graphs or (old[0] == 1) == (rows == 1)]
-            # the N>1 shelf keeps every prefix bucket prewarm_batch_graphs captured (at least 6),
-            # so a read never recaptures an evicted bucket
             limit = (max(6, self.__dict__.get('_batch_fallback_bucket_limit', 6)) if graphs and batch_graph
                      else 6 if graphs and config_values(self.run_config).get('engine.engine_settings.g_row_buckets') == 'pow2' else 2)
             if len(kind) >= limit:

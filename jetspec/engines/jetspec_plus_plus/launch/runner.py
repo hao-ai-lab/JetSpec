@@ -3290,6 +3290,8 @@ def _main(args, *, resident=None):
     args.batch = getattr(args, "batch", 1)
     from jetspec.engines.jetspec_plus_plus.run_config import config_concurrency
     args.batch = config_concurrency(args, args.batch)
+    from jetspec.engines.jetspec_plus_plus.config_schemas import require_single_request
+    require_single_request(args.batch)
     args.sequential_prompts = getattr(args, "sequential_prompts", False)
     if min(args.count, args.tokens, args.repeats, args.batch) < 1:
         raise ValueError("count, tokens, repeats and batch must be positive")

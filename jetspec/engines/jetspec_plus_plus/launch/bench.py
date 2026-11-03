@@ -530,6 +530,8 @@ def main(*, run_config=None):
         run_config = with_settings(run_config, {'engine.engine_settings.run_manifest_dir':
             tempfile.mkdtemp(prefix='jetspec-run-manifest-')})
     args = parse_arguments(run_config=run_config)
+    from jetspec.engines.jetspec_plus_plus.config_schemas import require_single_request
+    require_single_request(args.b)
     validate_environment(config_environment(run_config),
                          jetspec=args.jetspec, max_num_seqs=args.b,
                          regime='eager' if args.eager else 'graphed')
