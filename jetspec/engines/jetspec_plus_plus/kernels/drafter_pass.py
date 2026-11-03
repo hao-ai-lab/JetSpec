@@ -48,7 +48,7 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.chain_publish import _finish_publish
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_publish import _finish_publish
     from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import _refresh
     @triton.jit
     def _partials(LOGITS, PMAX, PSUM, PIDX, V: tl.constexpr,
@@ -164,7 +164,7 @@ def allocate_partials(rows, lanes, vocab, device, *, block=2048):
                 torch.empty(shape, device=device, dtype=torch.int32))
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
-        from jetspec.engines.jetspec_plus_plus.kernels.draft_glue_tune import PassPartials
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import PassPartials
         return PassPartials(partials, torch.zeros(rows, device=device, dtype=torch.int32))
     return partials
 
@@ -179,7 +179,7 @@ def chain_pass(logits, ids, keys, active, outputs, previous_top1, tokens, rp,
         raise RuntimeError('JETSPEC_REFINE_K3 on CUDA requires Triton')
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
-        from jetspec.engines.jetspec_plus_plus.kernels.draft_glue_tune import chain_pass_into
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import chain_pass_into
         return chain_pass_into(logits, ids, keys, active, outputs, previous_top1,
                                tokens, rp, partials, index, save_previous,
                                pinned_second, pins)

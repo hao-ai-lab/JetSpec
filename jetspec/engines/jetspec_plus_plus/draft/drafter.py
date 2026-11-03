@@ -2004,7 +2004,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 False, None)
         lean = None
         if cache is None and batch == 1 and kernel_enabled('hybrid_c1_lean', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import hybrid_c1_lean as lean
+            from jetspec.engines.jetspec_plus_plus.kernels.chain import hybrid_single_query as lean
         live = window_slots is not None
         total = mask.shape[-1] if live else length + (
             count if self.resolved_config.get("window_causal_over_tokens", False) else 0)

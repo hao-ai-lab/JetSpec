@@ -159,7 +159,7 @@ def gate_mul(attended, gate, heads, dim):
     # The Q projection interleaves query and gate per head. Preserve that view.
     out = torch.empty_like(attended)
     # draft_fuse_w1h27: attach to flat output storage, retained by attended[0] views.
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import enabled as hybrid_w1
+    from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import enabled as hybrid_w1
     if hybrid_w1(attended) and heads * dim % 256 == 0:
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import allocate_activation, _arguments
         produced = allocate_activation(out)

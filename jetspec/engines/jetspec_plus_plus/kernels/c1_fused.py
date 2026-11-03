@@ -1113,7 +1113,7 @@ def _silu_mul_extension():
             from jetspec.engines.jetspec_plus_plus.kernels.nvfp4 import producers
             return producers
     if kernel_enabled('draft_fuse_t6'):
-        from jetspec.engines.jetspec_plus_plus.kernels.draft_glue_tune import silu_extension
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import silu_extension
         return silu_extension(_SILU_MUL_CPP)
     global _SILU_MUL_EXTENSION
     if _SILU_MUL_EXTENSION is None:
@@ -1288,10 +1288,10 @@ def ew_pre_norm(u: torch.Tensor, window: torch.Tensor, input_weight: torch.Tenso
             u, update, residual, window, input_weight, kv_weights, input_eps, kv_eps,
             pending is not None, kv_from_state, _module_reduce_threads(width, rows))
     # draft_fuse_w1h27: preserve the offset reduction and BF16 roundings; add MX8 stores.
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import enabled as hybrid_w1
+    from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import enabled as hybrid_w1
     hybrid_producer = norm_offset == 1 and ulp and hybrid_w1(u)
     if hybrid_producer and width == 5120 and append is None:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import offset_norm
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import offset_norm
         return offset_norm(u, window, input_weight, kv_weights, input_eps, kv_eps,
                            pending=pending, kv_from_state=kv_from_state)
     state = u if pending is None else torch.empty_like(u)
@@ -3258,7 +3258,7 @@ def adapter_query(head, embeddings, cos, sin, mask, length, window_slots=None,
                                                       attn_mask=mask, scale=scaling)
         attended = attended.transpose(1, 2).reshape(1, count, heads * dim)
         if gate is not None:
-            from jetspec.engines.jetspec_plus_plus.kernels.hybrid_c1_lean import gate_mul
+            from jetspec.engines.jetspec_plus_plus.kernels.chain.hybrid_single_query import gate_mul
             attended = gate_mul(attended, gate, heads, dim)
         projected = _packed_linear(attended[0], o_w)
         post, state, _ = ew_pre_norm(u, window, post_w, empty, post_eps, kvn_eps,
@@ -3292,7 +3292,8 @@ def adapter_cache_extend(head, dirty, cos, sin, slots):
             and all(layer.attention_spec.norm_offset == 1
                     and layer.attention_spec.norm_round == 'after_weight'
                     for _, layer in head._c1_blocks)):
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import enabled, prefix_norms
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import enabled
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import prefix_norms
         if enabled(packed[0]):
             normalized_blocks = prefix_norms(
                 tuple(packed[index] for index, _ in head._c1_blocks),
@@ -3371,7 +3372,7 @@ def ulp_silu_mul(gate, up):
         raise ValueError('ULP SiLU requires matching tensors with contiguous rows')
     out = torch.empty_like(gate, memory_format=torch.contiguous_format)
     # draft_fuse_w1h27: the original launch is untouched unless hybrid W4A8 is selected.
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_w1h27 import enabled as hybrid_w1
+    from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import enabled as hybrid_w1
     if hybrid_w1(gate) and gate.shape[-1] % 256 == 0:
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import allocate_activation, _arguments
         produced = allocate_activation(out)

@@ -20,7 +20,7 @@ def qkv_norm_rotary_cache(query, key, value, q_weight, k_weight, cos, sin,
     output = query.new_empty(rows, q_heads, dim)
     from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
-        from jetspec.engines.jetspec_plus_plus.kernels.draft_glue_tune import qkv_into
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import qkv_into
         qkv_into(query, key, value, q_weight, k_weight, cos, sin, output,
                  cache, slots, span, q_eps, k_eps, q_heads, kv_heads, dim)
         return output

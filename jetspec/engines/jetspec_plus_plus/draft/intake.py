@@ -20,13 +20,13 @@ except ImportError:  # The pinned Mac CPU test environment has no Triton.
 
 # Field offsets and hash parameters are contract-emitted Triton constants.
 # Error literals mirror CHAIN_ERR_* in intake.py.
-from jetspec.engines.jetspec_plus_plus.kernels.chain_intake import _select
+from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_intake import _select
 
 
-from jetspec.engines.jetspec_plus_plus.kernels.chain_intake import _metadata
+from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_intake import _metadata
 
 
-from jetspec.engines.jetspec_plus_plus.kernels.chain_intake import _tap_front
+from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_intake import _tap_front
 
 
 def fused_intake(buffers: dict, *, max_length: int | None) -> None:
