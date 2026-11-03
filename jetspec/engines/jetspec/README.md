@@ -1,6 +1,6 @@
 # JetSpec — high-throughput engine substrate
 
-A second decode **substrate**, sitting alongside [`jetspec/core`](../engine) in the
+A second decode **substrate**, sitting alongside [`jetspec/core`](../../core) in the
 same swappable-engine design. N0–N2b plus the N3 triton tree-attention kernel are
 **shipped and lossless-verified** — paged KV-cache, continuous batching, and an owned
 paged tree-attn kernel.
@@ -11,7 +11,7 @@ paged tree-attn kernel.
 | `jetspec/engines/jetspec` | throughput (paged KV-cache, tree-attention kernel, batching) | ✅ shipped (N0–N2b + N3 kernel) |
 
 Both consume the **same** engine-agnostic tree contract — `get_algorithm(...)`,
-`build_ancestor_matrix(...)`, `tree_accept(...)` from [`jetspec.tree`](../tree) — with
+`build_ancestor_matrix(...)`, `tree_accept(...)` from [`jetspec.tree`](../../tree) — with
 a strict one-way dependency (engine → tree). So every tree algorithm runs
 unchanged on either engine: the engine choice changes **throughput**, not what
 the tree builds or whether decoding is lossless.

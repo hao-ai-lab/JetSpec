@@ -10,7 +10,7 @@ PTD / causal_parallel_drafting — MIT
 jetspec/methods/jetspec/draft_head.py vendors the DFlash attention, decoder and
 draft-head classes from causal_parallel_drafting/model/dflash.py, plus helpers
 from model/utils.py. See its provenance banner and the marked copied blocks.
-jetspec/engines/jetspec_plus_plus/third_party/blockhead_kit/backbone.py vendors the
+bench/jetspec_plus_plus/third_party/blockhead_kit/backbone.py vendors the
 same DFlash classes. jetspec/core/tree_attention_kernel.py adapts
 model/tree_attention_kernel.py.
 jetspec/methods/jetspec/tree/ also ports tree construction, ancestor masks and
@@ -35,7 +35,7 @@ Copyright (c) 2026 The Parallel Tree Decoding authors
 
 DeepSpec — MIT
 --------------
-jetspec/engines/jetspec_plus_plus/third_party/blockhead_kit/markov.py copies the
+bench/jetspec_plus_plus/third_party/blockhead_kit/markov.py copies the
 Markov heads from deepspec/modeling/dspark/markov_head.py. head.py in the same
 directory adapts the DSpark draft head, confidence head and sampling helpers
 from deepspec/modeling/dspark/. Each file's banner states its source.

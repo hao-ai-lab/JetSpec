@@ -26,12 +26,12 @@ The other paths support these three:
 | --- | --- |
 | `models/` | Target and anchor decoder models |
 | `wire/` | Packets and transport between the two GPUs |
-| `kernels/` | Compiled tensor operations, one folder per model |
+| `kernels/` | Compiled tensor operations grouped by adapter, decoder, chain, passes, rows, refresh and verification, with target-specific helpers |
 | `entry.py`, `launch/` | The public command, recipe resolution, artifact checks, the child process |
 | `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
-| `runtime/` | Run settings, run records, DSpark serving |
-| `analysis/`, `trace/` | Reports from finished reads |
-| `third_party/` | Pinned DSpark code, checked by hash |
+| `runtime/` | Run settings and DSpark serving integration |
+| `launch/anatomy.py`, `launch/eos_stop.py`, `launch/run_manifest.py`, `trace/` | Read analysis, run records and tracing |
+| `bench/jetspec_plus_plus/third_party/`, `bench/jetspec_plus_plus/baselines/` | Pinned DSpark code and comparison routes, loaded only when selected from a source checkout |
 
 ## From the command to the first forward pass
 
@@ -91,7 +91,7 @@ The [root `AGENTS.md`](../../../AGENTS.md) lists the other options.
 
 ## Model names
 
-The public name Qwen3.8-27B uses the checkpoint type `qwen3_5_text`, the hybrid layout. Its recurrent layer is the Gated DeltaNet (GDN) in `models/gdn.py`. `models/registry.py` selects `TargetForCausalLM` for both targets. `kernels/qwen3_8b/` and `kernels/qwen3p8_27b/` hold the operations specific to each target.
+The public name Qwen3.8-27B uses the checkpoint type `qwen3_5_text`, the hybrid layout. Its recurrent layer is the Gated DeltaNet (GDN) in `models/gdn.py`. `models/registry.py` selects `TargetForCausalLM` for both targets. `kernels/verify/` holds dense and hybrid verification kernels; `kernels/qwen3_8b/` and `kernels/qwen3p8_27b/` retain target-specific helpers.
 
 ## Add a model
 
