@@ -66,7 +66,7 @@ def inject_g27c(bucket, hidden, khat, reset, inclusive):
     fused_norm = (kernel_value('draft_fuse_g27e', '0') == '1'
                   and getattr(head.fc, 'out_features', None) == 5120)
     if fused_norm:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.refresh_norms import plain_norms
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_norms import plain_norms
         extra = {}
         if kernel_value('draft_fuse_g27f', '0') == '1':
             from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled
@@ -212,4 +212,4 @@ from jetspec.engines.jetspec_plus_plus.draft.method.refresh import inject_mask_r
 _front = _postprocess = None
 
 
-from jetspec.engines.jetspec_plus_plus.kernels.refresh_inject import _kernels
+from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_inject import _kernels

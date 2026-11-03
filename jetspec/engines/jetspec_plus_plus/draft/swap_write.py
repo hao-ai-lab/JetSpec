@@ -12,7 +12,7 @@ except ImportError:
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.swap_write import (_decide)
+    from jetspec.engines.jetspec_plus_plus.kernels.refresh.swap_write import _decide
 
 
 def decide_and_write(compact, ids, khat, slot_counts, active, pin_slot=None):

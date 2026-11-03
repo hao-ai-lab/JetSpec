@@ -2411,7 +2411,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         if self.prefix_layers is not self.layers:
             raise ValueError('JETSPEC_REFRESH_SWAP requires the target_slice decoder '
                              '(one set of shared prefix and window layers)')
-        from jetspec.engines.jetspec_plus_plus.kernels import refresh_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh import execution as refresh_glue
         if refresh_glue.enabled(run_config=self.run_config) if glue is None else glue:
             return refresh_glue.allocate(self, prefix_kv, bucket, rows, lanes, like)
         slots = lanes - 1
@@ -2475,7 +2475,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         rows, lanes, slots = state['rows'], state['lanes'], state['slots']
         hidden_size = self.hidden_size
         if state.get('glue'):
-            from jetspec.engines.jetspec_plus_plus.kernels.refresh_glue import layers as refresh_glue_layers
+            from jetspec.engines.jetspec_plus_plus.kernels.refresh.execution import layers as refresh_glue_layers
             hidden, decoded = refresh_glue_layers(
                 self, state, length=length, true_taps=true_taps, tail=tail,
                 tail_counts=tail_counts, block=block, slot_counts=slot_counts, run_config=self.run_config)

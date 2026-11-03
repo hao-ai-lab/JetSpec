@@ -1420,7 +1420,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
                 and refresh_at and refresh_at[0] == 1
                 and kernel_enabled('refresh_prep_lean', '1'))
     if fuse_t17:
-        from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import allocate_refresh
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import allocate_refresh
         outputs['_t17_refresh'] = allocate_refresh(rows, lanes, keys.device, lanes,
             refresh_khat_threshold(False, run_config=run_config))
     if fused_head and (not k3 or keys.device.type != 'cuda'):

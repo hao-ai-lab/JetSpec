@@ -222,7 +222,7 @@ def attention_launches(model, state, length, tails, fused):
 def _kernels():
     import triton
     import triton.language as tl
-    from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import _kernels as refresh_kernels
+    from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import _kernels as refresh_kernels
 
     @triton.jit
     def stage(Length, TRUE, Tail, Tails, BlockRows, Counts, CT, ST, Hidden, Cos, Sin,

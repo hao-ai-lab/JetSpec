@@ -37,7 +37,7 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
     if save_previous:
         previous_top1.copy_(values.p_top1[:, 1:])
     if index == 0 and '_t17_refresh' in outputs:
-        from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import reference_refresh
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import reference_refresh
         reference_refresh(values.p_top1, active, keys, rp[Offset.L], outputs['_t17_refresh'])
     source = torch.cat((tokens.committed_ids.index_select(0, rp[Offset.L].reshape(1)),
                         tokens.pending_draft_ids, tokens.pending_draft_ids[-1:]))
@@ -49,7 +49,7 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
 
 if triton is not None:
     from jetspec.engines.jetspec_plus_plus.kernels.chain_publish import _finish_publish
-    from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import _refresh
+    from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import _refresh
     @triton.jit
     def _partials(LOGITS, PMAX, PSUM, PIDX, V: tl.constexpr,
                   L: tl.constexpr, C: tl.constexpr, S0: tl.constexpr,

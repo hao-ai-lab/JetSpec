@@ -3929,7 +3929,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         linear = draft_linear
         if kernel_enabled('refresh_gemm_tune', '1'):
             if not hasattr(self, "_refresh_gemm"):
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_gemm import RefreshGemm
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_gemm import RefreshGemm
 
                 self._refresh_gemm = RefreshGemm(rows.device)
             linear = partial(draft_linear, implementation=self._refresh_gemm.linear)
@@ -3987,7 +3987,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             if finish:
                 ops['finish_streams'] = fused.finish_streams
             if refresh_meta is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import attend as attend_lean_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import attend as attend_lean_refresh
                 tune = kernel_enabled('refresh_attn_tune', '1')
                 ops['attention'] = lambda q, k, v, scale, groups: attend_lean_refresh(
                     q, k[:, ::groups, :keys_total], v[:, ::groups, :keys_total],
@@ -4089,7 +4089,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                                              key_out, value_out, tokens, kv_heads, groups, kn_eps,
                                              start_slot)
             if refresh_meta is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import attend as attend_lean_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import attend as attend_lean_refresh
 
                 attended = attend_lean_refresh(
                     q, k[:, ::groups, :keys_total], v[:, ::groups, :keys_total],
