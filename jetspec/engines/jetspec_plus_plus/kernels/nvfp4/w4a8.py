@@ -3,7 +3,7 @@
 The weight pack holds E2M1 codes (low nibble = even K) and one UE8M0 scale per
 32 K elements, the OCP MX layout. Each call quantizes the BF16 activation to
 FP8 E4M3 with one UE8M0 scale per row and per 32 K elements. The GEMM is the K1
-swap-AB kernel (`_k1_kernel.py`) built for `tcgen05.mma.kind::mxf8f6f4`. The
+swap-AB kernel (`_swapab_kernel.py`) built for `tcgen05.mma.kind::mxf8f6f4`. The
 weights are the A operand (128 rows per CTA) and the tokens are the B operand.
 Its TMA unpacks the FP4 weights into byte containers in shared memory, as the
 mixed FP8 x FP4 MMA kind needs. HBM traffic stays 4 bits per weight.

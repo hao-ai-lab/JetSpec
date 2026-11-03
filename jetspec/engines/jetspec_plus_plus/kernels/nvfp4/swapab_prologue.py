@@ -6,7 +6,7 @@ import torch
 from .activation import ActivationWorkspace
 from .gemm import _validate_weight
 from .k1_swapab import K1Plan
-from .k2_swiglu import interleave_gate_up
+from .swiglu_epilogue import interleave_gate_up
 
 
 class K1PPlan(K1Plan):
