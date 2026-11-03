@@ -8,7 +8,9 @@ kernel. The committed input state is never written.
 """
 import torch
 
-from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnrec27b import recurrent_verify as serial_verify, supported, triton
+from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_recurrence import recurrent_verify as serial_verify
+from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_recurrence import supported
+from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_recurrence import triton
 
 if triton is not None:
     import triton.language as tl

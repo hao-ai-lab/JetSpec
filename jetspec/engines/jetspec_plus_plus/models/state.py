@@ -115,7 +115,7 @@ class ModelState:
         # verify_cut_commit27b: the pointer table and kernel are built here, before graph capture.
         self._commit_all = None
         if self.stateful and any(getattr(mixer, 'verify_cut_commit27b', False) for mixer in self.kinds):
-            from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_commit27b import LayerCommit
+            from jetspec.engines.jetspec_plus_plus.kernels.verify.state_commit import LayerCommit
             self._commit_all = LayerCommit(self.kinds)
 
     def alloc(self, n):

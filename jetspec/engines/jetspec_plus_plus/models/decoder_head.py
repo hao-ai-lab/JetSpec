@@ -1150,7 +1150,7 @@ def scan_gdn_window(gdn, hidden, recurrent, conv, *, return_state=False):
     raw = raw.transpose(1, 2)
     conv_input = torch.cat((conv.to(raw.dtype), raw), dim=-1)
     if kernel_value('draft_fuse_g27g', '0') == '1' and hidden.is_cuda and hidden.dtype == torch.bfloat16:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.gdn_silu import gdn_inputs
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_silu import gdn_inputs
         convolved = gdn.conv1d(conv_input)[:, :, :conv_input.shape[-1]][0, :, -width:].T
         q, k, v, initial = gdn_inputs(convolved, gdn.key_heads,
             gdn.value_heads // gdn.key_heads, gdn.key_dim, gdn.value_dim, state=recurrent)
@@ -1752,7 +1752,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                                  gdn.conv_kernel + raw_index)
             conv_input = all_raw[gather].transpose(1, 2).contiguous()
         if kernel_value('draft_fuse_g27g', '0') == '1' and hidden.is_cuda and hidden.dtype == torch.bfloat16:
-            from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.gdn_silu import gdn_inputs
+            from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_silu import gdn_inputs
             convolved = F.conv1d(conv_input, gdn.conv1d.weight, groups=conv_input.shape[1])[:, :, 0]
             q, k, v, _ = gdn_inputs(convolved, gdn.key_heads,
                 gdn.value_heads // gdn.key_heads, gdn.key_dim, gdn.value_dim)

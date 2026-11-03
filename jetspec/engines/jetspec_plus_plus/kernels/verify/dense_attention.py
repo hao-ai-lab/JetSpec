@@ -181,7 +181,7 @@ def split_attention(query, k_cache, v_cache, block_table, context_lens, scale, q
         num_stages=1, **extra)
     merge_kernel = _merge_splits
     if mergefp8 and activation is not None and dim == 128:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3_8b.verify_mergefp8_8b import merge as merge_kernel
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.dense_fp8_merge import merge as merge_kernel
     merge_kernel[(kv_heads, rows // merge)](acc, ml, context_lens, out, W=width, G=group, KH=kv_heads,
                                              D=dim, S=splits, RP=rows_padded, BN=tile, MR=merge, PDL=pdl,
                                              Q=q, SF=sf, TILE=0 if layout is None else layout.token_tile,

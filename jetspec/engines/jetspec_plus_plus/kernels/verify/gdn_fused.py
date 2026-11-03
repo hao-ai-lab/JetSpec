@@ -10,9 +10,9 @@ Recurrent norm bit 4 is unreachable: it regressed width 16 by 2.97 ms.
 """
 import torch
 
-from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnrec27b import recurrent_verify
-from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnconv import conv_verify
-from jetspec.engines.jetspec_plus_plus.kernels.verify_pack_glue import gate_beta_rows
+from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_recurrence import recurrent_verify
+from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gdnconv import conv_verify
+from jetspec.engines.jetspec_plus_plus.kernels.verify.packed_nonlinearities import gate_beta_rows
 
 def verify(layer, raw, z, a, b, initial, committed_conv, scratch_conv):
     """The C=1 lazy GDN verify, preserving kept inputs and acceptance-time commits."""
@@ -46,7 +46,7 @@ def verify(layer, raw, z, a, b, initial, committed_conv, scratch_conv):
     if not mask & 1:
         z = z.reshape(-1, layer.value_dim).view(1, width, layer.value_width)
     if layer.verify_cut_gdnrec27b2:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnrec27b2 import recurrent_verify as recurrence
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_recurrence_tiled import recurrent_verify as recurrence
         output = recurrence(q, k, v, g, beta, initial,
                             **({'staged': True} if layer.verify_cut_gdnrec27b3 else {}),
                             **({'delta_keep': layer._delta_keep()} if layer.verify_cut_commitdelta27b else {}),
@@ -55,7 +55,7 @@ def verify(layer, raw, z, a, b, initial, committed_conv, scratch_conv):
     else:
         output = recurrent_verify(q, k, v, g, beta, initial)[0]
     if layer.verify_cut_w1prod27b and output.dtype == torch.bfloat16:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdn_w1 import gated_norm
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gdn_gated_norm import gated_norm
         from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import activation_buffers, w1_linear
         output = gated_norm(output.reshape(-1, layer.value_dim), z, layer.norm, layer.value_heads,
                             activation=activation_buffers(layer.out_proj, width),

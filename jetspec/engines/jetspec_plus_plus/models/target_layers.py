@@ -155,7 +155,7 @@ class FullAttention(nn.Module):
         self.verify_cut_pack27b2 = (separate_projections is None and attention.output_gate and setting(
             run_config, 'engine', 'engine_settings.verify_cut_pack27b2', '0') == '1')
         self.pack27b2_members = ('q_proj', 'k_proj', 'v_proj')
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import cut_mode
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import cut_mode
         self.verify_cut_pdl27b = cut_mode(run_config)
         from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import fp8store27b_enabled
         self.verify_cut_fp8store27b = fp8store27b_enabled(run_config)
@@ -216,7 +216,7 @@ class FullAttention(nn.Module):
             activation = (verify_layer8b.activation_buffers(self.o_proj, q.shape[0])
                           if self.verify_cut_glue8b2_oproj else None)
             if self.verify_cut_persist8b_one_launch:
-                from jetspec.engines.jetspec_plus_plus.kernels.qwen3_8b import verify_attn8b
+                from jetspec.engines.jetspec_plus_plus.kernels.verify import dense_attention as verify_attn8b
                 tuned = {'mergefp8': True} if self.verify_cut_mergefp8_8b else {}
                 out = verify_attn8b.split_attention(
                     q, attn.k_cache, attn.v_cache, context.block_tables[0], context.context_lens,
@@ -234,7 +234,7 @@ class FullAttention(nn.Module):
 
     def _verify_attn27b(self, q, k, v, gate):
         """The gated N=1 verify attention: K/V write, split-KV attention, merge with the output gate."""
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import verify_attn27b
+        from jetspec.engines.jetspec_plus_plus.kernels.verify import hybrid_attention as verify_attn27b
         from jetspec.engines.jetspec_plus_plus.models.attention import store_kvcache
         from jetspec.engines.jetspec_plus_plus.models.context import get_context
         attn, context = self.attn, get_context()
@@ -293,7 +293,7 @@ class FullAttention(nn.Module):
                     return out
             mixed = self.attn(q.reshape(width, -1), k.reshape(width, -1), v)
             if self.verify_cut_mlpglue:
-                from jetspec.engines.jetspec_plus_plus.kernels.verify_mlp_glue import gate_mul
+                from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import gate_mul
                 return self.o_proj(gate_mul(mixed, gate))
             return self.o_proj(mixed * torch.sigmoid(gate.reshape(width, -1)))
         if self.separate_projections:
@@ -346,7 +346,7 @@ class MLP(nn.Module):
             run_config, 'engine', 'engine_settings.verify_cut_w1prod27b', '0') == '1'
         from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import fp8store27b_enabled
         self.verify_cut_fp8store27b = fp8store27b_enabled(run_config)
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import cut_mode
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import cut_mode
         self.verify_cut_pdl27b = cut_mode(run_config)
 
     def forward(self, x):
@@ -362,19 +362,19 @@ class MLP(nn.Module):
                 else:
                     gate, up = pack(x)
                 if self.verify_cut_w1prod27b and getattr(x, '_verify_w1', None) is not None:
-                    from jetspec.engines.jetspec_plus_plus.kernels.verify_pack_glue import silu_mul_rows
+                    from jetspec.engines.jetspec_plus_plus.kernels.verify.packed_nonlinearities import silu_mul_rows
                     from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import activation_buffers, w1_linear
                     return w1_linear(self.down_proj, silu_mul_rows(
                         gate, up, activation=activation_buffers(self.down_proj, x.shape[0]),
                         pdl=bool(self.verify_cut_pdl27b & 1),
                         **({'fp8store': True} if self.verify_cut_fp8store27b else {})))
                 if self.verify_cut_mlpglue:
-                    from jetspec.engines.jetspec_plus_plus.kernels.verify_pack_glue import silu_mul_rows
+                    from jetspec.engines.jetspec_plus_plus.kernels.verify.packed_nonlinearities import silu_mul_rows
                     return self.down_proj(silu_mul_rows(gate, up))
                 return self.down_proj(F.silu(gate) * up)
             gate = self.gate_proj(x)
             if self.verify_cut_mlpglue and not hasattr(self, 'act_fn'):
-                from jetspec.engines.jetspec_plus_plus.kernels.verify_mlp_glue import silu_mul
+                from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import silu_mul
                 return self.down_proj(silu_mul(gate, self.up_proj(x)))
             activated = self.act_fn(gate) if hasattr(self, 'act_fn') else F.silu(gate)
             return self.down_proj(activated * self.up_proj(x))
@@ -423,7 +423,7 @@ class DecoderLayer(nn.Module):
             run_config, 'engine', 'engine_settings.verify_cut_w1prod27b', '0') == '1'
         from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import fp8store27b_enabled
         self.verify_cut_fp8store27b = fp8store27b_enabled(run_config)
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import cut_mode
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import cut_mode
         self.verify_cut_pdl27b = cut_mode(run_config)
         if self.verify_cut_w1prod27b:
             from jetspec.engines.jetspec_plus_plus.engine import current_engine

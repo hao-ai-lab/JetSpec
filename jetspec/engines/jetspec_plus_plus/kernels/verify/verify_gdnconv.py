@@ -23,8 +23,8 @@ WARPS = 2
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.verify_mlp_glue import _ratio
-    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import producer_start
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _ratio
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import producer_start
 
     @triton.jit
     def _window(RAW, COMMITTED, channels, live_c, index, live, r_c, r_t, KS: tl.constexpr):

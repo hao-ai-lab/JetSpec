@@ -3273,7 +3273,7 @@ def adapter_query(head, embeddings, cos, sin, mask, length, window_slots=None,
         pending = (_packed_linear(activated, down_w), state)
     if (kernel_value('draft_fuse_g27g', '0') == '1' and u.is_cuda
             and u.dtype == torch.bfloat16 and u.shape[-1] == 5120 and offset == 1):
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.gdn_silu import finish_adapter
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_silu import finish_adapter
         return finish_adapter(outputs, pending[1], pending[0])[None]
     outputs.append(pending[1] + pending[0])
     return torch.cat(outputs, dim=-1)[None]

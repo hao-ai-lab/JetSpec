@@ -5,7 +5,8 @@ try:
     import triton
     import triton.language as tl
     from triton.language.extra.cuda import libdevice
-    from jetspec.engines.jetspec_plus_plus.kernels.verify_mlp_glue import _ratio, _product
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _ratio
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.mlp_projection import _product
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import store_mx8
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4._w4a8_quant import _launch_dependents
 except ImportError:
