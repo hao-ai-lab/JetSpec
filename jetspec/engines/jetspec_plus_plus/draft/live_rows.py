@@ -772,7 +772,7 @@ class KthRowsDrafter:
         eval_swap = None
         launches = refreshes = 0
         if eval_mode:
-            from jetspec.engines.jetspec_plus_plus.draft.admission_swap import prepare_eager_swap
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.admission_swap import prepare_eager_swap
             # Admission has an exact prefix and no predicted tail. Reuse the same
             # decoder swap and graph-backed draft bucket as the serving round.
             saved_hidden = sequence.staged.predicted_hidden
