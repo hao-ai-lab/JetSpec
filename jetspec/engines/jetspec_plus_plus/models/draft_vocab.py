@@ -47,7 +47,7 @@ def configure_draft_vocab(head, run_config):
     if weight.is_cuda and current_engine().precision_lm_head == 'mxfp4_w4a8':
         from jetspec.engines.jetspec_plus_plus.models.target_linear import _w4a8_registry
         _w4a8_registry.pack(weight)
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     run_manifest.record_file('draft_vocabulary', path, run_config=run_config)
     print(f'DRAFT_VOCAB k={k} full={vocab} table={path}', flush=True)
 

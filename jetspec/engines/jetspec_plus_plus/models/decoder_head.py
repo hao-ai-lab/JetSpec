@@ -37,7 +37,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
     rotate_half,
 )
 
-import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.models.lac import keep_device
 from jetspec.engines.jetspec_plus_plus.models.lac import lac_candidates
 from jetspec.engines.jetspec_plus_plus.draft.rows import fused_kernels
@@ -1548,7 +1548,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     @classmethod
     def _load_stateful(cls, root, drafter, target_model_path, manifest, *, run_config=None):
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 
         if manifest is None or manifest.get("source") != "target_slice":
             raise ValueError("hybrid decoder requires a pinned target_slice manifest")

@@ -32,7 +32,7 @@ from jetspec.engines.jetspec_plus_plus.launch import bench_helpers
 from jetspec.engines.jetspec_plus_plus.launch.bench_helpers import get_model_paths
 from jetspec.engines.jetspec_plus_plus.launch.bench_guards import exported_prompt_ids, generate_inputs_fail_closed
 from jetspec.methods.baselines import eagle3
-import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.runtime.env import validate_environment
 from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
 from jetspec.engines.jetspec_plus_plus.run_config import config_environment

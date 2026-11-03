@@ -13,7 +13,7 @@ import tarfile
 # Adaptation: bundled package paths, with no sys.path mutation.
 ROOT = Path(__file__).resolve().parents[3] / 'jetspec/engines/jetspec_plus_plus'
 from bench.jetspec_plus_plus.paper.recipe_record import recipe_record
-from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import stop_lengths
+from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
 
 INPUTS = Path(__file__).resolve().parent / 'inputs'
 FLOOR4_POLICY = (INPUTS / 'policy-rows-min-4.json')
