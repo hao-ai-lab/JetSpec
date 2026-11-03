@@ -1283,7 +1283,7 @@ class BucketPass:
         d=self.drafter
         if self.wide:
             if getattr(self, '_t14_entry', False):
-                from jetspec.engines.jetspec_plus_plus.kernels.embed_gather import embedding_norm
+                from jetspec.engines.jetspec_plus_plus.kernels.rows.embed_gather import embedding_norm
                 from jetspec.engines.jetspec_plus_plus.draft.rows import fused_kernels
                 norm = self.head.head.layers[0].input_layernorm
                 hidden, normalized = embedding_norm(self.ids, d.embed_tokens.weight,

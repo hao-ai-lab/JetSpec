@@ -88,7 +88,7 @@ def attend(q, k, v, scale, length, tail, block, starts, *, tune=False):
 def _kernels():
     import triton
     import triton.language as tl
-    from jetspec.engines.jetspec_plus_plus.kernels.attn_sm80 import _kernels as sm80_kernels
+    from jetspec.engines.jetspec_plus_plus.kernels.adapter.attn_sm80 import _kernels as sm80_kernels
 
     @triton.jit
     def partials(Q, K, V, Length, Tail, Block, Starts, P, L,
