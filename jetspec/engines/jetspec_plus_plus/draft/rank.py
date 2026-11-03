@@ -11,7 +11,7 @@ import torch.distributed as dist
 import dataclasses
 
 from jetspec.engines.jetspec_plus_plus.serving.model_runner import ModelRunner
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.models.context import set_context
 from jetspec.engines.jetspec_plus_plus.models.context import reset_context
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import append_jetspec_tap_mirrors

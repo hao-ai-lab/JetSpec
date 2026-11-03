@@ -1,7 +1,7 @@
 import os
 import time
 
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sampling_params import SamplingParams
 from jetspec.engines.jetspec_plus_plus.serving.misc import infer_model_family
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
@@ -98,7 +98,7 @@ class LLMEngine:
                                else RunConfig.from_environment(launch_environment({key: value for key, value in os.environ.items() if key not in ('JETSPEC_HOST', 'JETSPEC_SHM_NAME')}),
                                                                model_entry=model_entry))
         self.engine = kwargs.pop('engine', None)
-        from jetspec.engines.jetspec_plus_plus.serving.path_settings import install_architecture
+        from jetspec.engines.jetspec_plus_plus.runtime.paths import install_architecture
         install_architecture(self.run_config)
         if self.engine is None:
             self.engine = (Engine.from_config(config_read['config']) if config_read is not None else
