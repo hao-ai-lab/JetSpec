@@ -38,10 +38,17 @@ def prompt_files(value):
     return True
 
 
+def require_single_request(concurrency):
+    if concurrency > 1:
+        raise ValueError('the public engine serves one request at a time; concurrency above 1 is unsupported')
+
+
 def check_batch_capacity(config):
     engine = config['engine']
     concurrency = config['benchmark'].get('concurrency', 1)
     capacity = engine.get('max_num_seqs', 1)
+    require_single_request(concurrency)
+    require_single_request(capacity)
     if concurrency > capacity:
         support = '; missing supports_batch=true' if not engine.get('supports_batch', False) else ''
         raise ValueError(f"engine profile {engine.get('profile', 'current')!r}{support}: "
