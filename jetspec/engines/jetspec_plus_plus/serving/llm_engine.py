@@ -98,7 +98,7 @@ class LLMEngine:
                                else RunConfig.from_environment(launch_environment({key: value for key, value in os.environ.items() if key not in ('JETSPEC_HOST', 'JETSPEC_SHM_NAME')}),
                                                                model_entry=model_entry))
         self.engine = kwargs.pop('engine', None)
-        from jetspec.engines.jetspec_plus_plus.serving.paths import install_architecture
+        from jetspec.engines.jetspec_plus_plus.serving.path_settings import install_architecture
         install_architecture(self.run_config)
         if self.engine is None:
             self.engine = (Engine.from_config(config_read['config']) if config_read is not None else

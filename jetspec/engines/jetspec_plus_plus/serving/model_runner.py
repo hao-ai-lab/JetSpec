@@ -89,7 +89,7 @@ class ModelRunner:
         if self.run_config is None:
             raise ValueError('ModelRunner missing RunConfig launch_overlay')
         self.verify_mask_cache = self.run_config.engine.engine_settings.verify_mask_cache == "1"
-        from jetspec.engines.jetspec_plus_plus.serving.paths import install_architecture
+        from jetspec.engines.jetspec_plus_plus.serving.path_settings import install_architecture
         install_architecture(self.run_config)
         from jetspec.engines.jetspec_plus_plus.engine import current_engine, install_engine
         self.engine = install_engine(engine if engine is not None else getattr(config, 'engine', None) or current_engine())
