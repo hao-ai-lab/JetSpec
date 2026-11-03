@@ -50,7 +50,10 @@ optimized inference engine, and target loaders, with a strict one-way dependency
 - **`jetspec/engines/jetspec_plus_plus/`** — the JetSpec++ serving engine. Its
   [README](jetspec/engines/jetspec_plus_plus/README.md) maps the code and lists
   the steps to add a model.
-- **`jetspec/methods/baselines/`** — the baseline methods used for comparison.
+- **`jetspec/methods/baselines/`** — the shared baseline draft-path resolver and graph wrapper.
+- **`bench/jetspec_plus_plus/baselines/`** and
+  **`bench/jetspec_plus_plus/third_party/`** — comparison routes and pinned DSpark
+  code, loaded only when selected from a source checkout.
 - **`jetspec/tree/`**, **`jetspec/draft.py`**, **`jetspec/draft_head_adapter.py`**
   and **`jetspec/models/draft_head.py`** — compatibility shims to the JetSpec
   method package. Existing public imports stay supported; add method code in

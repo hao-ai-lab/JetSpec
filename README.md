@@ -46,7 +46,7 @@ pip install --no-deps -r jetspec/engines/jetspec_plus_plus/requirements-x86_64.l
 pip install --no-deps -e .
 ```
 
-On GB200, use `requirements-gb200-aarch64.lock` with `--extra-index-url https://download.pytorch.org/whl/cu128`.
+On GB200, use `jetspec/engines/jetspec_plus_plus/requirements-gb200-aarch64.lock` with `--extra-index-url https://download.pytorch.org/whl/cu128`.
 
 ## Quick Start
 
