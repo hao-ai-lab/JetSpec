@@ -6,7 +6,7 @@ import torch.distributed as dist
 
 from jetspec.engines.jetspec_plus_plus.draft.rank import DraftRunner
 from jetspec.engines.jetspec_plus_plus.models.context import set_context, reset_context
-from jetspec.methods.baselines.tree_glue import (
+from bench.jetspec_plus_plus.baselines.tree_glue import (
     get_forked_recovery_tokens_from_logits, make_glue_decode_input_ids,
 )
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import recv_int64, append_jetspec_tap_mirrors

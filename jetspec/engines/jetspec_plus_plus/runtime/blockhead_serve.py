@@ -23,7 +23,7 @@ from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_value
 
 
 TARGET_LAYER_IDS = list(served_target_layer_ids())
-KIT_DIR = Path(__file__).resolve().parents[1] / "third_party/blockhead_kit"
+KIT_DIR = Path(__file__).resolve().parents[4] / "bench/jetspec_plus_plus/third_party/blockhead_kit"
 _VENDOR_API = None
 BLOCKHEAD_GRAPH_METRICS = (
     "head_graph",
@@ -378,6 +378,8 @@ def blockhead_config_overrides(
     checkpoint_dir = checkpoint_dir or config_values(run_config).get('model.model_settings.blockhead') or None
     if checkpoint_dir is None:
         return dict(config_kwargs)
+    if not (KIT_DIR / 'manifest.json').is_file():
+        raise RuntimeError('blockhead comparison is available from a source checkout')
     # Two GPUs without async = the target tensor-parallel (tp2); the head stays on rank 0.
     if int(config_kwargs.get("num_gpus", 1)) not in (1, 2):
         raise ValueError("block-head serving requires one GPU (or two for target TP)")
@@ -952,6 +954,8 @@ class TimedLinearBlockhead:
 
 def validate_vendor_manifest() -> int:
     """Fail closed if any byte in the pinned serving kit has changed."""
+    if not (KIT_DIR / 'manifest.json').is_file():
+        raise RuntimeError('blockhead comparison is available from a source checkout')
     manifest = json.loads(((KIT_DIR / 'manifest.json')).read_text())
     for name, expected in manifest["files"].items():
         actual = hashlib.sha256((KIT_DIR / name).read_bytes()).hexdigest()

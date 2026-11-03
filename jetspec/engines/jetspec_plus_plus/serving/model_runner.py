@@ -39,12 +39,9 @@ from jetspec.engines.jetspec_plus_plus.serving.same_gpu_dist import install_cpu_
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import append_committed_taps
 from jetspec.engines.jetspec_plus_plus.serving.graphs import run_verify_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import run_decode_cudagraph
-from jetspec.methods.baselines.fanout_graphs import run_fi_tree_decode_cudagraph
-from jetspec.methods.baselines.fanout_graphs import run_glue_decode_cudagraph
+from jetspec.engines.jetspec_plus_plus._source_checkout import baseline_module
 from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_verify_cudagraph
-from jetspec.methods.baselines.fanout_graphs import capture_fi_tree_decode_cudagraph
-from jetspec.methods.baselines.fanout_graphs import capture_glue_decode_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import get_custom_mask
     
 
@@ -702,13 +699,13 @@ class ModelRunner:
                 self.graphs["verify"] = verify_graphs
                 self.graph_bs_list["verify"] = verify_graph_bs_list
             if self.config.speculate and self.is_draft and self.config.draft_async:
-                fi_tree_decode_graph_vars, fi_tree_decode_graph_pool, fi_tree_decode_graphs, fi_tree_decode_graph_bs_list = capture_fi_tree_decode_cudagraph(self)  # fi tree decode cudagraph, draft only
+                fi_tree_decode_graph_vars, fi_tree_decode_graph_pool, fi_tree_decode_graphs, fi_tree_decode_graph_bs_list = baseline_module('fanout_graphs').capture_fi_tree_decode_cudagraph(self)  # fi tree decode cudagraph, draft only
                 self.graph_vars["fi_tree_decode"] = fi_tree_decode_graph_vars
                 self.graph_pools["fi_tree_decode"] = fi_tree_decode_graph_pool
                 self.graphs["fi_tree_decode"] = fi_tree_decode_graphs
                 self.graph_bs_list["fi_tree_decode"] = fi_tree_decode_graph_bs_list
             if self.config.speculate and self.is_draft and self.config.draft_async and self.config.use_eagle:
-                glue_gv, glue_pool, glue_graphs, glue_bs_list = capture_glue_decode_cudagraph(self)
+                glue_gv, glue_pool, glue_graphs, glue_bs_list = baseline_module('fanout_graphs').capture_glue_decode_cudagraph(self)
                 self.graph_vars["glue_decode"] = glue_gv
                 self.graph_pools["glue_decode"] = glue_pool
                 self.graphs["glue_decode"] = glue_graphs
@@ -1263,10 +1260,10 @@ class ModelRunner:
                 return logits
 
         elif is_tree_decode:
-            return run_fi_tree_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["fi_tree_decode"], tree_decode_step, cache_hits, hidden_states=hidden_states)
+            return baseline_module('fanout_graphs').run_fi_tree_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["fi_tree_decode"], tree_decode_step, cache_hits, hidden_states=hidden_states)
         elif is_mq_kp1 and hidden_states is not None and "glue_decode" in self.graph_vars:
             # EAGLE draft glue decode with 2K+1 per seq
-            return run_glue_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["glue_decode"], hidden_states)
+            return baseline_module('fanout_graphs').run_glue_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["glue_decode"], hidden_states)
         elif is_mq_kp1: # verify or non-EAGLE glue decode, "verify" ~ mq decode of len K+1
             return run_verify_cudagraph(self, input_ids, positions, last_only, self.graph_vars["verify"])
         else: # draft decoding in sync spec or JIT single-token decode
