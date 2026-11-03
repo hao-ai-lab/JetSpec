@@ -101,7 +101,7 @@ class ModelRunner:
         if pin_plan is None or pin_plan["mode"] != "off":
             pin_rank_cpu_affinity(setting(self, 'hardware.hardware_settings.rank_cpu_affinity'), rank, plan=pin_plan)
         if pin_plan is not None:
-            import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
             row = pin_plan["ranks"][rank]
             if row["cpus"] and set(os.sched_getaffinity(0)) != set(row["cpus"]):
                 raise RuntimeError(f"CPU_PIN rank={rank} applied affinity differs from requested")
@@ -794,7 +794,7 @@ class ModelRunner:
         if not setting(self, 'engine.engine_settings.c1_compile_pin', ''):
             return False
         from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         process_check("served")
         if self.config.jetspec and self.draft_async:
             ranks = (self.draft_rank,)

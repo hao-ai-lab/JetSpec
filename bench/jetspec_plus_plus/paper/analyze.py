@@ -9,9 +9,9 @@ import sys
 
 # Adaptation: imports resolve inside the public package.
 from bench.jetspec_plus_plus.paper.recipe_record import recipe_record
-from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped
-from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import stop_lengths
-from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import round_is_miss
+from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped
+from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
+from jetspec.engines.jetspec_plus_plus.launch.eos_stop import round_is_miss
 from bench.jetspec_plus_plus.paper.protocol import ARMS
 from bench.jetspec_plus_plus.paper.protocol import HASHES
 from bench.jetspec_plus_plus.paper.protocol import validate_coverage

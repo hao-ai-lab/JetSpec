@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 from jetspec.engines.jetspec_plus_plus.draft.method.ops import reference_op
 from jetspec.engines.jetspec_plus_plus.models.lac import keep_device
-from jetspec.engines.jetspec_plus_plus.runtime import run_manifest
+from jetspec.engines.jetspec_plus_plus.launch import run_manifest
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
 from jetspec.engines.jetspec_plus_plus.draft.heads.kpred import (
     pass_name, KPrediction, selected_hypotheses, k15_in_lac, k0_in_lac, _diagnostic_qhat)

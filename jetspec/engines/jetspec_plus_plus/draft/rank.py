@@ -1089,7 +1089,7 @@ class DraftRunner(ModelRunner):
         if not get_profile(engine.profile).compile_pin:
             return False
         from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         process_check("served")
         run_manifest.record_value("compile_pin_served_draft", True, run_config=getattr(self, 'run_config', None))
         return True

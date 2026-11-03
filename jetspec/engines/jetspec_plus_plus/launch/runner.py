@@ -180,7 +180,7 @@ def resolve_sync_passes(recipe, requested):
 def sync_stop_lengths(records, outputs, eos_token_ids, *, tokens):
     """Per sequence, the output length the offline reader would have stopped at: through the first
     end-of-sequence token, or ``tokens`` when there is none. Serving itself ignores it and runs on."""
-    from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import stop_lengths
+    from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
     seq_ids = sorted({int(record["seq_id"]) for record in records})
     if len(seq_ids) != len(outputs):
         raise RuntimeError(f"{len(seq_ids)} recorded sequences for {len(outputs)} outputs")
@@ -2637,8 +2637,9 @@ def write_anatomy(run_output, method, regime, measured, populations, *,
     """Write one post-run report; no instrumentation is installed in the child."""
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
-    from jetspec.engines.jetspec_plus_plus.analysis.anatomy import build_anatomy, headline
-    from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import round_is_miss
+    from jetspec.engines.jetspec_plus_plus.launch.anatomy import build_anatomy
+    from jetspec.engines.jetspec_plus_plus.launch.anatomy import headline
+    from jetspec.engines.jetspec_plus_plus.launch.eos_stop import round_is_miss
     if method == "jetspecpp":
         decisions = {(row["seq_id"], row["candidate_round"]): row
                      for row in measured["metrics"]["jetspec_round_records"]}
@@ -2722,7 +2723,7 @@ def record_target_autotune(target, *, run_config=None):
     if ("linear_attention" not in config.get("layer_types", [])
             and not kernel_enabled('hybrid_fused_norm')):
         return
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     unpinned = not bool(setting(run_config, 'engine.engine_settings.c1_compile_pin'))
     run_manifest.record_value("target_triton_autotune_unpinned", unpinned, run_config=run_config)
@@ -2799,7 +2800,7 @@ def load_plan_engine(plan, load, model, *, environment=None, **kwargs):
         kwargs['run_config'] = given or run_config
         kwargs['engine'] = kwargs.get('engine') or engine
     if model_entry is not None and 'thresholds_sha256' in model_entry:
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         run_manifest.record_value('model_thresholds_sha256', model_entry['thresholds_sha256'])
     return load(model, config_read=config_read, model_entry=model_entry, **kwargs)
 
@@ -2826,7 +2827,7 @@ def _child(plan_path, *, resident=None, run_config=None):
             bench.get_model_paths, bench.record_run_inputs, bench.run_benchmark, bench.LLM)
         from jetspec.engines.jetspec_plus_plus.launch.resident import reset_request_state
         from jetspec.engines.jetspec_plus_plus.launch.resident import retain_manifest, rank_boundary
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         if resident.manifest is not None:
             retain_manifest(resident.manifest, run_config=run_config)
         bench.LLM = lambda model, **kwargs: resident.engine(saved_load, model, **kwargs)
@@ -2841,7 +2842,7 @@ def _child(plan_path, *, resident=None, run_config=None):
         run_config = kwargs.get('run_config') or run_config
         original_record_inputs(*args, **kwargs)
         record_target_autotune(plan["target_model"], run_config=run_config)
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         if os.environ.get("RX_SOURCE_PROVENANCE"):
             receipt = os.environ["RX_SOURCE_PROVENANCE"]
             run_manifest.record_file("rx_source_provenance", receipt, run_config=run_config)
@@ -2910,7 +2911,7 @@ def _child(plan_path, *, resident=None, run_config=None):
             prebuild_started = time.perf_counter()
             prebuilt = [llm.create_inference_step(llm.config)]
             torch.cuda.synchronize()
-            import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
             run_manifest.record_value("serve_read_prebuilt_step_seconds", time.perf_counter() - prebuild_started, run_config=run_config)
             build_step = llm.create_inference_step
             llm.create_inference_step = lambda config: prebuilt.pop() if prebuilt else build_step(config)
@@ -2957,7 +2958,7 @@ def _child(plan_path, *, resident=None, run_config=None):
         output_check = measured_output_check(
             outputs, count=plan["count"], tokens=plan["tokens"],
             temperature=args.temp, seed=args.seed, stop_at_eos=args.stop_at_eos)
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         run_manifest.record_value("serve_read_output_check", output_check, run_config=run_config)
         if audit_cache:
             fresh = cache_changes(cache_before, cache_snapshot(os.environ))
@@ -3172,7 +3173,7 @@ def _main_sync(args):
             measured = run["measured"]
             measured.pop("proposals", None)
             records = measured["metrics"]["blockhead_round_records"]
-            from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped
+            from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped
             eos_stopped = compute_eos_stopped(
                 SYNC_METHOD, raw["outputs"], measured["metrics"], tokens=args.tokens,
                 eos_token_ids=condition["eos_token_ids"], batch=args.batch)
@@ -3692,7 +3693,8 @@ def _main(args, *, resident=None):
                     method, measured["metrics"], proposals, deadlines,
                     deadline_required=(environment.get(environment_name('engine', 'engine_settings.draft_deadline')) == "1"
                                        and not chain))
-                from jetspec.engines.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped, ROUND_METHODS
+                from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped
+                from jetspec.engines.jetspec_plus_plus.launch.eos_stop import ROUND_METHODS
                 eos_stopped = (compute_eos_stopped(
                     method, raw["outputs"], measured["metrics"], tokens=args.tokens,
                     eos_token_ids=condition["eos_token_ids"], populations=populations,
@@ -3724,7 +3726,7 @@ def _main(args, *, resident=None):
                     measured["tau_to_cap"] = json.loads(
                         Path(anatomy_path).read_text(encoding="utf-8"))["tau"]
                 else:
-                    from jetspec.engines.jetspec_plus_plus.analysis.anatomy import build_anatomy
+                    from jetspec.engines.jetspec_plus_plus.launch.anatomy import build_anatomy
                     measured["tau_to_cap"] = build_anatomy(
                         method, args.regime, measured, populations)["tau"]
                 child_roles = sorted({

@@ -439,7 +439,7 @@ def served_kpred_pass(passes_run, run_config=None):
     label = (eval_completed_label(passes_run, run_config=run_config) if profile_enabled() else
              pass_name(passes_run, run_config=run_config) if config_values(run_config).get('engine.engine_settings.chain_graph', '0') == 'seg' or lab_on
              else completed_label(passes_run))
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     run_manifest.observe("kpred_pass", (int(passes_run), label), run_config=run_config)
     return label
 
@@ -453,7 +453,7 @@ def load_kpredictor(drafter, *, run_config=None):
         enabled = config_values(run_config).get('method.method_settings.kset') == "predictor" and not off
     else:
         enabled = selected
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     run_manifest.record_value("kpred_forward", "legacy" if enabled else "not_loaded", run_config=run_config)
     if not enabled:
         return None
@@ -495,7 +495,7 @@ class KthRowsDrafter:
         self.branches = 1 if anchor_mode(run_config=self.run_config) == 'oracle' else branches
         self.drafter = drafter
         self.predictor = None
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         run_manifest.record_value('kpred_forward', 'not_loaded', run_config=run_config)
         self.decoder = None
         if anchor_mode(run_config=self.run_config) == 'decoder':
@@ -503,7 +503,7 @@ class KthRowsDrafter:
             self.decoder = AnchorDecoder.load(config_values(self.run_config)['model.model_settings.heads_dir'], drafter, run_config=run_config,
                                               target_model_path=target_model_path)
         if self.predictor is not None or self.decoder is not None:
-            import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
             run_manifest.record_value('heads_dir', os.path.realpath(config_values(self.run_config)['model.model_settings.heads_dir']), run_config=run_config)
             run_manifest.record_value('heads_dataset', config_values(self.run_config).get('benchmark.benchmark_settings.dataset'), run_config=run_config)
         # Initial live admission has one KV group per hypothesis; FlashInfer's

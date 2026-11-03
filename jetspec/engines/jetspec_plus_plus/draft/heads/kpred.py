@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import torch
 
-import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.models.lac import keep_device
 
 

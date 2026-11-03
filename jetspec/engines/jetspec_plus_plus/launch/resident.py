@@ -31,7 +31,7 @@ def rank_boundary(speculator):
         raise RuntimeError('RESIDENT_RANK_BOUNDARY_ACK_MISMATCH')
 
 def retain_manifest(manifest, *, run_config=None):
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     run_manifest.reset(run_config=run_config)
     for entry in manifest['files']:
         if entry['role'] != 'prompts':

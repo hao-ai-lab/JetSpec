@@ -257,11 +257,11 @@ def _run_manifest():
     """The run-manifest recorder; by package when this module has one, else by path
     (the test harness loads drafter.py as a bare file)."""
     if __package__:
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         return run_manifest
     name = "jetspec_run_manifest"
     if name not in sys.modules:
-        path = (Path(__file__).parent.parent / 'runtime/run_manifest.py')
+        path = ((Path(__file__).parent.parent / 'launch' / 'run_manifest.py'))
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
