@@ -18,6 +18,7 @@ import sys
 from . import protocol
 from .analyze import aggregate, per_prompt
 from .rule_a import rule_a
+from ..dataloader import pinned_prompts
 from jetspec.engines.jetspec_plus_plus.launch import entry, runner
 
 ROOT = Path(__file__).resolve().parents[3] / 'jetspec/engines/jetspec_plus_plus'
@@ -103,7 +104,7 @@ def write_json(path, value):
 
 def sealed_source(model, dataset, tokenizer=None):
     name = ('27b-sys' if model == '27b' else model) + f'/prompts_{dataset}128.json'
-    path = protocol.INPUTS / name
+    path = pinned_prompts('27b-sys' if model == '27b' else model, dataset)
     seals = json.loads((protocol.INPUTS / 'seals.json').read_text())
     assert protocol.sha256(path) == seals[name], 'SEALED_SOURCE_SHA'
     source = json.loads(path.read_text())

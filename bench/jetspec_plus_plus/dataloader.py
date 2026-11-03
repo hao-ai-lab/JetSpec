@@ -8,6 +8,21 @@ BENCHMARKS = {'gsm8k': 'gsm8k-t0', 'math500': 'math500-t0', 'aime25': 'aime25-t0
               'humaneval': 'humaneval-t0', 'livecodebench': 'lcb-t0', 'mbpp': 'mbpp-t0',
               'mt-bench': 'mt-bench-t0'}
 
+PINNED_PROMPTS = {
+    ('8b', 'gsm8k'): 'gsm8k-t0.prompts.json',
+    ('8b', 'math500'): '8b-prompts_math500128.json',
+    ('27b', 'gsm8k'): '27b-prompts_gsm8k128.json',
+    ('27b', 'math500'): '27b-prompts_math500128.json',
+    ('27b-sys', 'gsm8k'): '27b-sys-prompts_gsm8k128.json',
+    ('27b-sys', 'math500'): '27b-sys-prompts_math500128.json',
+}
+
+
+def pinned_prompts(size, dataset):
+    """Resolve a preserved population; paper seal keys keep their original names."""
+    name = PINNED_PROMPTS.get((size, dataset))
+    return HERE / 'prompts' / name if name is not None else None
+
 
 def rerender(source, target, destination):
     """Render each first user turn of an 8B export with the target's own chat template."""
@@ -28,8 +43,8 @@ def rerender(source, target, destination):
 def bundled_prompts(model, dataset, target, directory):
     """The bundled prompts of a dataset, rendered for the model's chat template."""
     size = '27b' if model == 'qwen3.8-27b' else '8b'
-    table3 = HERE / 'paper/inputs' / size / f'prompts_{dataset}128.json'
-    if table3.is_file():
+    table3 = pinned_prompts(size, dataset)
+    if table3 is not None and table3.is_file():
         return str(table3)
     if dataset not in BENCHMARKS:
         raise SystemExit(f'no bundled prompts for --dataset {dataset} (bundled: {", ".join(BENCHMARKS)}); '
