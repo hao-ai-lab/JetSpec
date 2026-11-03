@@ -29,14 +29,7 @@ HASHES_8B = {
     'math500': '3c2fd08be240ad6a907ebaf5aeb47c7bcff581e63dac06289884ae3dd2767be7',
 }
 ARMS_8B = {
-    'J1R1REF': ('jetspecpp', 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3', 'pair'),
-    'J1R1REF_F4': ('jetspecpp', 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3', 'pair'),
-    'J1R1': ('jetspecpp', 'jetspecpp-graphed-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6', 'pair'),
-    'DSE': ('blockhead', 'blockhead15-800k-graphed', 'one_gpu'),
     'AR': ('ar', 'ar-graphed', 'one_gpu'),
-    'DSE_A79': ('blockhead', 'blockhead15-800k-graphed', 'one_gpu'),
-    'DS': ('blockhead', 'blockhead15-800k-graphed', 'one_gpu'),
-    'DFlash': ('dflash', 'dflash-ours-graphed', 'one_gpu'),
     'SSD': ('ssd', 'ssd-graphed', 'pair'),
     'AR_PAPER_GB1': ('ar', 'ar-graphed', 'one_gpu'),
 }
@@ -52,7 +45,6 @@ HASHES = {'8b': HASHES_8B, '27b': {
     'gsm8k': '9262b74cd32a010df76b9f669c4d182ae8c3f29d01a57fabb8e016cdb53f2a47',
     'math500': '02f837f24228ca135559a941abd8df73af2b78afeaa0c7a864eaedefa5861d2c'}}
 ARMS = {'8b': ARMS_8B, '27b': {
-    'J3R3DEV_F4': ('jetspecpp', 'jetspecpp-device-pair-27b-drafter6ep-base800k-j3r3-swap-dspark', 'pair'),
     'AR': ('ar', 'ar-hybrid27b-graphed', 'one_gpu'),
     'DS': ('blockhead', 'blockhead27b-800k-e6-graphed-sm100', 'one_gpu')}}
 DEV_VARIANTS_27B = ('J3R3DEV_R16', 'J3R3DEV_CAL28', 'J3R3DEV_R16_CAL28')
