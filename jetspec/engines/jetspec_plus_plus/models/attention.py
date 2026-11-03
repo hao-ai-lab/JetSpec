@@ -13,7 +13,7 @@ from jetspec.engines.jetspec_plus_plus._optional import tl
 # A spawned rank imports this module before it installs its engine. install_engine binds the
 # backend again, here and in every module that imports the name.
 BACKEND_IMPORTERS = ('jetspec.engines.jetspec_plus_plus.serving.model_runner', 'jetspec.engines.jetspec_plus_plus.serving.graphs',
-                     'jetspec.engines.jetspec_plus_plus.verify.forward', 'jetspec.methods.baselines.fanout_graphs')
+                     'jetspec.engines.jetspec_plus_plus.verify.forward', 'bench.jetspec_plus_plus.baselines.fanout_graphs')
 
 
 def attention_backend(selected=None):

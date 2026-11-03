@@ -7,8 +7,8 @@ import torch
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculateResult
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifyResult
-from jetspec.methods.baselines.speculator_blockhead import SpeculatorBlockhead
-from jetspec.methods.baselines.sync_drafter import load_sync_drafter
+from bench.jetspec_plus_plus.baselines.speculator_blockhead import SpeculatorBlockhead
+from bench.jetspec_plus_plus.baselines.sync_drafter import load_sync_drafter
 
 
 class SpeculatorSyncDrafter(SpeculatorBlockhead):
