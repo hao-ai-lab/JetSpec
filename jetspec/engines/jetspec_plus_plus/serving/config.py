@@ -3,8 +3,8 @@ import json
 from dataclasses import dataclass
 from transformers import AutoConfig
 import torch
-from jetspec.engines.jetspec_plus_plus.serving.paths import DEFAULT_TARGET
-from jetspec.engines.jetspec_plus_plus.serving.paths import DEFAULT_DRAFT
+from jetspec.engines.jetspec_plus_plus.serving.path_settings import DEFAULT_TARGET
+from jetspec.engines.jetspec_plus_plus.serving.path_settings import DEFAULT_DRAFT
 
 
 @dataclass
@@ -88,7 +88,7 @@ class Config:
             from jetspec.engines.jetspec_plus_plus.draft.live_rows import require_segmented_rows
             require_segmented_rows(self.run_config)
         if self.model is None or self.draft is None:
-            from jetspec.engines.jetspec_plus_plus.serving.paths import resolve_paths
+            from jetspec.engines.jetspec_plus_plus.serving.path_settings import resolve_paths
             paths = resolve_paths(self.run_config)
             if self.model is None:
                 self.model = paths.DEFAULT_TARGET
