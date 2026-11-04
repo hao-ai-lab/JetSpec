@@ -164,9 +164,8 @@ def eos_region_events(outputs, metrics, text, tokens, eos, indices, capacity_tot
         # Pinned chain: a delivered redraft is full verification even though its
         # decision remains "miss". A miss/late without delivery is the AR valve.
         assert record['decision'] in ('hit', 'miss', 'late'), 'UNKNOWN_VERIFY_DECISION'
-        # A redraft can still land in the taken set after its cutoff. A timed-out round that
-        # commits more than the correction is then full verification, and the engine counts
-        # no AR step for it.
+        # A timed-out round can still commit more than the correction. The engine then counts
+        # it as full verification with no AR step, so it is not the AR valve.
         late_full = bool(record.get('chain_redraft_timeout')) and int(record['accepted_len']) > 1
         is_ar = record['decision'] != 'hit' and not record.get('fallback') and not late_full
         if is_ar:
