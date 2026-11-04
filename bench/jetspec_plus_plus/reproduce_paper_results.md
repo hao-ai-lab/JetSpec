@@ -16,6 +16,8 @@ python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --
   --host-values /path/to/host-27b.json --devices 0,1 --output-dir /path/to/table3-27b
 ```
 
+`--devices` counts from the first card that a scheduler grants through `CUDA_VISIBLE_DEVICES`, as the serving entry does. Without a scheduler, it names the cards as `nvidia-smi` numbers them.
+
 Run the models in separate output directories. The command writes launch plans and tables in JSON and CSV, and prints the table in the paper's column order and rounding. It refuses to overwrite completed reads, so choose a fresh output directory for a new measurement.
 
 ## Host file

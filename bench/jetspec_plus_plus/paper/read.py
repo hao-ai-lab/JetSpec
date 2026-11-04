@@ -1,15 +1,20 @@
 """Execute exactly the public configuration recorded by the Table 3 planner."""
 import json
+import os
 from pathlib import Path
 import sys
 
 from jetspec.engines.jetspec_plus_plus import entry
 from jetspec.engines.jetspec_plus_plus.launch import runner
+from jetspec.engines.jetspec_plus_plus.launch.entry import granted_devices
 
 
 def main(path):
     plan = json.loads(Path(path).read_text())
     args = runner._parser().parse_args(plan['argv'][3:])
+    # Plan device indices count from the first card the scheduler grants, as the serving
+    # entry's do. The runner reads physical cards, so the indices map here.
+    args.devices = granted_devices(args.devices, os.environ.get('CUDA_VISIBLE_DEVICES'))
     args.resolved_recipe = plan['runtime_recipe']
     args.config_read = plan['composition']
     # Published calibration directories need their registration-name alias.
