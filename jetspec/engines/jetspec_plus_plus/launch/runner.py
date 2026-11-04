@@ -3809,4 +3809,9 @@ def main(*, run_config=None):
 
 
 if __name__ == "__main__":
+    # The parent starts its child by running this file as a script, so Python puts launch/ first
+    # on sys.path, where launch/bench.py shadows the repository's bench package. Resolve imports
+    # as the parent's -m launch does.
+    if sys.path and Path(sys.path[0]).resolve() == Path(__file__).resolve().parent:
+        sys.path.pop(0)
     main()

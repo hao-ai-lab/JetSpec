@@ -8,12 +8,7 @@ event pair on the current stream; ``side_stream`` records on ``self.stream``.
 graphed execution.
 """
 
-# Locate the component from either its category or its stable forwarding path.
-from pathlib import Path as _ToolPath
 import sys as _tool_sys
-_TOOL_ROOT = next((p for p in _ToolPath(__file__).resolve().parents
-                   if (p / "artifacts/manifest.json").is_file() or (p / "artifacts/manifest.json").is_file()), _ToolPath.cwd())
-_tool_sys.path[:0] = [str(_TOOL_ROOT), str(_TOOL_ROOT / 'engine'), str(_ToolPath(__file__).resolve().parent)]
 if __name__ == "__main__" and any(a in ("-h", "--help") for a in _tool_sys.argv[1:]):
     from jetspec.engines.jetspec_plus_plus.serving.entrypoints import cpu_help as _cpu_help
     _cpu_help(__file__)
