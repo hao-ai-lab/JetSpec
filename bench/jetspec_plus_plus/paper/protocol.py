@@ -43,6 +43,9 @@ def read_record(job, output, cache_root):
         rows = json.loads((ROOT / 'launch/recipe-index.json').read_text())['rows']
         row = next(r for r in rows if r.get('launch', {}).get('name') == recipe)
         names, launch, overrides = row['names'], row['launch'], list(row['overrides'])
+        # A sealed baseline replays its named recipe, so the engine never looks for
+        # composed metadata, which baseline families do not have.
+        overrides.append('engine.recipe=' + json.dumps(recipe))
     overrides += ['hardware.placement=' + json.dumps(placement),
                   'hardware.devices=' + json.dumps(list(range(2 if placement == 'pair' else 1))),
                   'hardware.cpu_pin=' + json.dumps('auto' if method == 'jetspecpp' else 'off'),
