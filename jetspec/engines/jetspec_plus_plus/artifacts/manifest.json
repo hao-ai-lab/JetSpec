@@ -264,7 +264,7 @@
     },
     {
       "name": "dspark_27b_800k_e6_checkpoint",
-      "kind": "generated",
+      "kind": "published",
       "files": [
         {
           "destination_path": {
@@ -277,7 +277,9 @@
             "namespace": "sha256_file_bytes",
             "value": "8d8b5ce97f97e5ac8dbdcffa782701db1c2e2bb525f1cb2960c21371d4e172e7",
             "resolves": true,
-            "resolved_by": "Verified file SHA-256"
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3p8-27b-800k/revision/685e1984bc083315ed1ddda685ca5ba469ed8610?blobs=true (anonymous), 2026-11-04; public bytes match this SHA-256"
           }
         },
         {
@@ -291,7 +293,9 @@
             "namespace": "sha256_file_bytes",
             "value": "55142e70b6759b386fc469ea2df295c64220345f3824806de1cea6b14b44687d",
             "resolves": true,
-            "resolved_by": "Verified file SHA-256"
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3p8-27b-800k/revision/685e1984bc083315ed1ddda685ca5ba469ed8610?blobs=true (anonymous), 2026-11-04; public bytes match this SHA-256"
           }
         },
         {
@@ -305,7 +309,9 @@
             "namespace": "sha256_file_bytes",
             "value": "3f10c6f49ba4771d25f7b9d274378b6c500b32b9da6c217baeba28b595a32a0b",
             "resolves": true,
-            "resolved_by": "Verified file SHA-256"
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3p8-27b-800k/revision/685e1984bc083315ed1ddda685ca5ba469ed8610?blobs=true (anonymous), 2026-11-04; public bytes match this SHA-256"
           }
         },
         {
@@ -319,7 +325,9 @@
             "namespace": "sha256_file_bytes",
             "value": "bdf456907b0f3023b69af577a88c428e3384a5cc7141b0ea1c234b58594ccb12",
             "resolves": true,
-            "resolved_by": "Verified file SHA-256"
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3p8-27b-800k/revision/685e1984bc083315ed1ddda685ca5ba469ed8610?blobs=true (anonymous), 2026-11-04; public bytes match this SHA-256"
           }
         },
         {
@@ -333,7 +341,89 @@
             "namespace": "sha256_file_bytes",
             "value": "4c1bcc4c722e4831c71f48bc726184b14b797fbfce44119cc414ce1e17b67b60",
             "resolves": true,
-            "resolved_by": "Verified file SHA-256"
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3p8-27b-800k/revision/685e1984bc083315ed1ddda685ca5ba469ed8610?blobs=true (anonymous), 2026-11-04; public bytes match this SHA-256"
+          }
+        }
+      ],
+      "repository": "JetSpec/dspark-qwen3p8-27b-800k",
+      "revision": "685e1984bc083315ed1ddda685ca5ba469ed8610"
+    },
+    {
+      "name": "blockhead800k_checkpoint",
+      "kind": "published",
+      "repository": "JetSpec/dspark-qwen3-8b-800k",
+      "revision": "ee290e0a572b4cf6eceac26405341283799d0582",
+      "destination_path": {
+        "namespace": "fetch_destination_relative_path",
+        "value": "dspark-800k",
+        "resolves": true,
+        "resolved_by": "python3 tools/fetch_artifacts.py --dry-run"
+      },
+      "files": [
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "config.json",
+            "resolves": true,
+            "resolved_by": "python3 tools/fetch_artifacts.py --dry-run"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "5ce645743b8843bbf400a84e9430f7e8a07dd4066e68bf9a6678b9f79e2226d9",
+            "resolves": true,
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3-8b-800k/revision/ee290e0a572b4cf6eceac26405341283799d0582?blobs=true (anonymous), 2026-11-04; config.json: public bytes match this SHA-256"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "dspark.py",
+            "resolves": true,
+            "resolved_by": "python3 tools/fetch_artifacts.py --dry-run"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "9e85e8939f4c777f508ce6aeca0833050e1c7423ada8313c9ba25cff1b8b1981",
+            "resolves": true,
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3-8b-800k/revision/ee290e0a572b4cf6eceac26405341283799d0582?blobs=true (anonymous), 2026-11-04; dspark.py: public bytes match this SHA-256"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "dspark_heads.py",
+            "resolves": true,
+            "resolved_by": "python3 tools/fetch_artifacts.py --dry-run"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "a8448b3fd9542fe6e1d9ecccd06538676a9d1b7dd42b80046343cfb3180784e0",
+            "resolves": true,
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3-8b-800k/revision/ee290e0a572b4cf6eceac26405341283799d0582?blobs=true (anonymous), 2026-11-04; dspark_heads.py: public bytes match this SHA-256"
+          }
+        },
+        {
+          "destination_path": {
+            "namespace": "artifact_relative_path",
+            "value": "model.safetensors",
+            "resolves": true,
+            "resolved_by": "python3 tools/fetch_artifacts.py --dry-run"
+          },
+          "sha256": {
+            "namespace": "sha256_file_bytes",
+            "value": "0470b2be9459a422de83920c19611820ebfa854bcc9c65481d68611ab7ab990c",
+            "resolves": true,
+            "resolved_by": "Verified file SHA-256",
+            "cross_checked_against_upload": true,
+            "cross_checked_by": "GET https://huggingface.co/api/models/JetSpec/dspark-qwen3-8b-800k/revision/ee290e0a572b4cf6eceac26405341283799d0582?blobs=true (anonymous), 2026-11-04; model.safetensors: public bytes match this SHA-256"
           }
         }
       ]
