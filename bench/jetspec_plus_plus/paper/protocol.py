@@ -11,9 +11,11 @@ from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
 ROOT = Path(__file__).resolve().parents[3] / 'jetspec/engines/jetspec_plus_plus'
 INPUTS = Path(__file__).resolve().parents[1] / 'prompts'
 SEALS = json.loads((INPUTS / 'seals.json').read_text())
-HASHES = {model: {dataset: SEALS[f'{source}/prompts_{dataset}128.json']
-                  for dataset in ('gsm8k', 'math500')}
-          for model, source in (('8b', '8b'), ('27b', '27b-sys'))}
+PROMPT_KEYS = {model: {dataset: f'{source}/prompts_{dataset}128.json'
+                      for dataset in ('gsm8k', 'math500')}
+              for model, source in (('8b', '8b'), ('27b', '27b-sys'))}
+HASHES = {model: {dataset: SEALS[key] for dataset, key in sources.items()}
+          for model, sources in PROMPT_KEYS.items()}
 ARMS = {
     '8b': {'AR': ('ar', 'ar-graphed', 'one_gpu'),
            'DS': ('blockhead', 'blockhead15-800k-graphed', 'one_gpu'),
@@ -44,6 +46,12 @@ def read_record(job, output, cache_root):
                   'hardware.cpu_pin=' + json.dumps('auto' if method == 'jetspecpp' else 'off'),
                   'benchmark.count=32', 'benchmark.cap=2048', 'benchmark.stop_at_eos=true',
                   'benchmark.temperature=0', 'benchmark.seed=0', 'benchmark.repeats=1']
+    overrides += ['benchmark.dataset=' + json.dumps(job['dataset']),
+                  'benchmark.offset=' + json.dumps(job['offset']),
+                  'benchmark.prompt_files=' + json.dumps([dict(
+                      file=PROMPT_KEYS[job['model']][job['dataset']],
+                      sha256=HASHES[job['model']][job['dataset']],
+                      count=128, turn=1, temperature=0)])]
     record = entry.resolve_read(names, overrides, root=ROOT / 'config', launch=launch,
                                 output=str(output), sequential_prompts=True,
                                 cache_root=str(cache_root), wire_records='off', anatomy='off')
@@ -193,6 +201,13 @@ def validate_read(output, log, job, prompts, original, record):
     group = json.loads(prompts.read_text())
     indices = validate_group(group, original, job['offset'], 32)
     assert group['source_sha256'] == HASHES[job['model']][job['dataset']]
+    benchmark = record['config']['benchmark']
+    assert benchmark['dataset'] == job['dataset'], 'RECORD_DATASET'
+    assert benchmark['offset'] == job['offset'], 'RECORD_OFFSET'
+    assert benchmark['count'] == 32, 'RECORD_COUNT'
+    prompt = next(p for p in benchmark['prompt_files']
+                  if p['temperature'] == benchmark['temperature'])
+    assert prompt['sha256'] == HASHES[job['model']][job['dataset']], 'RECORD_PROMPT_SHA'
     raw = json.loads(output.read_text())
     campaign = json.loads(Path(str(output) + '.campaign.json').read_text())
     condition = campaign['resolved_condition']
