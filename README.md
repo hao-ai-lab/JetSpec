@@ -65,6 +65,13 @@ Speedup over autoregressive decoding on your GPU. `--dataset` takes `gsm8k`, `ma
 python bench/jetspec_plus_plus/speedup.py --model qwen3-8b --dataset math500
 ```
 
+The Table 3 comparison on a GB200 pair, against DSpark with public checkpoints. The [guide](bench/jetspec_plus_plus/reproduce_paper_results.md) explains the host file:
+
+```bash
+python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3-8b --host-values /path/to/host-8b.json --output-dir /path/to/table3-8b
+python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --host-values /path/to/host-27b.json --output-dir /path/to/table3-27b
+```
+
 ## Code
 
 - **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/README.md) holds the method in readable form.
