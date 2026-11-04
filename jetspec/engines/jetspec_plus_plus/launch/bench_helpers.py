@@ -1,6 +1,4 @@
 import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import json
 from random import randint
 from typing import List, Optional, Tuple
