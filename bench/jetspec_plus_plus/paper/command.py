@@ -92,7 +92,7 @@ def write_json(path, value):
 
 def sealed_source(model, dataset, tokenizer=None):
     from bench.jetspec_plus_plus.dataloader import pinned_prompts
-    path = pinned_prompts('27b-sys' if model == '27b' else model, dataset)
+    path = pinned_prompts(protocol.SOURCES[model], dataset)
     assert protocol.sha256(path) == protocol.HASHES[model][dataset], 'SEALED_SOURCE_SHA'
     source = json.loads(path.read_text())
     assert [r['index'] for r in source['prompts']] == list(range(128)), 'SEALED_SOURCE_INDICES'

@@ -12,9 +12,10 @@ from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
 ROOT = Path(__file__).resolve().parents[3] / 'jetspec/engines/jetspec_plus_plus'
 INPUTS = Path(__file__).resolve().parents[1] / 'prompts'
 SEALS = json.loads((INPUTS / 'seals.json').read_text())
+SOURCES = {'8b': '8b', '27b': '27b-sys'}
 PROMPT_KEYS = {model: {dataset: f'{source}/prompts_{dataset}128.json'
                       for dataset in ('gsm8k', 'math500')}
-              for model, source in (('8b', '8b'), ('27b', '27b-sys'))}
+              for model, source in SOURCES.items()}
 HASHES = {model: {dataset: SEALS[key] for dataset, key in sources.items()}
           for model, sources in PROMPT_KEYS.items()}
 ARMS = {
@@ -50,8 +51,7 @@ def read_record(job, output, cache_root):
     overrides += ['benchmark.dataset=' + json.dumps(job['dataset']),
                   'benchmark.offset=' + json.dumps(job['offset']),
                   'benchmark.prompt_files=' + json.dumps([dict(
-                      file=PINNED_PROMPTS[('27b-sys' if job['model'] == '27b' else job['model'],
-                                           job['dataset'])],
+                      file=PINNED_PROMPTS[SOURCES[job['model']], job['dataset']],
                       sha256=HASHES[job['model']][job['dataset']],
                       count=128, turn=1, temperature=0)])]
     record = entry.resolve_read(names, overrides, root=ROOT / 'config', launch=launch,
