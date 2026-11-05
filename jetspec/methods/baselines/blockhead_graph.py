@@ -87,7 +87,7 @@ class StaticBlockheadGraph:
         self.qkv_fused = not _force_stock and kernel_enabled('blockhead_qkv_fused', '1')
         self.lmhead_kn = not _force_stock and kernel_enabled('blockhead_lmhead_kn', '1')
         if self.glue_lean:
-            import jetspec.engines.jetspec_plus_plus.kernels.c1_fused as c1_fused
+            import jetspec.engines.jetspec_plus_plus.kernels.fused_decoder as c1_fused
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache_slots
             self._fused = c1_fused

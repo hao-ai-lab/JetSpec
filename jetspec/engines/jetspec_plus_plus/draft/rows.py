@@ -275,9 +275,9 @@ def top1_probabilities_fast(logits):
 
 def fused_kernels():
     """The certified C1 kernels, under the one module name the adapter loads."""
-    name = 'jetspec_c1_fused'
+    name = 'jetspec_fused_decoder'
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, (Path(__file__).parent.parent / 'kernels/c1_fused.py'))
+        spec = importlib.util.spec_from_file_location(name, (Path(__file__).parent.parent / 'kernels/fused_decoder.py'))
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         sys.modules[name] = module

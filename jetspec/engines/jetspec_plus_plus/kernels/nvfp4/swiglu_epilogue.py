@@ -10,7 +10,7 @@ import torch
 from .activation import ActivationWorkspace
 from .format import NVFP4Tensor, swizzle_scales
 from .gemm import _validate_weight
-from .k1_swapab import K1Plan
+from .swapab_gemm import K1Plan
 
 
 def interleave_gate_up(weight):

@@ -2,7 +2,7 @@
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import attention_output
+from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import attention_output
 
 
 _eval_workspaces = {}

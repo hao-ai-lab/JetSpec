@@ -148,7 +148,7 @@ if triton is not None:
 
 def prefix_norms(inputs, weights, eps):
     """Batch independent prefix norms while retaining each tensor's MX8 owner."""
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _module_reduce_threads
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _module_reduce_threads
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import allocate_activation, _arguments
     outputs = tuple(torch.empty_like(x) for x in inputs)
     args = [_arguments(allocate_activation(x)) for x in outputs]
@@ -164,7 +164,7 @@ def prefix_norms(inputs, weights, eps):
 def offset_norm(x, window, weight, kv_weights, eps, kv_eps, *, pending=None,
                 kv_from_state=False):
     """Distribute each exact offset norm and its MX8 stores over two or three CTAs."""
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _module_reduce_threads
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _module_reduce_threads
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import allocate_activation, _arguments
     rows, width = x.shape
     output = torch.empty_like(x)

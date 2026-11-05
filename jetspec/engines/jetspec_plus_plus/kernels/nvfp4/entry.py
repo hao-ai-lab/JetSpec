@@ -32,7 +32,7 @@ def materialize_tail(output):
     if tail is None:
         return output
     if tail.counts is None:
-        from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import finish_streams
+        from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import finish_streams
         finish_streams(tail.streams, tail.residual, tail.update,
                        out=output.view(tail.residual.shape[0], -1))
     else:

@@ -1010,7 +1010,7 @@ class DraftRunner(ModelRunner):
         if setting(run_config, 'engine.engine_settings.c1_loop', '0') == '1':
             # The synthetic state can miss the live D1 window-mask path. Its first
             # call builds this CUDA extension (~42 s), so build it before decode.
-            from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _loop_extension
+            from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _loop_extension
             _loop_extension()
         if self._chain_mode:
             # Capture every segment before the measured request. The synthetic

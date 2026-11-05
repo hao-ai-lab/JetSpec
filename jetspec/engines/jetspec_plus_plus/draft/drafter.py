@@ -1017,9 +1017,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     @staticmethod
     def _c1_fused_module():
-        name = "jetspec_c1_fused"
+        name = "jetspec_fused_decoder"
         if name not in sys.modules:
-            path = (Path(__file__).parent.parent / 'kernels/c1_fused.py')
+            path = (Path(__file__).parent.parent / 'kernels/fused_decoder.py')
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
@@ -2100,7 +2100,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def _d1_lean_loop(self, fused, norm, add_norm, silu_mul, rows, cos, sin, cos0, sin0, bias,
                       length, keys_total):
         """JETSPEC_C1_LOOP=1: the loop below (its folded, eager branch) in C++
-        (``c1_fused._loop_extension``): the same ops and kernels on the same operands.
+        (``fused_decoder._loop_extension``): the same ops and kernels on the same operands.
         None until both Triton rotary specializations are compiled (the Python loop
         compiles them), or when an operand is misaligned for them."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
@@ -2242,7 +2242,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         outputs = []
         window, current = ((u, 0))
         # The residual adds ride in the next norm's launch and silu(gate) * up is one
-        # launch (c1_fused's lean ops: torch's add and silu/mul arithmetic, the
+        # launch (fused_decoder's lean ops: torch's add and silu/mul arithmetic, the
         # certified norm); an add whose sum no norm reads stays a torch add.
         fold = kernel_enabled('c1_norm', 'wide')
         gate_up_pack = kernel_enabled('c1_gateup_packed', '1')

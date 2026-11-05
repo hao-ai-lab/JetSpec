@@ -4,7 +4,7 @@ import torch
 try:
     import triton
     import triton.language as tl
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _module_rms_scale
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _module_rms_scale
     from jetspec.engines.jetspec_plus_plus.kernels.passes.draft_matrix_vector import _packed_rms_scale
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import store_mx8
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4._w4a8_quant import _launch_dependents
@@ -38,7 +38,7 @@ if triton is not None:
 
 def plain_norms(inputs, weights, eps, *, mx8=False):
     """Co-launch independent norms, preserving stacked-mean and BF16 boundaries."""
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _module_reduce_threads
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _module_reduce_threads
     rows, width = inputs[0].shape
     outputs = tuple(torch.empty_like(x) for x in inputs)
     extra = ()

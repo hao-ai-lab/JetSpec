@@ -5777,7 +5777,7 @@
           "1"
         ],
         "reader": "serve",
-        "note": "divergent default: '0' at c1_fused.py/drafter.py, None at heads/decoder.py"
+        "note": "divergent default: '0' at fused_decoder.py/drafter.py, None at heads/decoder.py"
       },
       "JETSPEC_C1_GLUON": {
         "name": "JETSPEC_C1_GLUON",

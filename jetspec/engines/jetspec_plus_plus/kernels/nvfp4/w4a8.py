@@ -97,7 +97,7 @@ class W4A8Config:
 
 
 def smem_bytes(config: W4A8Config, stages: int) -> int:
-    """Mirror `_k1_kernel._smem_bytes` for FP4 x FP8 with UE8M0 scales per 32."""
+    """Mirror `_blockscaled_gemm_kernel._smem_bytes` for FP4 x FP8 with UE8M0 scales per 32."""
     def align(value, alignment):
         return (value + alignment - 1) // alignment * alignment
     cluster_split = config.split if config.resolved_reduction() == "dsmem" else 1

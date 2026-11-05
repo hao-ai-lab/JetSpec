@@ -87,7 +87,7 @@ def add_norm(update, residual, weight, eps, *, fallback):
                    for t in (update, residual, weight))
             or torch.cuda.get_device_capability(update.device) != (10, 0)):
         return fallback(update, residual, weight, eps)
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _fast_add_rms_norm_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _fast_add_rms_norm_kernel
 
     normalized, state = torch.empty_like(update), torch.empty_like(residual)
     _fast_add_rms_norm_kernel[(update.shape[0],)](
@@ -101,7 +101,7 @@ def add_norm_operation(fallback):
 
 
 def _cuda(q, k, v, scale, *, mask=None, length=None):
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import attention_output
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import attention_output
     from jetspec.engines.jetspec_plus_plus.kernels.draft_splitkv import enabled, attend
 
     if enabled(q):

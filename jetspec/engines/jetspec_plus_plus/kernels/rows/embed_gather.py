@@ -43,7 +43,7 @@ def embedding_norm(ids, embedding, gamma, eps, active=None, err=None, mask_token
     """Return embedding and its certified BF16 norm; optionally OR the guard bit."""
     width = embedding.shape[1]
     if not ids.is_cuda or embedding.dtype != torch.bfloat16 or triton is None:
-        from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import fast_rms_norm
+        from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import fast_rms_norm
         hidden = embedding[ids].reshape(-1, width)
         if err is not None:
             err.bitwise_or_((ids.eq(mask_token) & active[:, None]).any().long().reshape(1) << 7)
