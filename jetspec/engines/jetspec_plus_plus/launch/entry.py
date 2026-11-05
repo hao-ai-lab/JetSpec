@@ -164,10 +164,10 @@ def serving_recipe(config, *, root=ROOT):
     return recipe
 
 
-def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read.json',
+def build_plan(config, *, launch=None, root=ROOT, prompts_root=None, output='read.json',
                sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
     """Return the environment and legacy argv without probing host artifacts or GPUs."""
-    config_root = Path(config_root or Path(root) / 'config')
+    prompts_root = Path(prompts_root or Path(root).parents[2] / 'bench/jetspec_plus_plus/prompts')
     recipe = serving_recipe(config, root=root) if launch is None else deepcopy(launch)
     # Model declarations own new compositions; sealed recipe launches keep their source.
     if (launch is None and recipe['method'] == 'jetspecpp'
@@ -186,7 +186,7 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
             '--recipe', recipe['name'], '--placement', hardware['placement'],
             '--devices', ','.join(map(str, hardware['devices'])),
             '--dataset', benchmark['dataset'], '--prompts-json',
-            str(config_root / 'prompts' / prompt['file']),
+            str(prompts_root / prompt['file']),
             '--count', str(benchmark['count']), '--tokens', str(benchmark['cap']),
             '--temperature', str(benchmark['temperature']), '--seed', str(benchmark['seed']),
             '--repeats', str(benchmark['repeats']), '--output-json', str(output),
@@ -212,10 +212,10 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
                 launch_overlay=run_config.batch_overlay())
 
 
-def resolve_read(names, overrides=(), *, root=ROOT / 'config', launch=None, output='read.json',
+def resolve_read(names, overrides=(), *, root=ROOT / 'config', prompts_root=None, launch=None, output='read.json',
                  sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
     config = resolve(names, overrides, root=root)
-    plan = build_plan(config, launch=launch, root=Path(root).parent, config_root=root, output=output,
+    plan = build_plan(config, launch=launch, root=Path(root).parent, prompts_root=prompts_root, output=output,
                       sequential_prompts=sequential_prompts, cache_root=cache_root,
                       wire_records=wire_records, anatomy=anatomy)
     return dict(schema='jetspec.config_read/1', config=config, canonical_json=canonical_json(config),

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import sys
 
-from bench.jetspec_plus_plus.dataloader import PINNED_PROMPTS
+from bench.jetspec_plus_plus.dataloader import PINNED_PROMPTS, PROMPTS
 from jetspec.engines.jetspec_plus_plus.launch import entry, runner
 from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
 
@@ -57,7 +57,7 @@ def read_record(job, output, cache_root):
                       file=PINNED_PROMPTS[SOURCES[job['model']], job['dataset']],
                       sha256=HASHES[job['model']][job['dataset']],
                       count=128, turn=1, temperature=0)])]
-    record = entry.resolve_read(names, overrides, root=ROOT / 'config', launch=launch,
+    record = entry.resolve_read(names, overrides, root=ROOT / 'config', prompts_root=PROMPTS, launch=launch,
                                 output=str(output), sequential_prompts=True,
                                 cache_root=str(cache_root), wire_records='off', anatomy='off')
     if method != 'jetspecpp':
@@ -216,7 +216,7 @@ def validate_read(output, log, job, prompts, original, record):
     prompt = next(p for p in benchmark['prompt_files']
                   if p['temperature'] == benchmark['temperature'])
     assert prompt['sha256'] == HASHES[job['model']][job['dataset']], 'RECORD_PROMPT_SHA'
-    prompt_file = ROOT / 'config/prompts' / prompt['file']
+    prompt_file = PROMPTS / prompt['file']
     assert prompt_file.is_file(), 'RECORD_PROMPT_FILE'
     assert sha256(prompt_file) == HASHES[job['model']][job['dataset']], 'RECORD_PROMPT_FILE_SHA'
     raw = json.loads(output.read_text())
