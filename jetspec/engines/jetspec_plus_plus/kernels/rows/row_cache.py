@@ -62,7 +62,7 @@ if triton is not None:
                                      out_token_stride: tl.constexpr,
                                      out_head_stride: tl.constexpr,
                                      BLOCK: tl.constexpr):
-        # The certified kv rotary (c1_fused._kv_rotary_repeat_kernel) arithmetic,
+        # The certified kv rotary (fused_decoder._kv_rotary_repeat_kernel) arithmetic,
         # writing each rotated key and copied value straight into a strided
         # cache slice instead of a fresh [heads, tokens, head_dim] buffer.
         program = tl.program_id(0)
@@ -179,4 +179,3 @@ if triton is not None:
         tl.store(key_out_ptr + output_base + offsets, (first + second).to(tl.bfloat16), mask=mask)
         value = tl.load(projected_value_ptr + key_base + offsets, mask=mask, other=0.0)
         tl.store(value_out_ptr + output_base + offsets, value, mask=mask)
-

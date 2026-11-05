@@ -9,7 +9,7 @@ import collections
 import copy
 import hashlib
 import json
-from jetspec.engines.jetspec_plus_plus.draft.method.legacy import _environment_name as environment_name
+from jetspec.engines.jetspec_plus_plus.draft.method.record_bindings import _environment_name as environment_name
 import math
 import shutil
 import sys

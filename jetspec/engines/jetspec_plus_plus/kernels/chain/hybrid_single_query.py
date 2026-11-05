@@ -176,6 +176,6 @@ def gate_mul(attended, gate, heads, dim):
 def mlp(x, module):
     if not _cuda(x):
         return module(x)
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _silu_mul_extension
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _silu_mul_extension
     return module.down_proj(_silu_mul_extension().silu_mul(
         module.gate_proj(x), module.up_proj(x)))

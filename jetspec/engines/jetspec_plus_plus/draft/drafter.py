@@ -1017,9 +1017,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     @staticmethod
     def _c1_fused_module():
-        name = "jetspec_c1_fused"
+        name = "jetspec_fused_decoder"
         if name not in sys.modules:
-            path = (Path(__file__).parent.parent / 'kernels/c1_fused.py')
+            path = (Path(__file__).parent.parent / 'kernels/fused_decoder.py')
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
@@ -2100,7 +2100,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def _d1_lean_loop(self, fused, norm, add_norm, silu_mul, rows, cos, sin, cos0, sin0, bias,
                       length, keys_total):
         """JETSPEC_C1_LOOP=1: the loop below (its folded, eager branch) in C++
-        (``c1_fused._loop_extension``): the same ops and kernels on the same operands.
+        (``fused_decoder._loop_extension``): the same ops and kernels on the same operands.
         None until both Triton rotary specializations are compiled (the Python loop
         compiles them), or when an operand is misaligned for them."""
         from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
@@ -2242,7 +2242,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         outputs = []
         window, current = ((u, 0))
         # The residual adds ride in the next norm's launch and silu(gate) * up is one
-        # launch (c1_fused's lean ops: torch's add and silu/mul arithmetic, the
+        # launch (fused_decoder's lean ops: torch's add and silu/mul arithmetic, the
         # certified norm); an add whose sum no norm reads stays a torch add.
         fold = kernel_enabled('c1_norm', 'wide')
         gate_up_pack = kernel_enabled('c1_gateup_packed', '1')
@@ -2863,7 +2863,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             raise ValueError("C1 append fold requires the fused live C1 chain")
         self._c1_fused2_prepare()
         if rope_table:
-            from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import rotary_tables
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import rotary_tables
             return dirty, *rotary_tables(self, dirty), slots, positions.reshape(-1)
         cos, sin = self._c1_rope(dirty, positions)
         return dirty, cos, sin, slots
@@ -3162,7 +3162,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         start, count, length = rp[Offset.C1_START], rp[Offset.C1_COUNT], rp[Offset.L]
         prep_lean = kernel_enabled('c1_prep_lean', '1')
         if prep_lean:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import c1_front_prep
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import c1_front_prep
             slots = torch.empty(lanes, device=rp.device, dtype=torch.long)
             c1_front_prep(rp, tokens.committed_ids, tokens.pending_draft_ids,
                           front.c1_query_ids, front.prefix_positions, slots,
@@ -3187,7 +3187,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         if use_len_attention:
             mask = front.c1_query_embeddings.new_empty(1, 1, lanes, front.c1_bucket)
         elif prep_lean:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import c1_mask
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import c1_mask
             mask = torch.empty((1, 1, lanes, front.c1_bucket),
                                device=rp.device, dtype=front.c1_query_embeddings.dtype)
             c1_mask(length, mask)
@@ -3205,7 +3205,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     def _c1_chain_body_t13(self, rp, tokens, front, use_len_attention, t1):
         """T13's single front launch, in-kernel rotary lookup and direct finish."""
-        from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import front_prep, rotary_tables
+        from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import front_prep, rotary_tables
         lanes = front.lanes
         length = rp[Offset.L]
         front_norm = (getattr(front.c1_query_ids.untyped_storage(), '_w4a8_front_norm', None)
@@ -3697,7 +3697,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                                   tokens, fixed_start, key_width=None):
         """Reuse bitwise row packing with the hybrid consumer's existing dense mask."""
         from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import prepare, scatter
-        from jetspec.engines.jetspec_plus_plus.draft.glue import g27b_refresh_mask
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27b_refresh_mask
         window = getattr(self, '_c1_window', 15)
         length_dev = torch.as_tensor(length, device=embeddings.device, dtype=torch.long)
         start = (length_dev + window if fixed_start is None else
@@ -4121,7 +4121,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.entry import defer_finish
                     return defer_finish(outputs, pending[1], pending[0],
                                         counts=finish_layout[0], window=finish_layout[1])
-                from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import finish_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import finish_refresh
                 return finish_refresh(outputs, pending[1], pending[0], *finish_layout)
             return fused.finish_streams(outputs, pending[1], pending[0], real)
         u = pending[1] + pending[0]

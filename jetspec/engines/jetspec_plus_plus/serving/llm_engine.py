@@ -3,7 +3,7 @@ import time
 
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sampling_params import SamplingParams
-from jetspec.engines.jetspec_plus_plus.serving.misc import infer_model_family
+from jetspec.engines.jetspec_plus_plus.serving.token_text import infer_model_family
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
 from jetspec.engines.jetspec_plus_plus.models.target import JETSPEC_TARGET_LAYER_IDS
@@ -15,8 +15,8 @@ from jetspec.engines.jetspec_plus_plus.verify.step import AutoRegressiveStep
 from jetspec.engines.jetspec_plus_plus.verify.step import SpecDecodeStep
 from jetspec.engines.jetspec_plus_plus.verify.forward import Verifier, TargetRunner
 from jetspec.engines.jetspec_plus_plus.trace import host_census
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import blockhead_config_overrides
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import complete_metric_rounds
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import blockhead_config_overrides
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import complete_metric_rounds
 from jetspec.engines.jetspec_plus_plus.wire.protocol import summarize_candidate_kinds
 
 import atexit

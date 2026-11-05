@@ -3,7 +3,7 @@
 # Fork: FlashInfer v0.7.2 (19faf79b70cdbe2127530784016a73c9e015e0f1),
 # flashinfer/gemm/kernels/cute_dsl/low_latency_blockscaled_gemm.py.
 # K1 widens the token tile, adds streamed-weight L2 policy and workspace split-K.
-# W4A8 fork of K1 (_k1_kernel.py): warp 7 prefetches each CTA's weight and
+# W4A8 fork of K1 (_blockscaled_gemm_kernel.py): warp 7 prefetches each CTA's weight and
 # scale slab into L2 at launch (cp.async.bulk.prefetch.L2), ahead of the TMA ring.
 # With fused_quant, warps 1 and 3-7 quantize each BF16 activation tile to MXFP8
 # straight into the B and SFB shared-memory stages (no separate quantizer launch).

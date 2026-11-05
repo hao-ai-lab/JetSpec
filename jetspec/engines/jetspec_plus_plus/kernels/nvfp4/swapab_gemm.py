@@ -92,7 +92,7 @@ class K1Plan:
         import cutlass
         import cutlass.cute as cute
         from cutlass.cute.runtime import make_fake_stream, make_ptr
-        from ._k1_kernel import K1Kernel, reduce_workspace
+        from ._blockscaled_gemm_kernel import K1Kernel, reduce_workspace
 
         self._cuda = cuda
         cfg = self.config

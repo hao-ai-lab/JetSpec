@@ -45,7 +45,7 @@ if triton is not None:
 def finish_refresh(streams, residual, update, counts, window):
     """Finish five streams directly into the refresh consumer's padded layout."""
     if not residual.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import finish_streams
+        from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import finish_streams
         from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import scatter
         return scatter(finish_streams(streams, residual, update), counts, window)
     rows, width = counts.numel(), residual.shape[-1]

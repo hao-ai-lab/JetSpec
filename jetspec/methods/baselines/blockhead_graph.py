@@ -13,7 +13,7 @@ from time import perf_counter
 import torch
 from torch.nn import functional as F
 
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import BlockheadProposal
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import BlockheadProposal
 from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import CACHE_BUCKETS
 from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
 
@@ -87,7 +87,7 @@ class StaticBlockheadGraph:
         self.qkv_fused = not _force_stock and kernel_enabled('blockhead_qkv_fused', '1')
         self.lmhead_kn = not _force_stock and kernel_enabled('blockhead_lmhead_kn', '1')
         if self.glue_lean:
-            import jetspec.engines.jetspec_plus_plus.kernels.c1_fused as c1_fused
+            import jetspec.engines.jetspec_plus_plus.kernels.fused_decoder as c1_fused
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache_slots
             self._fused = c1_fused

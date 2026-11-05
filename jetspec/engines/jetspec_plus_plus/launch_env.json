@@ -1540,7 +1540,7 @@
           "fp32"
         ],
         "reader": "serve",
-        "note": "divergent default: None at draft_runner.py (only fp32 acts; unset serves the checkpoint dtype), 'bf16' at blockhead_serve.py (the block head is loaded in the named dtype)"
+        "note": "divergent default: None at draft_runner.py (only fp32 acts; unset serves the checkpoint dtype), 'bf16' at linear_head.py (the block head is loaded in the named dtype)"
       },
       "JETSPEC_BLOCKHEAD": {
         "name": "JETSPEC_BLOCKHEAD",
@@ -5777,7 +5777,7 @@
           "1"
         ],
         "reader": "serve",
-        "note": "divergent default: '0' at c1_fused.py/drafter.py, None at heads/decoder.py"
+        "note": "divergent default: '0' at fused_decoder.py/drafter.py, None at heads/decoder.py"
       },
       "JETSPEC_C1_GLUON": {
         "name": "JETSPEC_C1_GLUON",
@@ -9812,7 +9812,7 @@
         "flag": "JETSPEC_BLOCKHEAD",
         "values": null,
         "when": null,
-        "why": "read only while the block-head checkpoint contract is resolved (blockhead_serve.py)",
+        "why": "read only while the block-head checkpoint contract is resolved (linear_head.py)",
         "always": true
       },
       {
@@ -9916,7 +9916,7 @@
         "values": [
           "1"
         ],
-        "why": "blockhead_serve.blockhead_graph_requested raises: the graphed block head refuses the eager regime"
+        "why": "linear_head.blockhead_graph_requested raises: the graphed block head refuses the eager regime"
       }
     ],
     "rows_waiver": [

@@ -16,7 +16,7 @@ if triton is not None:
     @triton.jit
     def _q_rotary_scatter_kernel(normalized_ptr, cos_ptr, sin_ptr, output_ptr, index_ptr,
                                  heads: tl.constexpr, head_dim: tl.constexpr, BLOCK: tl.constexpr):
-        # c1_fused._q_rotary_kernel at one token per row (the same loads and arithmetic), each
+        # fused_decoder._q_rotary_kernel at one token per row (the same loads and arithmetic), each
         # row's heads stored at bucket token index_ptr[row] of the attention's query layout
         program = tl.program_id(0)
         head = program % heads
@@ -42,7 +42,7 @@ if triton is not None:
     def _kv_rotary_slots_kernel(normalized_key_ptr, projected_value_ptr, cos_ptr, sin_ptr, cache_ptr,
                                 slots_ptr, slot_stride, kv_stride, head_stride,
                                 kv_heads: tl.constexpr, head_dim: tl.constexpr, BLOCK: tl.constexpr):
-        # c1_fused._kv_rotary_repeat_kernel at one token per row and one group (the same loads and
+        # fused_decoder._kv_rotary_repeat_kernel at one token per row and one group (the same loads and
         # arithmetic), each row's key and value stored at its K/V slot slots_ptr[row] of the cache
         program = tl.program_id(0)
         head = program % kv_heads
@@ -95,4 +95,3 @@ if triton is not None:
         pair = tl.arange(0, 2)
         tl.store(keys_out + row * 2 + pair, tl.load(keys_ptr + source * 2 + pair))
         tl.store(active_out + row, tl.load(active_ptr + source))
-

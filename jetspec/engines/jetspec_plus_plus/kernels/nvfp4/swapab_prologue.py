@@ -5,7 +5,7 @@ import torch
 
 from .activation import ActivationWorkspace
 from .gemm import _validate_weight
-from .k1_swapab import K1Plan
+from .swapab_gemm import K1Plan
 from .swiglu_epilogue import interleave_gate_up
 
 

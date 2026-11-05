@@ -3,7 +3,7 @@ from .format import (NVFP4Tensor, dequantize, fake_quantize, pack_e2m1,
                      quantize_weight, swizzle_scales, unpack_e2m1, unswizzle_scales)
 from .activation import ActivationWorkspace, quantize_activation
 from .gemm import BackendStatus, W4A4Plan, W4A16Plan, FlashInfer072Plan, backend_status
-from .k1_swapab import K1Plan
+from .swapab_gemm import K1Plan
 from .swiglu_epilogue import K2Plan
 from .swapab_prologue import K1PPlan
 from .w4a16 import W4A16Config, W4A16Pack, pack_w4a16, w4a16_linear, w4a16_warmup

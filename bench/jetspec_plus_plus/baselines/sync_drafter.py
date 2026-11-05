@@ -198,7 +198,7 @@ class SyncChainDrafter:
 
     @torch.inference_mode()
     def propose(self, context_ids, k, *, target_hidden):
-        from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import BlockheadProposal
+        from jetspec.engines.jetspec_plus_plus.runtime.linear_head import BlockheadProposal
         if int(k) != self.block_size - 1:
             raise ValueError(f"sync drafter proposes {self.block_size - 1} drafts, asked for {k}")
         if int(target_hidden.shape[1]) != int(context_ids.shape[1]) - 1:
@@ -500,7 +500,7 @@ class StaticSyncDrafter(SyncChainDrafter):
 
     @torch.inference_mode()
     def propose(self, context_ids, k, *, target_hidden):
-        from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import BlockheadProposal
+        from jetspec.engines.jetspec_plus_plus.runtime.linear_head import BlockheadProposal
         if int(k) != self.block_size - 1:
             raise ValueError(f"sync drafter proposes {self.block_size - 1} drafts, asked for {k}")
         length = int(target_hidden.shape[1])

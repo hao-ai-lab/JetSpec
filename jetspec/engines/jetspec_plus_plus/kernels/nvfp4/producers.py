@@ -238,7 +238,7 @@ def norm(x, weight, eps, *, residual=None, append=None, ids=None):
     rows = ids.numel() if ids is not None else x.numel() // width
     appended = 0 if append is None else append.numel() // width
     if not x.is_cuda or x.dtype != torch.bfloat16 or rows + appended > MAX_M:
-        from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _reference_rms_norm
+        from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _reference_rms_norm
         state = x if residual is None else x + residual
         source = state if append is None else torch.cat((append, state))
         return _reference_rms_norm(source, weight, eps), state
@@ -279,7 +279,7 @@ def silu_mul(gate, up):
 
 
 def grouped_norm(prefix, weights, stream_indices, eps):
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _grouped_rms_norm_w1_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _grouped_rms_norm_w1_kernel
     blocks, width = weights.shape
     rows = prefix.shape[1]
     output = prefix.new_empty((blocks, rows, width))

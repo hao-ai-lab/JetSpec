@@ -1111,7 +1111,7 @@ def stateful_attention_project(layer, hidden, positions, rope_theta, *, refresh_
     value = attn.v_proj(source).view(width, attn.kv_heads, attn.dim)
     table = getattr(attn, '_g27_rotary_table', None)
     if table is not None and kernel_enabled('draft_fuse_g27', '1'):
-        from jetspec.engines.jetspec_plus_plus.draft.glue import g27_rotary
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_rotary
         extra = {} if refresh_positions is None else {'refresh_positions': refresh_positions}
         q, key = g27_rotary(q, key, positions, table, **extra)
         return q, gate, key, value
@@ -1202,7 +1202,7 @@ def hybrid_attention_tail(attention_layer, hidden, *, prefix_key, prefix_value,
         torch.arange(width, device=hidden.device, dtype=torch.float32) + start, rope_theta)
     from jetspec.engines.jetspec_plus_plus.kernels import draft_splitkv
     if kernel_enabled('draft_fuse_g27', '1') and draft_splitkv.a256_enabled(q, 'decoder'):
-        from jetspec.engines.jetspec_plus_plus.draft.glue import g27_attention_inputs
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_attention_inputs
         all_key, all_value, bias = g27_attention_inputs(
             prefix_key, prefix_value, key, value, start, start, lanes=width)
         attended = draft_splitkv.attend(q.transpose(0, 1)[None],
@@ -1634,7 +1634,7 @@ class AnchorDecoder(MethodAnchorDecoder):
             gdn = self.layers[0].linear_attn
             attn = self.layers[1].self_attn
             if setting(getattr(self, 'run_config', None), 'engine', 'engine_settings.draft_fuse_g27', '0') == '1':
-                from jetspec.engines.jetspec_plus_plus.draft.glue import g27_rotary_table
+                from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_rotary_table
                 # Prefix capacity plus both the causal tail and one private row.
                 from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
                 rows = self.capacity + 2 * (draft_width(run_config=getattr(self, 'run_config', None)) + 1)
@@ -1821,7 +1821,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         from jetspec.engines.jetspec_plus_plus.kernels import draft_splitkv
         fuse_inputs = kernel_enabled('draft_fuse_g27', '1') and draft_splitkv.a256_enabled(q, 'decoder')
         if fuse_inputs:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import g27_attention_inputs
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_attention_inputs
             all_key, all_value, bias = g27_attention_inputs(
                 prefix['key'], prefix['value'], key, value, length, tails, lanes=lanes, slots=slots)
         else:
@@ -2316,8 +2316,8 @@ class AnchorDecoder(MethodAnchorDecoder):
                         length, count, front.decoder_bucket, lanes, prefix_hidden.dtype))
         if kernel_enabled('decoder_prefix_merge', '1'):
             glue_level = int(kernel_value('chain_sega_glue', '0'))
-            from jetspec.engines.jetspec_plus_plus.draft.glue import available
-            from jetspec.engines.jetspec_plus_plus.draft.glue import window_mask_rope
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import available
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import window_mask_rope
             fused_window = (glue_level == 2 and rp.is_cuda and available()
                             and self._rope_table is not None
                             and all(table.is_contiguous() for table in self._rope_table))
@@ -2369,8 +2369,8 @@ class AnchorDecoder(MethodAnchorDecoder):
                 pending = decoder_lean_finish(layer, fused, hidden, attended)
 
         glue_level = int(kernel_value('chain_sega_glue', '0'))
-        from jetspec.engines.jetspec_plus_plus.draft.glue import available
-        from jetspec.engines.jetspec_plus_plus.draft.glue import window_mask_rope
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import available
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import window_mask_rope
         fused_window = (glue_level == 2 and rp.is_cuda and available()
                         and self._rope_table is not None
                         and all(table.is_contiguous() for table in self._rope_table))
