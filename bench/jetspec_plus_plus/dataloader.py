@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-PROMPTS = HERE.parents[1] / 'jetspec/engines/jetspec_plus_plus/config/prompts'
+PROMPTS = HERE / 'prompts'
 # Evaluation exports: first-turn Qwen3-8B renders (no thinking) of each benchmark, temperature 0.
 BENCHMARKS = {'gsm8k': 'gsm8k-t0', 'math500': 'math500-t0', 'aime25': 'aime25-t0',
               'humaneval': 'humaneval-t0', 'livecodebench': 'lcb-t0', 'mbpp': 'mbpp-t0',
@@ -50,7 +50,7 @@ def bundled_prompts(model, dataset, target, directory):
     if dataset not in BENCHMARKS:
         raise SystemExit(f'no bundled prompts for --dataset {dataset} (bundled: {", ".join(BENCHMARKS)}); '
                          'pass --prompts-json')
-    path = HERE / 'prompts' / f'{BENCHMARKS[dataset]}.prompts.json'
+    path = PROMPTS / f'{BENCHMARKS[dataset]}.prompts.json'
     if size == '8b':
         return str(path)
     if not target:

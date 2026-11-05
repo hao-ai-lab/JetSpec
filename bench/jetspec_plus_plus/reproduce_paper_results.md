@@ -34,7 +34,7 @@ The host file tells the command where the local files are:
 }
 ```
 
-Map each registration name below to an absolute directory, and name the directory after its registration. The reader finds a recipe's heads bundle by that name. The command downloads nothing, and the prompts are bundled.
+Map each registration name below to an absolute directory, and name the directory after its registration. The reader finds a recipe's heads bundle by that name. The command downloads nothing, and the prompts are bundled in `bench/jetspec_plus_plus/prompts/`, located by the bench dataloader.
 
 | Arm | Repository | Path | 8B registration | 27B registration |
 | --- | --- | --- | --- | --- |

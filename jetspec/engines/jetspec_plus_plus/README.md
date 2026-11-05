@@ -59,6 +59,11 @@ To answer one prompt:
 python -m jetspec.engines.jetspec_plus_plus generate --model qwen3-8b "PROMPT"
 ```
 
+Benchmark prompt files live in `bench/jetspec_plus_plus/prompts/` and are located by
+the bench dataloader. Serving configuration resolution defaults to that directory
+relative to the source checkout; Table 3 passes the directory explicitly. The
+`--prompts-json` option reads the caller's file.
+
 The full command reads a prompts file. Its rows need `token_ids`, plus `text` for Qwen3.8-27B:
 
 ```sh
