@@ -299,6 +299,11 @@ def main(argv=None):
         return
     from . import runner
     serve_argv = list(record['serve_argv'])
+    # The serving entry passes its own --prompts-json; this launcher runs the plan's pinned file.
+    prompts = Path(serve_argv[serve_argv.index('--prompts-json') + 1])
+    if not prompts.is_file():
+        parser.error(f'pinned prompt file {prompts} does not exist: install with `pip install -e .` '
+                     'from a source checkout, or call resolve_read with prompts_root')
     devices = serve_argv.index('--devices') + 1
     try:
         serve_argv[devices] = granted_devices(serve_argv[devices], os.environ.get('CUDA_VISIBLE_DEVICES'))
