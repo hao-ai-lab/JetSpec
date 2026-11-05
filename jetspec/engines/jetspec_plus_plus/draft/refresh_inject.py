@@ -202,7 +202,7 @@ def commit(bucket, projected, khat, reset, guard=None):
     if not fuse_mask:
         bucket._inject_mask(khat, projected.shape[0], reset)
     if guard is not None and not projected.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.draft.glue import mask_token_guard
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import mask_token_guard
         mask_token_guard(*guard)
 
 

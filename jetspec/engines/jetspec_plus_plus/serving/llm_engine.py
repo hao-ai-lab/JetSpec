@@ -3,7 +3,7 @@ import time
 
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sampling_params import SamplingParams
-from jetspec.engines.jetspec_plus_plus.serving.misc import infer_model_family
+from jetspec.engines.jetspec_plus_plus.serving.token_text import infer_model_family
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
 from jetspec.engines.jetspec_plus_plus.models.target import JETSPEC_TARGET_LAYER_IDS

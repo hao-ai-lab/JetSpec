@@ -1353,8 +1353,8 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
     from jetspec.engines.jetspec_plus_plus.wire.contract import SegmentId
     from jetspec.engines.jetspec_plus_plus.wire.contract import rng_words
-    from jetspec.engines.jetspec_plus_plus.draft.glue import j0_prep
-    from jetspec.engines.jetspec_plus_plus.draft.glue import mask_token_guard
+    from jetspec.engines.jetspec_plus_plus.draft.decoder_window import j0_prep
+    from jetspec.engines.jetspec_plus_plus.draft.decoder_window import mask_token_guard
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import allocate_partials
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import chain_pass
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import reference_chain_pass

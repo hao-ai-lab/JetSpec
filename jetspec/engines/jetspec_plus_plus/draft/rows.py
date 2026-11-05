@@ -995,7 +995,7 @@ class RowDraftHead(nn.Module):
             else:
                 qp, projected_kv = attn.q_proj(normalized), None
             if qkv_glue and projected_kv is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.qkv_glue import qkv_norm_rotary_cache
+                from jetspec.engines.jetspec_plus_plus.kernels.row_qkv_cache import qkv_norm_rotary_cache
                 q = qkv_norm_rotary_cache(
                     qp, *projected_kv, attn.q_norm.weight, attn.k_norm.weight,
                     cos, sin, cache, layout.noise_slots, self.noise_span,
@@ -1444,7 +1444,7 @@ class BucketRowDraftHead(RowDraftHead):
                             for name in ('draft_fuse_cgm27', 'draft_fuse_dctx',
                                          'hybrid_context_dirty_rows')))
         if gathered:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import context_gather_mark
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import context_gather_mark
             context_gather_mark(
                 self._chain_ctx_length, length, prefix_padded, tails,
                 self.head.adapted_position_embedding.weight, context,
@@ -1452,7 +1452,7 @@ class BucketRowDraftHead(RowDraftHead):
                 *self._chain_ctx_gather, self._chain_ctx_dirty_source,
                 self._chain_ctx_dirty_slots, self._chain_ctx_previous)
         elif kernel_enabled('chain_sega_glue', '2') and mark:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import context_copy_mark
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import context_copy_mark
             context_copy_mark(length, prefix_padded, tails,
                               self.head.adapted_position_embedding.weight, context)
         else:

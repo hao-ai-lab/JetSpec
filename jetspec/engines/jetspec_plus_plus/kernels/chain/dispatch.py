@@ -1,4 +1,4 @@
-"""Device kernels for draft/glue.py."""
+"""Device kernels for draft/decoder_window.py."""
 from __future__ import annotations
 
 from jetspec.engines.jetspec_plus_plus.wire.contract import Offset

@@ -11,7 +11,7 @@ from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculatorBase
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifierBase
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifyResult
-from jetspec.engines.jetspec_plus_plus.serving.misc import decode_tokens
+from jetspec.engines.jetspec_plus_plus.serving.token_text import decode_tokens
 
 
 class InferenceStep(ABC):

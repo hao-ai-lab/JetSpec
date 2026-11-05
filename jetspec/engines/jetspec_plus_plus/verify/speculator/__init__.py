@@ -21,7 +21,7 @@ from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import announce_chain
 from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import await_chain_receive
 from jetspec.engines.jetspec_plus_plus.wire.outcome_packet import make_hash16_weights
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
-from jetspec.engines.jetspec_plus_plus.serving.misc import decode_tokens
+from jetspec.engines.jetspec_plus_plus.serving.token_text import decode_tokens
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import concat_int64
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import pack_jetspec_taps
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import send_int64
