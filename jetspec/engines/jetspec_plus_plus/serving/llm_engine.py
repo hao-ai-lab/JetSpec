@@ -15,8 +15,8 @@ from jetspec.engines.jetspec_plus_plus.verify.step import AutoRegressiveStep
 from jetspec.engines.jetspec_plus_plus.verify.step import SpecDecodeStep
 from jetspec.engines.jetspec_plus_plus.verify.forward import Verifier, TargetRunner
 from jetspec.engines.jetspec_plus_plus.trace import host_census
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import blockhead_config_overrides
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import complete_metric_rounds
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import blockhead_config_overrides
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import complete_metric_rounds
 from jetspec.engines.jetspec_plus_plus.wire.protocol import summarize_candidate_kinds
 
 import atexit

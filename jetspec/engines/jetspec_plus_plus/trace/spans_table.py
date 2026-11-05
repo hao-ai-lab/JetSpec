@@ -74,7 +74,7 @@ SPANS = [
     ('jetspec.engines.jetspec_plus_plus.verify.forward:Verifier.verify', 'verify_accept_commit', 'verify', 'both'),
     ('jetspec.engines.jetspec_plus_plus.serving.model_runner:ModelRunner.run', 'verify_forward', 'verify', 'replay'),
     ('jetspec.engines.jetspec_plus_plus.verify.forward:TargetRunner.run_jetspec_mixed', 'verify_forward', 'verify', 'replay'),
-    ('jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve:TimedLinearBlockhead.propose', 'block_head', 'draft', 'replay'),
+    ('jetspec.engines.jetspec_plus_plus.runtime.linear_head:TimedLinearBlockhead.propose', 'block_head', 'draft', 'replay'),
     ('jetspec.methods.baselines.blockhead_graph:StaticBlockheadGraph.propose', 'block_head', 'draft', 'replay'),
     ('bench.jetspec_plus_plus.baselines.sync_drafter:SyncChainDrafter.propose', 'block_head', 'draft', 'replay'),
     ('bench.jetspec_plus_plus.baselines.sync_drafter:StaticSyncDrafter.propose', 'block_head', 'draft', 'replay'),

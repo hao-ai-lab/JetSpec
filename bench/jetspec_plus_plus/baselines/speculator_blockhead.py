@@ -9,12 +9,12 @@ from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculateResult
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifyResult
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculatorBase
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import blockhead_batch_requested
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import blockhead_graph_requested
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import configure_blockhead_tf32
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import load_blockhead
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import pack_target_taps
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import record_blockhead_runtime
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import blockhead_batch_requested
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import blockhead_graph_requested
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import configure_blockhead_tf32
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import load_blockhead
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import pack_target_taps
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import record_blockhead_runtime
 
 
 class SpeculatorBlockhead(SpeculatorBase):
@@ -57,7 +57,7 @@ class SpeculatorBlockhead(SpeculatorBase):
             if graph_requested:
                 from jetspec.methods.baselines.blockhead_graph import StaticBlockheadGraph
                 from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import capacity_for
-                from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import _run_manifest
+                from jetspec.engines.jetspec_plus_plus.runtime.linear_head import _run_manifest
 
                 capacity = capacity_for(max_context or 768)
                 drafter = StaticBlockheadGraph(loaded.drafter.drafter, capacity=capacity,

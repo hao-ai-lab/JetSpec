@@ -13,7 +13,7 @@ from time import perf_counter
 import torch
 from torch.nn import functional as F
 
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import BlockheadProposal
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import BlockheadProposal
 from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import CACHE_BUCKETS
 from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
 

@@ -159,7 +159,7 @@
       "hf_repo": "JetSpec/dspark-qwen3-8b-800k",
       "revision": "ee290e0a572b4cf6eceac26405341283799d0582",
       "note": "target release weights (embed_tokens, lm_head) live inside model.safetensors; no separate target_release_weights.safetensors",
-      "causal_head": "config.json declares dflash_config.causal_head false, which is correct for the block head: it loads through the blockhead kit (serving/jetspec/blockhead_serve.py), which reads this key itself, not through JetSpecDrafter.load, so serve's causal_head refusal does not apply"
+      "causal_head": "config.json declares dflash_config.causal_head false, which is correct for the block head: it loads through the blockhead kit (jetspec/engines/jetspec_plus_plus/runtime/linear_head.py), which reads this key itself, not through JetSpecDrafter.load, so serve's causal_head refusal does not apply"
     }
   }
 }

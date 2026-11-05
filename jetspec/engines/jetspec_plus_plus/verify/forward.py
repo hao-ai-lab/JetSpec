@@ -1282,7 +1282,7 @@ class Verifier(VerifierBase):
             if self.oracle_anchor:
                 record['verify_complete_ns'] = int(perf_counter() * 1e9)
         if reference:
-            from jetspec.engines.jetspec_plus_plus.verify.baseline import build_reference_outcome
+            from jetspec.engines.jetspec_plus_plus.verify.host_accept import build_reference_outcome
             if timing is not None:
                 timing.stamp('envelope_start')
             outcome = build_reference_outcome(
