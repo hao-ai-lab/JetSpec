@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 from dataclasses import dataclass
 import os
 import time
@@ -15,7 +15,7 @@ from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomePacket
 from jetspec.engines.jetspec_plus_plus.wire.contract import TokenBuffers
 from jetspec.engines.jetspec_plus_plus.wire.contract import outcome_message_views
 from jetspec.engines.jetspec_plus_plus.wire.contract import rng_words
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_COMMAND_PREFIX
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_COMMAND_PREFIX
 
 # After a request's last EOS the target writes the read's outputs, audits its compile caches
 # and only then sends "exit"; on a shared filesystem that can take longer than 30 s.
@@ -40,7 +40,7 @@ class ChainCommandInbox:
 
     def next(self) -> tuple[int, str]:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         command_id = self.next_id
         if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
             print(f"MAILBOX_ID side=draft event=command_await id={command_id} source={self.pair_source}", flush=True)
@@ -144,7 +144,7 @@ from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomePacket
 from jetspec.engines.jetspec_plus_plus.wire.contract import TokenBuffers
 from jetspec.engines.jetspec_plus_plus.wire.contract import outcome_message_views
 from jetspec.engines.jetspec_plus_plus.wire.contract import rng_words
-from jetspec.engines.jetspec_plus_plus.draft.chain.intake import CHAIN_RECV_READY_PREFIX
+from jetspec.engines.jetspec_plus_plus.draft.chain.chain_intake import CHAIN_RECV_READY_PREFIX
 
 class OutcomeReceiveRing:
     """Two fixed NCCL receive envelopes with async packet mirrors.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -174,13 +174,13 @@ def slot_check_errors(count: int) -> list[float]:
 
 
 def native_enabled(device: torch.device) -> bool:
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return (kernel_enabled('attn_sm100', '1')
             and device.type == "cuda" and torch.cuda.get_device_capability(device) == (10, 0))
 
 
 def flashinfer_enabled(device: torch.device, dtype: torch.dtype, *, chain=False) -> bool:
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return ((((kernel_enabled('attn_sm100', 'flashinfer'))))
             and device.type == "cuda" and dtype in (torch.float16, torch.bfloat16)
             and torch.cuda.get_device_capability(device) == (10, 0))
@@ -277,7 +277,7 @@ def attend_refresh(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                                            torch.Tensor, torch.Tensor]) -> torch.Tensor:
     if scale != plan.scale or q.shape[1] != getattr(plan, "q_heads", q.shape[1]):
         raise ValueError("FlashInfer prefix plan does not match refresh attention heads or scale")
-    from jetspec.engines.jetspec_plus_plus.kernels.attn_suffix import suffix_state
+    from jetspec.engines.jetspec_plus_plus.kernels.adapter.attn_suffix import suffix_state
 
     return _merge(plan.run(q, k, v),
                   suffix_state(q, k, v, start, window, scale, meta))
@@ -289,8 +289,8 @@ def attend_refresh(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
 
 def attend(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
            mask: torch.Tensor, scale: float) -> torch.Tensor:
-    from jetspec.engines.jetspec_plus_plus.kernels.attn_sm80 import attend as attend_sm80
-    from jetspec.engines.jetspec_plus_plus.kernels.attn_sm80 import enabled as sm80_enabled
+    from jetspec.engines.jetspec_plus_plus.kernels.adapter.attn_sm80 import attend as attend_sm80
+    from jetspec.engines.jetspec_plus_plus.kernels.adapter.attn_sm80 import enabled as sm80_enabled
 
 
     # Short buckets keep the established draft decisions; split-KV helps once

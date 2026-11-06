@@ -26,7 +26,7 @@ class GatedRotaryEmbedding:
     def gathered(self, query, key, rows):
         """Rotate with table rows: one launch on CUDA, the eager arithmetic elsewhere."""
         if query.is_cuda:
-            from jetspec.engines.jetspec_plus_plus.kernels.verify_gated_rope import gated_rope
+            from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gated_rope import gated_rope
             return gated_rope(query, key, rows.cos, rows.sin, rows.positions, self.rotary_dim)
         return self(query, key, rows.cos[rows.positions], rows.sin[rows.positions])
 

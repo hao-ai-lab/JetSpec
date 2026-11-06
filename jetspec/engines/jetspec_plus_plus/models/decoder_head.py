@@ -7,7 +7,7 @@ target-relative index/shard names to sha256 digests, or ``file`` with the pinned
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import json
 import copy
@@ -37,7 +37,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
     rotate_half,
 )
 
-import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.models.lac import keep_device
 from jetspec.engines.jetspec_plus_plus.models.lac import lac_candidates
 from jetspec.engines.jetspec_plus_plus.draft.rows import fused_kernels
@@ -46,7 +46,7 @@ from jetspec.engines.jetspec_plus_plus.models.fast import dataset_entry
 from jetspec.engines.jetspec_plus_plus.wire.contract import FrontInputs
 from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
 from jetspec.engines.jetspec_plus_plus.wire.contract import TokenBuffers
-from jetspec.engines.jetspec_plus_plus.kernels.decoder_select import register_offer_twins
+from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_select import register_offer_twins
 
 register_offer_twins()
 
@@ -234,7 +234,7 @@ def decoder_layer_lean(layer, hidden, rope, mask, cache, cache_position, fused, 
     input add+norm kernel.  Returns the same ``(mlp_output, residual)`` pair
     for the caller to sum or to hand on.
     """
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     from transformers.integrations.sdpa_attention import sdpa_attention_forward
     attn = layer.self_attn
     cos, sin = rope
@@ -293,7 +293,7 @@ def decoder_layer_lean(layer, hidden, rope, mask, cache, cache_position, fused, 
 
 def _decoder_gate_up(mlp, source):
     """One opt-in gate/up GEMM, with independent singleton and batched knobs."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     singleton = (kernel_enabled('decoder_single_gateup_packed', '1')
                  and source.ndim == 3 and source.shape[0] == 1)
     if ((not singleton)):
@@ -318,7 +318,7 @@ def _prepare_decoder_gate_up(mlp):
 
 def decoder_prefix_kv_lean(layer, hidden, rope, fused, *, pending=None):
     """``decoder_prefix_kv`` with one norm launch and the fused k norm + rotary."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     attn = layer.self_attn
     cos, sin = rope
     head_dim = attn.head_dim
@@ -342,7 +342,7 @@ def decoder_graph_lean():
     """JETSPEC_DECODER_GRAPH_LEAN=1: the graphed regime's decoder parts on the
     certified kernels (``decoder_layer_lean`` with JETSPEC_C1_LEAN=1, split around
     its attention so each side is one shape-only graph)."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return kernel_enabled('decoder_graph_lean', '1')
 
 
@@ -355,7 +355,7 @@ def decoder_graph_window(*, run_config=None):
 
 def batch_head_epilogue_enabled(count, dtype, cap, *, run_config=None):
     """The C>1 budget/BLEND graph consumes offers and two decoder scalars only."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return (kernel_enabled('w632_head_fuse', '1')
             and count > 1 and dtype == torch.bfloat16
             and setting(run_config, 'engine', 'engine_settings.batch_draft_graph', '0') == '1'
@@ -369,7 +369,7 @@ def batch_head_epilogue_enabled(count, dtype, cap, *, run_config=None):
 
 
 def check_decoder_graph_lean_regime(*, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if decoder_graph_window(run_config=run_config) and not decoder_graph_lean():
         raise ValueError('JETSPEC_DECODER_GRAPH_WINDOW=1 requires JETSPEC_DECODER_GRAPH_LEAN=1')
     if not decoder_graph_lean():
@@ -384,7 +384,7 @@ def check_decoder_graph_lean_regime(*, run_config=None):
 def decoder_lean_project(layer, fused, hidden, pending, rope):
     """``decoder_layer_lean`` up to its attention: the input (add+)norm, the q and
     k/v projections with their norm + rotary.  Returns (query, key, value, hidden)."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     attn = layer.self_attn
     cos, sin = rope
     head_dim = attn.head_dim
@@ -410,7 +410,7 @@ def decoder_lean_project(layer, fused, hidden, pending, rope):
 
 def _decoder_packed_project(attn, fused, source, rope, *, prefix=False):
     """One packed GEMM; CUDA postprocessing reads the split's row stride."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     weight, bias, widths = (attn._decoder_prefix_kv if prefix else attn._decoder_qkv)
     projection = attn.k_proj if prefix else attn.q_proj
     precision = getattr(projection, 'precision', None)
@@ -422,7 +422,7 @@ def _decoder_packed_project(attn, fused, source, rope, *, prefix=False):
     kv_heads = attn.k_proj.out_features // head_dim
     if (not prefix and source.is_cuda and source.dtype == torch.bfloat16
             and source.shape[0] == 1 and kernel_enabled('draft_fuse_t12', '1')):
-        from jetspec.engines.jetspec_plus_plus.kernels.decoder_staging import qkv_postprocess
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.combined_staging import qkv_postprocess
         return qkv_postprocess(fused, *parts, attn.q_norm.weight, attn.k_norm.weight,
                                cos, sin, attn.q_norm.variance_epsilon,
                                attn.k_norm.variance_epsilon,
@@ -470,7 +470,7 @@ def decoder_grouped_attention(fused, query, key, value, mask, scale):
 
 def decoder_lean_attention(layer, fused, query, key, value, mask, *, length=None, count=None):
     """``decoder_layer_lean``'s lean attention (repeat_kv, the memory-efficient kernel)."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if (length is not None and query.is_cuda
             and (((kernel_enabled('decoder_attn_len', '1'))))):
         from jetspec.engines.jetspec_plus_plus.kernels.len_attention import attend as attend_len
@@ -614,7 +614,7 @@ class DeviceAnchorOffers:
 def _topk_offers(logits, rejected, q_hats, cap, *, run_config=None):
     """JETSPEC_ANCHOR_SELECT=topk: the exact top-k selection (heads/topk_select.py), eager, or
     one CUDA graph per shape under the graphed rows regime; offers come home in one copy."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     global _GRAPHED_SELECT
     from jetspec.engines.jetspec_plus_plus.draft.heads.topk_select import GraphedSelect
     from jetspec.engines.jetspec_plus_plus.draft.heads.topk_select import fast_offers_topk
@@ -1049,7 +1049,7 @@ def _check_reused_fallback(layers, root, expected_sha256, *, run_config=None):
 
 def tail_mlp(layer, hidden, gate_glue=None):
     if gate_glue is None and kernel_value('draft_fuse_g27d', '0') == '1' and hidden.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import decoder_tail as gate_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_tail as gate_glue
     source = layer.post_attention_layernorm(hidden)
     if kernel_value('draft_fuse_g27f', '0') == '1':
         from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.activation_quant import share_activation
@@ -1071,7 +1071,7 @@ def gdn_project(gdn, hidden):
     z = gdn.in_proj_z(hidden).reshape(-1, gdn.value_dim)
     b = gdn.in_proj_b(hidden)
     if kernel_value('draft_fuse_g27d', '0') == '1' and hidden.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.decoder_tail import gdn_controls
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_tail import gdn_controls
         a = gdn.in_proj_a(hidden)
         beta, g = gdn_controls(a, b, gdn.dt_bias, gdn.A_log)
         return raw, z, beta, g
@@ -1111,7 +1111,7 @@ def stateful_attention_project(layer, hidden, positions, rope_theta, *, refresh_
     value = attn.v_proj(source).view(width, attn.kv_heads, attn.dim)
     table = getattr(attn, '_g27_rotary_table', None)
     if table is not None and kernel_enabled('draft_fuse_g27', '1'):
-        from jetspec.engines.jetspec_plus_plus.draft.glue import g27_rotary
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_rotary
         extra = {} if refresh_positions is None else {'refresh_positions': refresh_positions}
         q, key = g27_rotary(q, key, positions, table, **extra)
         return q, gate, key, value
@@ -1130,7 +1130,7 @@ def stateful_attention_project(layer, hidden, positions, rope_theta, *, refresh_
 
 def stateful_attention_finish(layer, hidden, attended, gate, gate_glue=None):
     if gate_glue is None and kernel_value('draft_fuse_g27d', '0') == '1' and hidden.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import decoder_tail as gate_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_tail as gate_glue
     product = attended if gate is None else (
         gate_glue.gate_mul(attended, gate) if gate_glue is not None else attended * gate.sigmoid())
     return tail_mlp(layer, hidden + layer.self_attn.o_proj(product.reshape(hidden.shape[0], -1)),
@@ -1150,7 +1150,7 @@ def scan_gdn_window(gdn, hidden, recurrent, conv, *, return_state=False):
     raw = raw.transpose(1, 2)
     conv_input = torch.cat((conv.to(raw.dtype), raw), dim=-1)
     if kernel_value('draft_fuse_g27g', '0') == '1' and hidden.is_cuda and hidden.dtype == torch.bfloat16:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.gdn_silu import gdn_inputs
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_silu import gdn_inputs
         convolved = gdn.conv1d(conv_input)[:, :, :conv_input.shape[-1]][0, :, -width:].T
         q, k, v, initial = gdn_inputs(convolved, gdn.key_heads,
             gdn.value_heads // gdn.key_heads, gdn.key_dim, gdn.value_dim, state=recurrent)
@@ -1202,7 +1202,7 @@ def hybrid_attention_tail(attention_layer, hidden, *, prefix_key, prefix_value,
         torch.arange(width, device=hidden.device, dtype=torch.float32) + start, rope_theta)
     from jetspec.engines.jetspec_plus_plus.kernels import draft_splitkv
     if kernel_enabled('draft_fuse_g27', '1') and draft_splitkv.a256_enabled(q, 'decoder'):
-        from jetspec.engines.jetspec_plus_plus.draft.glue import g27_attention_inputs
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_attention_inputs
         all_key, all_value, bias = g27_attention_inputs(
             prefix_key, prefix_value, key, value, start, start, lanes=width)
         attended = draft_splitkv.attend(q.transpose(0, 1)[None],
@@ -1424,7 +1424,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     @classmethod
     def load(cls, root, drafter, target_model_path=None, manifest=None, *, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.rows import check_rows_fused_regime
         check_rows_fused_regime(run_config=run_config)
         check_decoder_graph_lean_regime(run_config=run_config)
@@ -1548,7 +1548,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     @classmethod
     def _load_stateful(cls, root, drafter, target_model_path, manifest, *, run_config=None):
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 
         if manifest is None or manifest.get("source") != "target_slice":
             raise ValueError("hybrid decoder requires a pinned target_slice manifest")
@@ -1610,7 +1610,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         if any(value.dtype != drafter.dtype for value in module.parameters()):
             raise ValueError("hybrid decoder target dtype differs from draft dtype")
         module = module.to(device=drafter.device).eval().requires_grad_(False)
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         engine = current_engine()
         if 'mxfp4_w4a8' in (engine.precision_draft, engine.precision_lm_head):
             # The hybrid loader returns before the dense loader's rounding pass.
@@ -1634,7 +1634,7 @@ class AnchorDecoder(MethodAnchorDecoder):
             gdn = self.layers[0].linear_attn
             attn = self.layers[1].self_attn
             if setting(getattr(self, 'run_config', None), 'engine', 'engine_settings.draft_fuse_g27', '0') == '1':
-                from jetspec.engines.jetspec_plus_plus.draft.glue import g27_rotary_table
+                from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_rotary_table
                 # Prefix capacity plus both the causal tail and one private row.
                 from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
                 rows = self.capacity + 2 * (draft_width(run_config=getattr(self, 'run_config', None)) + 1)
@@ -1658,7 +1658,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         There are no true-tap lanes: the window is [tail | rows x slots]. All
         projections and MLPs read this single token matrix once per refresh.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         del prefix_kv
         if setting(self.run_config, 'engine', 'engine_settings.refresh_swap_glue', '0') == '1' if glue is None else glue:
             raise ValueError('JETSPEC_REFRESH_SWAP_GLUE refuses the hybrid decoder (GDN, D256)')
@@ -1713,16 +1713,16 @@ class AnchorDecoder(MethodAnchorDecoder):
         gdn = gdn_layer.linear_attn
         gate_glue = None
         if state.get('refresh_gates', False):
-            from jetspec.engines.jetspec_plus_plus.kernels import decoder_refresh as gate_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_refresh as gate_glue
         state_glue = None
         if state.get('refresh_state_lean', False):
-            from jetspec.engines.jetspec_plus_plus.kernels import decoder_refresh as state_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder import decoder_refresh as state_glue
         if prefix['recurrent'].dtype != torch.float32:
             raise ValueError('decoder GDN recurrent state must stay fp32')
         row, index, is_block = state['row'], state['index'], state['is_block']
         counts, tails = slot_counts.long(), tail_counts.long()
         if state.get('refresh_staging', False) or state.get('refresh_copy_staging', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import stage_hidden
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import stage_hidden
             hidden = stage_hidden(tail, block, counts, lanes=lanes, slots=slots,
                                   out=state['hidden_input'])
         else:
@@ -1736,7 +1736,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         # positions address committed conv; positive slot positions address only
         # that row. This includes the carry when tail_counts < kernel width.
         if state.get('refresh_staging', False) or state.get('refresh_copy_staging', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import stage_conv
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import stage_conv
             conv_input = stage_conv(raw, prefix['conv'], tails, lanes=lanes,
                                     slots=slots, out=state['conv_input'])
         else:
@@ -1752,7 +1752,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                                  gdn.conv_kernel + raw_index)
             conv_input = all_raw[gather].transpose(1, 2).contiguous()
         if kernel_value('draft_fuse_g27g', '0') == '1' and hidden.is_cuda and hidden.dtype == torch.bfloat16:
-            from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.gdn_silu import gdn_inputs
+            from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_silu import gdn_inputs
             convolved = F.conv1d(conv_input, gdn.conv1d.weight, groups=conv_input.shape[1])[:, :, 0]
             q, k, v, _ = gdn_inputs(convolved, gdn.key_heads,
                 gdn.value_heads // gdn.key_heads, gdn.key_dim, gdn.value_dim)
@@ -1791,7 +1791,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                 outputs.append(output)
             tail_output = torch.cat(outputs, 1)
         if state.get('refresh_selected_states', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_refresh import selected_states
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.decoder_refresh import selected_states
             initial = selected_states(k[:lanes][None], v[:lanes][None], g[:lanes][None],
                                       beta[:lanes][None], prefix['recurrent'], tails)
         else:
@@ -1821,7 +1821,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         from jetspec.engines.jetspec_plus_plus.kernels import draft_splitkv
         fuse_inputs = kernel_enabled('draft_fuse_g27', '1') and draft_splitkv.a256_enabled(q, 'decoder')
         if fuse_inputs:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import g27_attention_inputs
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27_attention_inputs
             all_key, all_value, bias = g27_attention_inputs(
                 prefix['key'], prefix['value'], key, value, length, tails, lanes=lanes, slots=slots)
         else:
@@ -2061,7 +2061,7 @@ class AnchorDecoder(MethodAnchorDecoder):
     def _merged_chain_layers(self, prefix_hidden, rope, mask, slots, state, front,
                              length, count, use_len_attention, fused):
         """Share the two layers' projection reads across prefix and window rows."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         self._check_prefix_merge(state, front)
         lanes = prefix_hidden.shape[1]
         if kernel_enabled('draft_fuse_t12', '1') and 'combined_hidden' in state:
@@ -2133,7 +2133,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     def _window_state(self, like, bucket):
         """Keep each opted-in decoder key's static inputs and K/V distinct."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         bucketed = setting(self.run_config, 'engine', 'engine_settings.chain_decoder_key_bucket', '0') == '1'
         if bucketed:
             states = self._window_graph_states
@@ -2259,7 +2259,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         """Append the fixed prefix lanes, decode the window, and select on device."""
         if getattr(self, '_uses_shipped_state', False):
             return self._stateful_decoder_chain_body(rp, tokens, front, bucket)
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
         if setting(self.run_config, 'engine', 'engine_settings.front_static', '0') != '1':
             raise ValueError('decoder chain body requires JETSPEC_FRONT_STATIC=1')
         use_len_attention = (rp.is_cuda and
@@ -2276,12 +2276,12 @@ class AnchorDecoder(MethodAnchorDecoder):
         combined_glue = (fused_glue and kernel_enabled('draft_fuse_t12', '1')
                          and kernel_enabled('decoder_prefix_merge', '1'))
         if fused_glue:
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import prefix_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import prefix_glue
             table = self._rope_table
             if table is None or not all(value.is_contiguous() for value in table):
                 raise RuntimeError('decoder glue requires a prewarmed contiguous rotary table')
             if combined_glue:
-                from jetspec.engines.jetspec_plus_plus.kernels.decoder_staging import combined_glue as stage_combined
+                from jetspec.engines.jetspec_plus_plus.kernels.decoder.combined_staging import combined_glue as stage_combined
                 stage_combined(
                     rp, tokens.pending_draft_ids, prefix_hidden, front.staged_hidden, *table,
                     state['combined_hidden'], state['combined_cos'], state['combined_sin'],
@@ -2316,15 +2316,15 @@ class AnchorDecoder(MethodAnchorDecoder):
                         length, count, front.decoder_bucket, lanes, prefix_hidden.dtype))
         if kernel_enabled('decoder_prefix_merge', '1'):
             glue_level = int(kernel_value('chain_sega_glue', '0'))
-            from jetspec.engines.jetspec_plus_plus.draft.glue import available
-            from jetspec.engines.jetspec_plus_plus.draft.glue import window_mask_rope
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import available
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import window_mask_rope
             fused_window = (glue_level == 2 and rp.is_cuda and available()
                             and self._rope_table is not None
                             and all(table.is_contiguous() for table in self._rope_table))
             if combined_glue:
                 pass  # Both sets of inputs already share the combined staging launch.
             elif fused_glue:
-                from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import window_glue
+                from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import window_glue
                 window_glue(length, front.staged_hidden,
                             *self._rope_table, state['hidden'],
                             state['masks'][front.decoder_bucket], state['slots'],
@@ -2369,13 +2369,13 @@ class AnchorDecoder(MethodAnchorDecoder):
                 pending = decoder_lean_finish(layer, fused, hidden, attended)
 
         glue_level = int(kernel_value('chain_sega_glue', '0'))
-        from jetspec.engines.jetspec_plus_plus.draft.glue import available
-        from jetspec.engines.jetspec_plus_plus.draft.glue import window_mask_rope
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import available
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import window_mask_rope
         fused_window = (glue_level == 2 and rp.is_cuda and available()
                         and self._rope_table is not None
                         and all(table.is_contiguous() for table in self._rope_table))
         if fused_glue:
-            from jetspec.engines.jetspec_plus_plus.kernels.decoder_glue import window_glue
+            from jetspec.engines.jetspec_plus_plus.kernels.decoder.input_staging import window_glue
             window_glue(length, front.staged_hidden,
                         *self._rope_table, state['hidden'],
                         state['masks'][front.decoder_bucket], state['slots'],
@@ -2407,11 +2407,11 @@ class AnchorDecoder(MethodAnchorDecoder):
         Allocated before capture; the bucket's prefix K/V is copied in, never written."""
         if getattr(self, '_uses_shipped_state', False):
             return self._stateful_refresh_window_state(prefix_kv, bucket, rows=rows, lanes=lanes, like=like, glue=glue)
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if self.prefix_layers is not self.layers:
             raise ValueError('JETSPEC_REFRESH_SWAP requires the target_slice decoder '
                              '(one set of shared prefix and window layers)')
-        from jetspec.engines.jetspec_plus_plus.kernels import refresh_glue
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh import execution as refresh_glue
         if refresh_glue.enabled(run_config=self.run_config) if glue is None else glue:
             return refresh_glue.allocate(self, prefix_kv, bucket, rows, lanes, like)
         slots = lanes - 1
@@ -2475,7 +2475,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         rows, lanes, slots = state['rows'], state['lanes'], state['slots']
         hidden_size = self.hidden_size
         if state.get('glue'):
-            from jetspec.engines.jetspec_plus_plus.kernels.refresh_glue import layers as refresh_glue_layers
+            from jetspec.engines.jetspec_plus_plus.kernels.refresh.execution import layers as refresh_glue_layers
             hidden, decoded = refresh_glue_layers(
                 self, state, length=length, true_taps=true_taps, tail=tail,
                 tail_counts=tail_counts, block=block, slot_counts=slot_counts, run_config=self.run_config)
@@ -2543,7 +2543,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                         attn_mask=mask, scale=layer.self_attn.scaling).transpose(1, 2)
                     current = decoder_window_finish(layer, current, attended)
                 decoded = self.norm(current)
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         trimmed = state.get('glue') and kernel_enabled('draft_fuse_t12', '1')
         decoded = decoded[0] if trimmed else decoded[0, 4 + lanes:]
         if hidden.is_cuda and compact_cuda:

@@ -5,7 +5,7 @@ reverse channel carries ordered chain commands; other keys keep their store.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
 
 import atexit
 import hashlib
@@ -275,7 +275,7 @@ def decode_reference_candidate(wire, *, rows, lanes, run_config=None):
 
 def reference_candidate_store(store, *, is_draft, max_num_seqs, run_config=None):
     """Off by default; establish the one N=1 reference pair's private channel."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if not transport_enabled('reference_candidate_socket', run_config=run_config):
         return store
     if current_engine().kind != 'reference' or max_num_seqs != 1:

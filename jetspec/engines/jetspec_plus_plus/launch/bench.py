@@ -1,11 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-# Locate the component from either its category or its stable forwarding path.
-from pathlib import Path as _ToolPath
 import sys as _tool_sys
-_TOOL_ROOT = next((p for p in _ToolPath(__file__).resolve().parents
-                   if (p / "artifacts/manifest.json").is_file() or (p / "artifacts/manifest.json").is_file()), _ToolPath.cwd())
-_tool_sys.path[:0] = [str(_TOOL_ROOT), str(_TOOL_ROOT / 'engine'), str(_ToolPath(__file__).resolve().parent)]
 if __name__ == "__main__" and any(a in ("-h", "--help") for a in _tool_sys.argv[1:]):
     from jetspec.engines.jetspec_plus_plus.serving.entrypoints import cpu_help as _cpu_help
     _cpu_help(__file__)
@@ -27,22 +22,22 @@ from random import randint, seed
 from jetspec.engines.jetspec_plus_plus import LLM, SamplingParams
 from jetspec.engines.jetspec_plus_plus.serving.llm_engine import METRICS
 from transformers import AutoTokenizer
-from jetspec.engines.jetspec_plus_plus._optional import wandb
+from jetspec.engines.jetspec_plus_plus.kernels._optional import wandb
 from jetspec.engines.jetspec_plus_plus.launch import bench_helpers
 from jetspec.engines.jetspec_plus_plus.launch.bench_helpers import get_model_paths
 from jetspec.engines.jetspec_plus_plus.launch.bench_guards import exported_prompt_ids, generate_inputs_fail_closed
 from jetspec.methods.baselines import eagle3
-import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.runtime.env import validate_environment
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
-from jetspec.engines.jetspec_plus_plus.run_config import config_environment
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
 from jetspec.engines.jetspec_plus_plus.serving.settings import setting
 
 
 def parse_arguments(*, run_config=None):
     """Parse command line arguments for benchmarking."""
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
-    from jetspec.engines.jetspec_plus_plus.run_config import config_environment
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     values = config_environment(run_config) if run_config is not None else {}
     parser = argparse.ArgumentParser(description="Serving benchmark")
@@ -530,6 +525,8 @@ def main(*, run_config=None):
         run_config = with_settings(run_config, {'engine.engine_settings.run_manifest_dir':
             tempfile.mkdtemp(prefix='jetspec-run-manifest-')})
     args = parse_arguments(run_config=run_config)
+    from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import require_single_request
+    require_single_request(args.b)
     validate_environment(config_environment(run_config),
                          jetspec=args.jetspec, max_num_seqs=args.b,
                          regime='eager' if args.eager else 'graphed')

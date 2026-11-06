@@ -9,7 +9,7 @@ import collections
 import copy
 import hashlib
 import json
-from jetspec.engines.jetspec_plus_plus.draft.method.legacy import _environment_name as environment_name
+from jetspec.engines.jetspec_plus_plus.draft.method.record_bindings import _environment_name as environment_name
 import math
 import shutil
 import sys
@@ -826,8 +826,9 @@ def stage_cal28(argv=None):
                    sources=[dict(label='cal28-27b-fit', sha256=expected_fit,
                                  sections=list(sections)),
                             dict(label='served_heads_reused_e6v3_b16', sha256=expected_legacy,
-                                 repository='Moonlight556/jetspec-served-heads-reused',
-                                 revision='a9b066f1', sections='all other sections')])
+                                 repository='JetSpec/jetspec-plus-plus-qwen3-8b',
+                                 revision='9bd8b1578e3d14d74d68e82f2fc5decbee001b28',
+                                 sections='all other sections')])
     (root / 'fit-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     override = root / 'cal28-as-is'
     (override / 'decoder').mkdir(parents=True, exist_ok=True)

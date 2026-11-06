@@ -48,7 +48,6 @@ include = ["jetspec*"]
 [tool.setuptools.package-data]
 "jetspec" = ["THIRD_PARTY_NOTICES", "licenses/*.txt"]
 "jetspec.engines.jetspec_plus_plus" = [
-    "README.md", "config/*.json", "config/prompts/*.json", "artifacts/*.json",
-    "launch/*.json", "draft/method/*.json", "draft/policies/*.json", "*.json",
-    "third_party/blockhead_kit/manifest.json",
+    "README.md", "config/*.json", "artifacts/*.json",
+    "launch/*.json", "draft/method/*.json", "draft/policies/*.json", "runtime/launch_env.json",
 ]

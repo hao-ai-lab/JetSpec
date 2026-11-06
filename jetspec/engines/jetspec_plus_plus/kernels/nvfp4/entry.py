@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
 
 
 @dataclass
@@ -32,12 +32,12 @@ def materialize_tail(output):
     if tail is None:
         return output
     if tail.counts is None:
-        from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import finish_streams
+        from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import finish_streams
         finish_streams(tail.streams, tail.residual, tail.update,
                        out=output.view(tail.residual.shape[0], -1))
     else:
         import triton
-        from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import _finish_refresh
+        from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import _finish_refresh
         width = tail.residual.shape[-1]
         if tail.small is not None:
             _finish_bucketed_refresh[((tail.counts.numel() + 1) * (tail.window + 1), 5)](
@@ -104,7 +104,7 @@ except ImportError:
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import _finish_refresh
+    from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import _finish_refresh
 
     @triton.jit
     def _finish_bucketed_refresh(LARGE, SMALL, COUNTS, OUT,

@@ -20,7 +20,7 @@ def chain_key_limit(max_model_len: int, lanes: int) -> int:
 
 
 # The cache capacities that the launcher sizes from max_model_len at launch, in that order.
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 LAUNCH_DERIVED = (
     environment_name('engine', 'engine_settings.w259_c1_cache_capacity'),

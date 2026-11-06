@@ -2,7 +2,7 @@
 """JetSpec block drafter, frozen H-to-H adapter, and Jacobi refinement loop."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import copy
 from functools import partial
@@ -48,7 +48,7 @@ from jetspec.engines.jetspec_plus_plus.wire.contract import FrontInputs
 from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
 from jetspec.engines.jetspec_plus_plus.wire.contract import TokenBuffers
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 
 Mode = Literal["token", "kth", "noise"]
@@ -257,11 +257,11 @@ def _run_manifest():
     """The run-manifest recorder; by package when this module has one, else by path
     (the test harness loads drafter.py as a bare file)."""
     if __package__:
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         return run_manifest
     name = "jetspec_run_manifest"
     if name not in sys.modules:
-        path = (Path(__file__).parent.parent / 'runtime/run_manifest.py')
+        path = ((Path(__file__).parent.parent / 'launch' / 'run_manifest.py'))
         spec = importlib.util.spec_from_file_location(name, path)
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -977,7 +977,7 @@ def fixed_refresh_layout(counts, tokens, width):
 
 def _native_gemms_allowed():
     """The C++ adapter loops call cuBLAS themselves; mxfp4_w4a8 keeps the projections in Python."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     return current_engine().precision_draft != 'mxfp4_w4a8'
 
 def _adapter_dense_shape(head, *, any_dim=False):
@@ -1017,9 +1017,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     @staticmethod
     def _c1_fused_module():
-        name = "jetspec_c1_fused"
+        name = "jetspec_fused_decoder"
         if name not in sys.modules:
-            path = (Path(__file__).parent.parent / 'kernels/c1_fused.py')
+            path = (Path(__file__).parent.parent / 'kernels/fused_decoder.py')
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
@@ -1046,12 +1046,12 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     @staticmethod
     def _c1_fused_enabled():
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         return kernel_enabled('c1_fused', '1')
 
     @staticmethod
     def _c1_fused2_enabled(tensor):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         return (
             kernel_enabled('c1_fused', '2')
             and tensor.device.type == "cuda"
@@ -1084,7 +1084,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def forward(self, *, shared_prefix_projection=False, prefix_row_indices=None, prefix_key=None,
                 prefix_keys=None, prefix_lengths=None,
                 batched_uncached=False, run_config=None, **kwargs):
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         rows = kwargs["token_embeddings"].shape[0]
         cached = config_values(self.run_config).get('engine.engine_settings.c1_kvcache', "0") == "1"
         graphed = config_values(self.run_config).get('engine.engine_settings.c1_graph', "0") == "1"
@@ -1500,7 +1500,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
         prefixes: each sequence's exact taps [length, hspace]; token_embeddings [N, Q, hidden].
         Returns [N, Q, hspace] (a view of the graph's static output)."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if not self.resolved_config.get("window_causal_over_tokens", False):
             raise ValueError("JETSPEC_BATCH_DRAFT_GRAPH serves the D1 (window-causal) adapter only")
         count, Q = token_embeddings.shape[:2]
@@ -1906,7 +1906,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     def _d1_cache_query(self, embeddings, cos, sin, mask, length):
         """Refresh lower-stream window K/V while retaining the committed prefix."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if not _adapter_dense_shape(self):
             return self._adapter_cache_query(embeddings, cos, sin, mask, length)
         fused = (self._c1_fused_module() if embeddings.dtype == torch.bfloat16
@@ -1993,7 +1993,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                             window_slots=None, stop_before_attention=False, resume=None,
                             cache=None):
         """Execute each block's norm, rotary and gate parameters over private KV."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         batch, count = embeddings.shape[:2]
         bound_shape = all(layer.q_proj.bias is None and isinstance(layer.mlp.act_fn, nn.SiLU)
                           for index, stream in enumerate(self.streams)
@@ -2004,7 +2004,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                 False, None)
         lean = None
         if cache is None and batch == 1 and kernel_enabled('hybrid_c1_lean', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import hybrid_c1_lean as lean
+            from jetspec.engines.jetspec_plus_plus.kernels.chain import hybrid_single_query as lean
         live = window_slots is not None
         total = mask.shape[-1] if live else length + (
             count if self.resolved_config.get("window_causal_over_tokens", False) else 0)
@@ -2100,10 +2100,10 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def _d1_lean_loop(self, fused, norm, add_norm, silu_mul, rows, cos, sin, cos0, sin0, bias,
                       length, keys_total):
         """JETSPEC_C1_LOOP=1: the loop below (its folded, eager branch) in C++
-        (``c1_fused._loop_extension``): the same ops and kernels on the same operands.
+        (``fused_decoder._loop_extension``): the same ops and kernels on the same operands.
         None until both Triton rotary specializations are compiled (the Python loop
         compiles them), or when an operand is misaligned for them."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         plan = self._d1_lean_plan()
         packed = getattr(self, "_d1_loop_packed", None)
         if packed is None or packed[0] is not self._c1_kv:
@@ -2192,7 +2192,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         entry as the row offset), and attention reads the first ``mask.shape[-1]``
         cache slots, whose mask hides every slot past the live prefix and the window.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if not _adapter_dense_shape(self):
             if append is not None:
                 raise ValueError("hybrid C1 requires the unfused prefix append")
@@ -2242,7 +2242,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         outputs = []
         window, current = ((u, 0))
         # The residual adds ride in the next norm's launch and silu(gate) * up is one
-        # launch (c1_fused's lean ops: torch's add and silu/mul arithmetic, the
+        # launch (fused_decoder's lean ops: torch's add and silu/mul arithmetic, the
         # certified norm); an add whose sum no norm reads stays a torch add.
         fold = kernel_enabled('c1_norm', 'wide')
         gate_up_pack = kernel_enabled('c1_gateup_packed', '1')
@@ -2256,7 +2256,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         add_norm = fused._lean_ops_extension().add_rms_norm if fold else None
         if t1 is not None:
             # draft_fuse_t1: the query attention arm and the residual norms (Q4, Q8)
-            from jetspec.engines.jetspec_plus_plus.kernels import adapter_attention_fused as t1_ops
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter import adapter_attention_fused as t1_ops
             if fold:
                 add_norm = t1_ops.add_norm_operation(add_norm)
             if t1 == 'dense':
@@ -2304,7 +2304,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         loop_ext = fused._loop_extension() if rope_norm or kv_stack is not None else None
         head_ops = loop_ext
         if rope_norm and kernel_enabled('c1_gluon', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import c1_gluon
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter import head_rope as c1_gluon
             if c1_gluon.available(u):
                 head_ops = c1_gluon
         plan = self._d1_lean_plan()
@@ -2691,7 +2691,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         mask) in one C++ call on the same ops and compiled Triton entries; None when this
         round is not that steady state or an entry is not compiled yet (the Python path,
         which compiles them, runs instead)."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if not _adapter_dense_shape(self):
             return None
         table = getattr(self, "_c1_rope_table", None)
@@ -2759,7 +2759,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         gathered from one table of positions 0..8191 computed by that same call (each
         position's cos/sin is a single product, so the gather is bitwise the call; the
         cached path's position ids are cache indices, below the capacity + 16)."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         rotary = self.streams[0].rotary_emb
         if ((not kernel_enabled('c1_rope_table', '1')
              and not kernel_enabled('c1_prep_lean', '1')) or like.device.type != "cuda"
@@ -2822,7 +2822,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             self._c1_qsin, self._c1_mask, self._c1_capacity))
 
     def _c1_extension_step(self, dirty=None, positions=None, slots=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         dirty = self._c1_dirty if dirty is None else dirty
         positions = self._c1_dirty_positions if positions is None else positions
         slots = self._c1_slots if slots is None else slots
@@ -2863,7 +2863,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             raise ValueError("C1 append fold requires the fused live C1 chain")
         self._c1_fused2_prepare()
         if rope_table:
-            from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import rotary_tables
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import rotary_tables
             return dirty, *rotary_tables(self, dirty), slots, positions.reshape(-1)
         cos, sin = self._c1_rope(dirty, positions)
         return dirty, cos, sin, slots
@@ -2917,7 +2917,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         kernel's key block at head_dim 128, then the whole cache), masked past the
         live prefix and the window.  Only the certified lean kernel set runs here.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if config_values(self.run_config).get('engine.engine_settings.c1_graph_layout', "full") != "live":
             return False
         if not (self.resolved_config.get("window_causal_over_tokens", False)
@@ -3147,10 +3147,10 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         ``front`` holds stable tensors prepared before capture. The rows pass's
         static prefix bucket chooses the graph's attention implementation.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if config_values(self.run_config).get('engine.engine_settings.front_static', "0") != "1":
             raise ValueError("C1 chain body requires JETSPEC_FRONT_STATIC=1")
-        from jetspec.engines.jetspec_plus_plus.kernels.adapter_attention_fused import route as t1_route
+        from jetspec.engines.jetspec_plus_plus.kernels.adapter.adapter_attention_fused import route as t1_route
         t1 = t1_route(kernel_value('draft_fuse_t1', '0'), bucket.head.P)
         use_len_attention = (kernel_enabled('c1_attn_len', '1')
                              and rp.is_cuda and (bucket.head.P >= 2048 if t1 is None
@@ -3162,7 +3162,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         start, count, length = rp[Offset.C1_START], rp[Offset.C1_COUNT], rp[Offset.L]
         prep_lean = kernel_enabled('c1_prep_lean', '1')
         if prep_lean:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import c1_front_prep
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import c1_front_prep
             slots = torch.empty(lanes, device=rp.device, dtype=torch.long)
             c1_front_prep(rp, tokens.committed_ids, tokens.pending_draft_ids,
                           front.c1_query_ids, front.prefix_positions, slots,
@@ -3187,7 +3187,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         if use_len_attention:
             mask = front.c1_query_embeddings.new_empty(1, 1, lanes, front.c1_bucket)
         elif prep_lean:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import c1_mask
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import c1_mask
             mask = torch.empty((1, 1, lanes, front.c1_bucket),
                                device=rp.device, dtype=front.c1_query_embeddings.dtype)
             c1_mask(length, mask)
@@ -3205,7 +3205,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
 
     def _c1_chain_body_t13(self, rp, tokens, front, use_len_attention, t1):
         """T13's single front launch, in-kernel rotary lookup and direct finish."""
-        from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import front_prep, rotary_tables
+        from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import front_prep, rotary_tables
         lanes = front.lanes
         length = rp[Offset.L]
         front_norm = (getattr(front.c1_query_ids.untyped_storage(), '_w4a8_front_norm', None)
@@ -3270,7 +3270,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     @torch.inference_mode()
     def prewarm_keylen_graphs(self, run_config=None):
         """Capture bounded C1 and refresh key ranges before the first timed round."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if config_values(self.run_config).get('engine.engine_settings.keylen_bucket', "0") != "1" or self._c1_capacity <= 768:
             return False
         if not hasattr(self, "_c1_window_sets"):
@@ -3530,7 +3530,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         (zero outside each row's computed slots), or None when the cache does not hold this sequence's exact
         prefix and window or has no room for the block tokens.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if (not hasattr(self, "_c1_kv") or self._c1_prefix_key is not prefix_key
                 or self.c1_state["cache_length"] != length
                 or not self.resolved_config.get("window_causal_over_tokens", False)
@@ -3629,7 +3629,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
     def _refresh_cached_fixed(self, embeddings, length, tail_counts, slot_counts,
                               tokens, fixed_start, key_width=None, *, embedding_ids=None):
         """Static refresh body: device counts choose dense slots, never a host shape."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if embedding_ids is None and kernel_enabled('draft_fuse_g27b', '1'):
             return self._refresh_cached_fixed_g27b(
                 embeddings, length, tail_counts, slot_counts, tokens, fixed_start, key_width)
@@ -3697,7 +3697,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                                   tokens, fixed_start, key_width=None):
         """Reuse bitwise row packing with the hybrid consumer's existing dense mask."""
         from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import prepare, scatter
-        from jetspec.engines.jetspec_plus_plus.draft.glue import g27b_refresh_mask
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import g27b_refresh_mask
         window = getattr(self, '_c1_window', 15)
         length_dev = torch.as_tensor(length, device=embeddings.device, dtype=torch.long)
         start = (length_dev + window if fixed_start is None else
@@ -3735,7 +3735,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import bucketed_refresh
             return bucketed_refresh(self, embeddings, length, tail_counts, slot_counts,
                                     fixed_start, key_width, embedding_ids=embedding_ids)
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import prepare
         from jetspec.engines.jetspec_plus_plus.kernels.refresh_prep import scatter
 
@@ -3883,7 +3883,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         one silu*up launch, the fused head-norm rotary for q and for k written straight
         into the cache with v, attention defaulting to the memory-efficient kernel over
         the 16-aligned mask, and F.linear on the bound weights."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if not _adapter_dense_shape(self):
             if aligned is None:
                 raise ValueError("hybrid cached refresh requires an explicit attention mask")
@@ -3904,7 +3904,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         from jetspec.engines.jetspec_plus_plus.kernels.attn_sm100 import flashinfer_enabled
         head_ops = loop_ext
         if kernel_enabled('c1_gluon', '1'):
-            from jetspec.engines.jetspec_plus_plus.kernels import c1_gluon
+            from jetspec.engines.jetspec_plus_plus.kernels.adapter import head_rope as c1_gluon
             if c1_gluon.available(rows):
                 head_ops = c1_gluon
         use_flashinfer = allow_flashinfer and flashinfer_enabled(
@@ -3929,7 +3929,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         linear = draft_linear
         if kernel_enabled('refresh_gemm_tune', '1'):
             if not hasattr(self, "_refresh_gemm"):
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_gemm import RefreshGemm
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_gemm import RefreshGemm
 
                 self._refresh_gemm = RefreshGemm(rows.device)
             linear = partial(draft_linear, implementation=self._refresh_gemm.linear)
@@ -3987,7 +3987,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             if finish:
                 ops['finish_streams'] = fused.finish_streams
             if refresh_meta is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import attend as attend_lean_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import attend as attend_lean_refresh
                 tune = kernel_enabled('refresh_attn_tune', '1')
                 ops['attention'] = lambda q, k, v, scale, groups: attend_lean_refresh(
                     q, k[:, ::groups, :keys_total], v[:, ::groups, :keys_total],
@@ -3997,7 +3997,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                     q, k[:, :, :keys_total], v[:, :, :keys_total], scale,
                     self._flashinfer_refresh_plan, start_slot, window_rows, suffix_meta)
             else:
-                from jetspec.engines.jetspec_plus_plus.kernels.attn_sm80 import enabled as sm80_enabled
+                from jetspec.engines.jetspec_plus_plus.kernels.adapter.attn_sm80 import enabled as sm80_enabled
                 from jetspec.engines.jetspec_plus_plus.kernels.attn_sm100 import native_enabled
                 if (rows.device.type != 'cuda' or native_enabled(rows.device)
                         or (keys_total > 512 and sm80_enabled(rows.device, rows.dtype))):
@@ -4089,7 +4089,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                                              key_out, value_out, tokens, kv_heads, groups, kn_eps,
                                              start_slot)
             if refresh_meta is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.refresh_attn import attend as attend_lean_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_attn import attend as attend_lean_refresh
 
                 attended = attend_lean_refresh(
                     q, k[:, ::groups, :keys_total], v[:, ::groups, :keys_total],
@@ -4121,7 +4121,7 @@ class ServingCtxKVC1Head(CtxKVC1Head):
                     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.entry import defer_finish
                     return defer_finish(outputs, pending[1], pending[0],
                                         counts=finish_layout[0], window=finish_layout[1])
-                from jetspec.engines.jetspec_plus_plus.kernels.adapter_glue import finish_refresh
+                from jetspec.engines.jetspec_plus_plus.kernels.adapter_refresh import finish_refresh
                 return finish_refresh(outputs, pending[1], pending[0], *finish_layout)
             return fused.finish_streams(outputs, pending[1], pending[0], real)
         u = pending[1] + pending[0]
@@ -4270,7 +4270,7 @@ class FrozenC1H2HAdapter(FrozenH2HAdapter):
 
     def __init__(self, *, config_path, head_path, target_embed_tokens, device, dtype, pins_path, run_config=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         nn.Module.__init__(self)
         config_file = Path(config_path)
         if config_file.is_dir():
@@ -4585,7 +4585,7 @@ class JetSpecDrafter:
         embedding and the LM head, and nothing else. No adapter is read (``adapter_config`` and
         ``adapter_head`` must be None), no adapted mark is read or attached, and a head that is
         not Jacobi-forcing (a mask-initialised DFlash-class drafter) is accepted. The default is unchanged."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         run_manifest = _run_manifest()
         checkpoint = Path(checkpoint_dir)
         config = load_qwen3_config(checkpoint)

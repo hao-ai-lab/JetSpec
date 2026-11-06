@@ -1,6 +1,9 @@
 # Reproduce Table 3
 
-This guide reruns the paper's Table 3 on a GB200 pair. The default arms are AR, DSpark and JetSpec++.
+This guide runs the Table 3 protocol on a GB200 pair with public checkpoints. The default arms are AR, stock DSpark and JetSpec++. JetSpec++ uses the current public fast
+engine with J1-R1 (8B) or J3-R3 (27B), and a four-row floor. The README table records the
+paper's measurements; release checkpoints and the current engine can give different numbers.
+The DSpark recipes, prompt populations and analysis are the paper's.
 
 ## Run
 
@@ -8,12 +11,14 @@ Install the engine's GPU dependencies, then run from the repository root:
 
 ```sh
 python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3-8b --assets release \
-  --host-values host-8b.json --devices 0,1 --output-dir results/table3-8b
+  --host-values /path/to/host-8b.json --devices 0,1 --output-dir /path/to/table3-8b
 python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --assets release \
-  --host-values host-27b.json --devices 0,1 --output-dir results/table3-27b
+  --host-values /path/to/host-27b.json --devices 0,1 --output-dir /path/to/table3-27b
 ```
 
-Allow 2 to 4 hours per model. The command writes `plans.json`, `table3.json` and `table3.csv`, and prints the table in the paper's column order and rounding. It refuses to overwrite completed reads, so choose a fresh output directory for a new measurement.
+`--devices` counts from the first card that a scheduler grants through `CUDA_VISIBLE_DEVICES`, as the serving entry does. Without a scheduler, it names the cards as `nvidia-smi` numbers them.
+
+Run the models in separate output directories. The command writes launch plans and tables in JSON and CSV, and prints the table in the paper's column order and rounding. It refuses to overwrite completed reads, so choose a fresh output directory for a new measurement.
 
 ## Host file
 
@@ -24,12 +29,12 @@ The host file tells the command where the local files are:
   "schema": "jetspec.serve_host_values/1",
   "cuda_arch": "10.0",
   "rendezvous_mode": "host_port",
-  "environment": {"JETSPEC_TARGET_MODEL_PATH": "/models/Qwen3-8B"},
-  "artifacts": {"jetspecpp_e6_drafter_release": "/models/jetspecpp_e6_drafter_release"}
+  "environment": {"JETSPEC_TARGET_MODEL_PATH": "/path/to/Qwen3-8B", "SSD_HF_CACHE": "/path/to/hub", "SSD_DATASET_DIR": "/path/to/datasets"},
+  "artifacts": {"jetspecpp_e6_drafter_release": "/path/to/jetspecpp_e6_drafter_release"}
 }
 ```
 
-Map each registration name below to an absolute directory, and name the directory after its registration. The reader finds a recipe's heads bundle by that name. The command downloads nothing, and the prompts are bundled.
+Map each registration name below to an absolute directory, and name the directory after its registration. The reader finds a recipe's heads bundle by that name. The command downloads nothing, and the prompts are bundled in `bench/jetspec_plus_plus/prompts/`, located by the bench dataloader.
 
 | Arm | Repository | Path | 8B registration | 27B registration |
 | --- | --- | --- | --- | --- |
@@ -38,24 +43,23 @@ Map each registration name below to an absolute directory, and name the director
 | JetSpec++ | same | `calibration/` | `jetspecpp_e6_calibration_release` | `qwen3p8_27b_calibration_release` |
 | DSpark | `JetSpec/dspark-qwen3-8b-800k`, `JetSpec/dspark-qwen3p8-27b-800k` | root | `blockhead800k_checkpoint` | `dspark_27b_800k_e6_checkpoint` |
 
-`--assets paper`, the default, uses the paper's registrations in place of the JetSpec++ rows. Some of these weights are not public:
-
-- 8B: `jetspecpp_e6_drafter`, `jetspecpp_e6_adapter`, `mask_original_drafter`, `served_heads_reused_e6v3_b16`, `dflash_ours_drafter`
-- 27B: `qwen3p8_27b_drafter_main6ep_ep6`, `qwen3p8_27b_adapter_base_800k`, `jetspecpp_27b_placeholder_release`, `jetspecpp_27b_placeholder_heads`
-
 `--artifacts-dir` uses the manifest's destination directories in place of the `artifacts` map.
 
 ## Options
 
 - `--resolve-only` prints every launch plan on CPU, without weights.
-- `--baselines all` adds DFlash and SSD to the 8B rows, which is the paper's population. `--baselines dflash,ssd` picks baselines by name.
-- `--arms` names protocol arms directly and overrides `--baselines`: 8B `AR,DS,DFlash,SSD,J1R1REF_F4`, 27B `AR,DS,J3R3DEV_F4`.
+- `--baselines dspark` is the default; AR and JetSpec++ always run.
+- `--arms` selects `AR,DS,JetSpec++` directly. AR is always included.
 - `--benchmarks gsm8k,math500` selects the benchmarks.
 - `--offsets 0` reads one group of 32 prompts per arm. Fewer than four groups print per-group values without pooling.
-- `--resume` keeps the groups that already validate and reads the rest. An invalid read moves to `invalid/<n>/` before its rerun.
+- `--resume` keeps the groups that already validate and reads the rest. An invalid read moves to a numbered invalid subdirectory before its rerun.
 - `--reduce-only` validates and reduces existing outputs at the same output path.
 
-SSD also needs the pinned `Qwen/Qwen3-0.6B` snapshot (revision `c1899de289a04d12100db370d81485cdf75e47ca`) in the Hugging Face cache that `environment.SSD_HF_CACHE` selects.
+The reader also needs `Qwen/Qwen3-0.6B` at revision `c1899de289a04d12100db370d81485cdf75e47ca`
+in the cache selected by `environment.SSD_HF_CACHE`, as the engine's generic draft slot.
+The target is `Qwen/Qwen3-8B` or `Qwen/Qwen3.8-27B`; use the revision pinned in
+`jetspec/engines/jetspec_plus_plus/config/model.json`. Download the models before running,
+for example with `hf download REPOSITORY --revision REVISION --local-dir DIRECTORY`.
 
 ## Protocol
 

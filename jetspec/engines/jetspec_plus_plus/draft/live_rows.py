@@ -1,7 +1,7 @@
 """F=1 batching of the live kth protocol; wire rows remain guess + 14 drafts."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 import math
@@ -108,7 +108,7 @@ def batch_draft_bucket(count):
 def e04_lean():
     """JETSPEC_E04_LEAN=1 (default off): the e04 joint-rule round without its dead k
     selection and keyed rows, and the BLEND k score with one trip home (exact)."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     value = kernel_value('e04_lean', '0')
     if value not in ('0', '1'):
         raise ValueError('JETSPEC_E04_LEAN must be 0 or 1')
@@ -165,7 +165,7 @@ def rows_rule_cap(run_config=None):
     guessed rows (which do not go through the rule) still need."""
     capacity = int(config_values(run_config).get('engine.engine_settings.rows_cap', '128'))
     cap = int(config_values(run_config).get('method.method_settings.rows_rule_cap', str(capacity)))
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     cap = current_engine().budget.row_cap(cap, capacity)
     from jetspec.engines.jetspec_plus_plus.draft.serve_policy import rows_min_capacity
     cap = rows_min_capacity(cap, run_config=run_config)
@@ -220,11 +220,11 @@ def draft_deadline():
     """JETSPEC_DRAFT_DEADLINE=1 (default off): a round-ahead draft publishes its last completed
     pass instead of running past the verify's running median (minus
     JETSPEC_DRAFT_DEADLINE_MARGIN_MS, default 1.0) from the round start the draft rank sees."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     return current_engine().deadline
 
 
-from jetspec.engines.jetspec_plus_plus.cutoffs import DeadlineClock, DraftDeadlineMiss
+from jetspec.engines.jetspec_plus_plus.runtime.cutoffs import DeadlineClock, DraftDeadlineMiss
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_flag01
 
@@ -376,7 +376,7 @@ def refresh_token_bucket(tokens):
 
 
 def refresh_pack_mode(*, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
     pack = kernel_value('refresh_pack', '0')
     if pack not in ('0', '1', '2'):
         raise ValueError('JETSPEC_REFRESH_PACK must be 0, 1 or 2')
@@ -439,7 +439,7 @@ def served_kpred_pass(passes_run, run_config=None):
     label = (eval_completed_label(passes_run, run_config=run_config) if profile_enabled() else
              pass_name(passes_run, run_config=run_config) if config_values(run_config).get('engine.engine_settings.chain_graph', '0') == 'seg' or lab_on
              else completed_label(passes_run))
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     run_manifest.observe("kpred_pass", (int(passes_run), label), run_config=run_config)
     return label
 
@@ -453,7 +453,7 @@ def load_kpredictor(drafter, *, run_config=None):
         enabled = config_values(run_config).get('method.method_settings.kset') == "predictor" and not off
     else:
         enabled = selected
-    import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+    import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
     run_manifest.record_value("kpred_forward", "legacy" if enabled else "not_loaded", run_config=run_config)
     if not enabled:
         return None
@@ -479,7 +479,7 @@ def require_segmented_rows(run_config):
 class KthRowsDrafter:
     def __init__(self, drafter, *, backend='flashinfer', optimized=False, graphs=False, branches=1, f_graphs=False, run_config=None, target_model_path=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.rows import check_rows_fused_regime
         check_rows_fused_regime(run_config=run_config)
         self.optimized = optimized
@@ -495,7 +495,7 @@ class KthRowsDrafter:
         self.branches = 1 if anchor_mode(run_config=self.run_config) == 'oracle' else branches
         self.drafter = drafter
         self.predictor = None
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         run_manifest.record_value('kpred_forward', 'not_loaded', run_config=run_config)
         self.decoder = None
         if anchor_mode(run_config=self.run_config) == 'decoder':
@@ -503,7 +503,7 @@ class KthRowsDrafter:
             self.decoder = AnchorDecoder.load(config_values(self.run_config)['model.model_settings.heads_dir'], drafter, run_config=run_config,
                                               target_model_path=target_model_path)
         if self.predictor is not None or self.decoder is not None:
-            import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
             run_manifest.record_value('heads_dir', os.path.realpath(config_values(self.run_config)['model.model_settings.heads_dir']), run_config=run_config)
             run_manifest.record_value('heads_dataset', config_values(self.run_config).get('benchmark.benchmark_settings.dataset'), run_config=run_config)
         # Initial live admission has one KV group per hypothesis; FlashInfer's
@@ -636,8 +636,6 @@ class KthRowsDrafter:
             if profile_enabled():
                 ks = ks[:int(config_values(self.run_config).get('method.method_settings.eval_rows', '16'))]
             # every prefilled sequence gets its own exact rows (admission batches the prompts)
-            # JETSPEC_BATCH_DRAFT_GRAPH (armed by prewarm_batch_graphs): the rows replay the
-            # captured N=1 bucket of the miss redraft's shelf instead of an eager bucket
             admission = ({'graphs': True, 'admission': True}
                          if self.__dict__.get('_batch_admission_graphs', False) else {})
             output = [self._exact_anchor0_rows(sequence, ks=ks, passes=passes, **admission, run_config=(run_config if run_config is not None else getattr(self, 'run_config', None)))
@@ -758,8 +756,6 @@ class KthRowsDrafter:
             # evict only their own kind, so an admission no longer evicts the fallback's bucket
             # and the next miss does not rebuild it on the critical path (~6 ms)
             kind = [old for old in buckets if graphs or (old[0] == 1) == (rows == 1)]
-            # the N>1 shelf keeps every prefix bucket prewarm_batch_graphs captured (at least 6),
-            # so a read never recaptures an evicted bucket
             limit = (max(6, self.__dict__.get('_batch_fallback_bucket_limit', 6)) if graphs and batch_graph
                      else 6 if graphs and config_values(self.run_config).get('engine.engine_settings.g_row_buckets') == 'pow2' else 2)
             if len(kind) >= limit:
@@ -776,7 +772,7 @@ class KthRowsDrafter:
         eval_swap = None
         launches = refreshes = 0
         if eval_mode:
-            from jetspec.engines.jetspec_plus_plus.draft.admission_swap import prepare_eager_swap
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.admission_swap import prepare_eager_swap
             # Admission has an exact prefix and no predicted tail. Reuse the same
             # decoder swap and graph-backed draft bucket as the serving round.
             saved_hidden = sequence.staged.predicted_hidden
@@ -1250,7 +1246,7 @@ class BucketPass:
                  host_fast=False,flat=False,graphs=True,refresh=False,anchor0=False,wide=False,
                  pool=None,live_of=None,live_shelf=None, run_config=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
         self.drafter=drafter
         self.graphs=bool(graphs)
         self.pool=pool
@@ -1266,7 +1262,7 @@ class BucketPass:
         head_type=FastBucketRowDraftHead if host_fast else BucketRowDraftHead
         if live_of is not None:
             # JETSPEC_BATCH_ROWS_LIVE: N rows of the flat bucket head ``live_of`` (rows_live.py)
-            from jetspec.engines.jetspec_plus_plus.draft.rows_live import CompactRowHead
+            from jetspec.engines.jetspec_plus_plus.draft.batch.compact_rows import CompactRowHead
             if ((host_fast) or (refresh) or (not flat)):
                 raise ValueError('a live-rows pass is a flat pass without refresh')
             self.head=CompactRowHead(live_of,rows=N,shelf=live_shelf)
@@ -1287,7 +1283,7 @@ class BucketPass:
         d=self.drafter
         if self.wide:
             if getattr(self, '_t14_entry', False):
-                from jetspec.engines.jetspec_plus_plus.kernels.embed_gather import embedding_norm
+                from jetspec.engines.jetspec_plus_plus.kernels.rows.embed_gather import embedding_norm
                 from jetspec.engines.jetspec_plus_plus.draft.rows import fused_kernels
                 norm = self.head.head.layers[0].input_layernorm
                 hidden, normalized = embedding_norm(self.ids, d.embed_tokens.weight,
@@ -1353,12 +1349,12 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     one draft per row and injects entries 0..khat_used, and every later pass keeps
     the pinned tokens.
     """
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
     from jetspec.engines.jetspec_plus_plus.wire.contract import SegmentId
     from jetspec.engines.jetspec_plus_plus.wire.contract import rng_words
-    from jetspec.engines.jetspec_plus_plus.draft.glue import j0_prep
-    from jetspec.engines.jetspec_plus_plus.draft.glue import mask_token_guard
+    from jetspec.engines.jetspec_plus_plus.draft.decoder_window import j0_prep
+    from jetspec.engines.jetspec_plus_plus.draft.decoder_window import mask_token_guard
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import allocate_partials
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import chain_pass
     from jetspec.engines.jetspec_plus_plus.kernels.drafter_pass import reference_chain_pass
@@ -1424,7 +1420,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
                 and refresh_at and refresh_at[0] == 1
                 and kernel_enabled('refresh_prep_lean', '1'))
     if fuse_t17:
-        from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import allocate_refresh
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import allocate_refresh
         outputs['_t17_refresh'] = allocate_refresh(rows, lanes, keys.device, lanes,
             refresh_khat_threshold(False, run_config=run_config))
     if fused_head and (not k3 or keys.device.type != 'cuda'):
@@ -1447,7 +1443,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     if refresh_swap is not None and refresh_swap.fill_mode != 'keep':
         refresh_swap.fill_mask_token = int(bucket.drafter.head.mask_token_id)
     refresh_stream = None
-    from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
     if (refresh_at and transport_enabled('refresh_streams')
             and staged_hidden.dtype == torch.bfloat16):
         if (not staged_hidden.is_cuda or refresh_swap is None
@@ -1458,7 +1454,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
     refresh_projected = [None]
 
     def refresh(pass_index, guard=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if T_ref < rows * rng_words(lanes):
             raise ValueError('B1 refresh needs fixed token capacity')
         d = bucket.drafter
@@ -1545,7 +1541,7 @@ def passes_chain_segments(rp, tokens, keys, active, staged_hidden, bucket, J,
                    **({'guard': guard} if guard is not None else {}))
 
     def pass_body(index, *, do_refresh=False):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         fuse_pins = (fuse_t14 and refresh_swap is not None and not refresh_swap.states_only
                      and kernel_enabled('chain_mr_glue_lean', '1') and bucket.ids.is_cuda)
         if eval_mode:
@@ -2064,10 +2060,10 @@ def rows_chain_body(rp, tokens, offers_ids, offers_p64, offers_pack, dec_logits,
                     R, *, thresholds, dataset, tau_table, temperature,
                     out, previous_mass16=None, run_config=None):
     """Resolve engine configuration and call the method's fixed-shape cache-row rule."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.wire.contract import Offset
     if kernel_enabled('rows_k3', '1') and dec_logits.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.kernels.joint_row_rule import rows_k3_body
+        from jetspec.engines.jetspec_plus_plus.kernels.rows.joint_row_rule import rows_k3_body
         from jetspec.engines.jetspec_plus_plus.draft.serve_policy import rows_min_count
         from jetspec.engines.jetspec_plus_plus.runtime.profile import enabled as profile_enabled
         return rows_k3_body(
@@ -2510,7 +2506,7 @@ def admission_hypotheses(hypotheses, *, block=None, run_config=None):
 @torch.inference_mode()
 def admission_refinement(forward, *, anchors, hypotheses, sequences, passes, convergence_limit, output_hypotheses=None, fixed_wire_capacity=None, output_indices=None, row_keys=None, pinned_tokens=None, correction_head=None, fixed_passes=False, refresh_swap=None, lab_pins=None, lab_touched=None, final_edit=None, label_passes=None, lab_written=None, lab_written_p=False, lab_pass=None, lab_top=None, run_config=None):
     """Round-zero refinement with the exact metadata, swap staging and tau lab hooks."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     limit = convergence_limit if passes is None else passes
     if limit < 1:
         raise ValueError('passes must be positive')

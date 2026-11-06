@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 import json
@@ -13,9 +13,9 @@ from time import perf_counter
 import torch
 from torch.nn import functional as F
 
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import BlockheadProposal
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import BlockheadProposal
 from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import CACHE_BUCKETS
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
 
 
 CACHE_CAPACITY = 768
@@ -53,7 +53,7 @@ class StaticBlockheadGraph:
 
     def __init__(self, drafter, *, capacity: int = CACHE_CAPACITY, _force_stock: bool = False,
                  run_config=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         self.run_config = run_config if run_config is not None else RunConfig.from_environment({})
         self.drafter = drafter
         self.head = drafter.head
@@ -87,15 +87,15 @@ class StaticBlockheadGraph:
         self.qkv_fused = not _force_stock and kernel_enabled('blockhead_qkv_fused', '1')
         self.lmhead_kn = not _force_stock and kernel_enabled('blockhead_lmhead_kn', '1')
         if self.glue_lean:
-            import jetspec.engines.jetspec_plus_plus.kernels.c1_fused as c1_fused
+            import jetspec.engines.jetspec_plus_plus.kernels.fused_decoder as c1_fused
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache_slots
             self._fused = c1_fused
             self._kv_rotary_into_cache = kv_rotary_into_cache
             self._kv_rotary_into_cache_slots = kv_rotary_into_cache_slots
         if self.attn_len:
-            from jetspec.engines.jetspec_plus_plus.kernels.jpass_len_attention import attend
-            from jetspec.engines.jetspec_plus_plus.kernels.jpass_len_attention import blockhead_mask
+            from jetspec.engines.jetspec_plus_plus.kernels.passes.jpass_len_attention import attend
+            from jetspec.engines.jetspec_plus_plus.kernels.passes.jpass_len_attention import blockhead_mask
             self._attend = attend
             self._blockhead_mask = blockhead_mask
             if self.capacity % 64:

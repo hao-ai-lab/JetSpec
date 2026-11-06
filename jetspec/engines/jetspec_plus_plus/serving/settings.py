@@ -1,5 +1,5 @@
 """Read launch settings from a received record or its owning rank."""
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
 
 
 def config_for(owner):
@@ -24,7 +24,7 @@ def setting(owner, path, default=None):
 def required_setting(owner, path):
     value = setting(owner, path)
     if value is None:
-        from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+        from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
         category, field = path.split('.', 1)
         raise KeyError(environment_name(category, field))
     return value

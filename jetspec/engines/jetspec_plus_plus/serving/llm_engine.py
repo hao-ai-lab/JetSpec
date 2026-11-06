@@ -1,27 +1,23 @@
 import os
 import time
 
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sampling_params import SamplingParams
-from jetspec.engines.jetspec_plus_plus.serving.misc import infer_model_family
+from jetspec.engines.jetspec_plus_plus.serving.token_text import infer_model_family
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
 from jetspec.engines.jetspec_plus_plus.models.target import JETSPEC_TARGET_LAYER_IDS
 from jetspec.engines.jetspec_plus_plus.draft.rank import DraftRunner
-from jetspec.methods.baselines.fanout_tree import FanoutTreeDraftRunner
-from jetspec.engines.jetspec_plus_plus.verify.multirow import SpeculatorAsync
-from jetspec.methods.baselines.speculator_sync import SpeculatorSync
-from jetspec.methods.baselines.speculator_blockhead import SpeculatorBlockhead
+from jetspec.engines.jetspec_plus_plus.serving._source_checkout import baseline_module
+from jetspec.engines.jetspec_plus_plus.verify.speculator import SpeculatorAsync
 from jetspec.engines.jetspec_plus_plus.verify.step import InferenceStep
 from jetspec.engines.jetspec_plus_plus.verify.step import AutoRegressiveStep
 from jetspec.engines.jetspec_plus_plus.verify.step import SpecDecodeStep
 from jetspec.engines.jetspec_plus_plus.verify.forward import Verifier, TargetRunner
 from jetspec.engines.jetspec_plus_plus.trace import host_census
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import blockhead_config_overrides
-from jetspec.engines.jetspec_plus_plus.runtime.blockhead_serve import complete_metric_rounds
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import blockhead_config_overrides
+from jetspec.engines.jetspec_plus_plus.runtime.linear_head import complete_metric_rounds
 from jetspec.engines.jetspec_plus_plus.wire.protocol import summarize_candidate_kinds
-from jetspec.methods.baselines.sync_drafter import sync_drafter_config_overrides
-from jetspec.methods.baselines.sync_drafter import sync_drafter_dir
 
 import atexit
 import contextlib
@@ -93,8 +89,8 @@ METRICS = {
 class LLMEngine:
 
     def __init__(self, model, *, model_entry=None, **kwargs):
-        from jetspec.engines.jetspec_plus_plus.engine import Engine, install_engine
-        from jetspec.engines.jetspec_plus_plus.run_config import RunConfig, launch_environment
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine, install_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig, launch_environment
         config_read = kwargs.pop('config_read', None)
         self.run_config = kwargs.pop('run_config', None)
         if self.run_config is None:
@@ -102,7 +98,7 @@ class LLMEngine:
                                else RunConfig.from_environment(launch_environment({key: value for key, value in os.environ.items() if key not in ('JETSPEC_HOST', 'JETSPEC_SHM_NAME')}),
                                                                model_entry=model_entry))
         self.engine = kwargs.pop('engine', None)
-        from jetspec.engines.jetspec_plus_plus.serving.paths import install_architecture
+        from jetspec.engines.jetspec_plus_plus.runtime.paths import install_architecture
         install_architecture(self.run_config)
         if self.engine is None:
             self.engine = (Engine.from_config(config_read['config']) if config_read is not None else
@@ -117,13 +113,20 @@ class LLMEngine:
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         self.blockhead_checkpoint_dir = self.run_config.model.model_settings.blockhead
+        if self.blockhead_checkpoint_dir:
+            baseline_module('speculator_blockhead')
         config_kwargs = blockhead_config_overrides(
             self.blockhead_checkpoint_dir, config_kwargs
         , run_config=self.run_config)
-        self.sync_drafter_checkpoint_dir = sync_drafter_dir(self.run_config)
-        config_kwargs = sync_drafter_config_overrides(
-            self.sync_drafter_checkpoint_dir, config_kwargs, self.run_config
-        )
+        self.sync_drafter_checkpoint_dir = self.run_config.model.model_settings.sync_drafter or None
+        if self.sync_drafter_checkpoint_dir:
+            config_kwargs = baseline_module('sync_drafter').sync_drafter_config_overrides(
+                self.sync_drafter_checkpoint_dir, config_kwargs, self.run_config)
+        if config_kwargs.get('use_eagle'):
+            baseline_module('eagle3_draft_llama3')
+        if (config_kwargs.get('speculate') and not config_kwargs.get('jetspec')
+                and not self.blockhead_checkpoint_dir and not self.sync_drafter_checkpoint_dir):
+            baseline_module('fanout_tree' if config_kwargs.get('draft_async') else 'speculator_sync')
         config = Config(model, **{**config_kwargs, **({'run_config': self.run_config} if 'run_config' in config_fields else {})})
         # This immutable record travels with the existing spawn payload to both ranks.
         config.engine = self.engine
@@ -132,8 +135,7 @@ class LLMEngine:
         self.config = config
         eagle3_model_class = None
         if config.use_eagle:
-            from jetspec.methods.baselines.eagle3_draft_llama3 import Eagle3DraftForCausalLM
-            eagle3_model_class = Eagle3DraftForCausalLM
+            eagle3_model_class = baseline_module('eagle3_draft_llama3').Eagle3DraftForCausalLM
         if self.run_config.hardware.hardware_settings.draft_split:
             raise ValueError('retired split draft requires a sealed historical read')
         Sequence.block_size = config.kvcache_block_size 
@@ -181,7 +183,8 @@ class LLMEngine:
             draft_rank = config.num_gpus - 1
             self.draft_ps = []
             for rank in (draft_rank,):
-                draft_runner_class = DraftRunner if config.jetspec else FanoutTreeDraftRunner
+                draft_runner_class = (DraftRunner if config.jetspec else
+                                      baseline_module('fanout_tree').FanoutTreeDraftRunner)
                 from jetspec.engines.jetspec_plus_plus.serving.settings import run_rank
                 process = ctx.Process(target=run_rank, args=(
                     draft_runner_class, config, rank, init_q, eagle3_model_class, self.engine, self.run_config))
@@ -488,7 +491,7 @@ class LLMEngine:
                 if self.num_tp_gpus > 1 and not hasattr(self.model_runner.model, "jetspec_full_vocab"):
                     # The rank-0 sync-slot head reads the full vocab rows the TP ranks shard.
                     self.model_runner.call("gather_full_vocab_weights")
-                speculator = SpeculatorBlockhead(
+                speculator = baseline_module('speculator_blockhead').SpeculatorBlockhead(
                     lookahead=config.speculate_k,
                     device=config.device,
                     checkpoint_dir=self.blockhead_checkpoint_dir,
@@ -499,8 +502,7 @@ class LLMEngine:
                     max_num_seqs=config.max_num_seqs,
                 )
             elif self.sync_drafter_checkpoint_dir:
-                from jetspec.methods.baselines.speculator_sync_drafter import SpeculatorSyncDrafter
-                speculator = SpeculatorSyncDrafter(
+                speculator = baseline_module('speculator_sync_drafter').SpeculatorSyncDrafter(
                     lookahead=config.speculate_k,
                     device=config.device,
                     checkpoint_dir=self.sync_drafter_checkpoint_dir,
@@ -546,7 +548,7 @@ class LLMEngine:
                     speculator.adopt_candidate_stream(previous)
                 self._jetspec_stream_owner = speculator
             else:
-                speculator = SpeculatorSync(
+                speculator = baseline_module('speculator_sync').SpeculatorSync(
                     lookahead=config.speculate_k,
                     device=config.device,
                     draft_model_runner=self.draft_runner,
@@ -660,7 +662,7 @@ class LLMEngine:
                 self.config.jetspec_taps_dump,
             )
 
-        from jetspec.engines.jetspec_plus_plus.profiles import get_profile
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile
         if get_profile(self.engine.profile).compile_pin:
             # Bench uses this boundary so the pre-seal rank checks do not move served tok/s.
             self._generate_served_end_time = time.time()

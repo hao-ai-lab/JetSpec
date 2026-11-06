@@ -6,7 +6,6 @@ tau use the pre-drafted outcome flag on steady rounds. Repeated reads of a group
 are averaged before pooling groups, so repeats do not increase its weight.
 """
 import argparse
-import contextlib
 import csv
 import json
 import os
@@ -18,29 +17,21 @@ import sys
 from . import protocol
 from .analyze import aggregate, per_prompt
 from .rule_a import rule_a
-from jetspec.engines.jetspec_plus_plus.launch import entry, runner
+from jetspec.engines.jetspec_plus_plus.launch import runner
 
 ROOT = Path(__file__).resolve().parents[3] / 'jetspec/engines/jetspec_plus_plus'
 MODELS = {'qwen3-8b': '8b', 'qwen3.8-27b': '27b'}
-PAPER_ARMS = {'8b': ('AR', 'DS', 'DFlash', 'SSD', 'J1R1REF_F4'),
-              '27b': ('AR', 'DS', 'J3R3DEV_F4')}
-NAMES = {'DS': 'DSpark', 'J1R1REF_F4': 'JetSpec++', 'J3R3DEV_F4': 'JetSpec++'}
-# Baselines by name. AR (the speedup denominator) and the JetSpec++ arm always run; DSpark is the default
-# comparison and all restores the paper population.
-BASELINES = {'8b': {'dspark': 'DS', 'dflash': 'DFlash', 'ssd': 'SSD'}, '27b': {'dspark': 'DS'}}
-METHOD_ARMS = {'8b': 'J1R1REF_F4', '27b': 'J3R3DEV_F4'}
+PAPER_ARMS = {'8b': ('AR', 'DS', 'JetSpec++'), '27b': ('AR', 'DS', 'JetSpec++')}
+NAMES = {'DS': 'DSpark'}
+BASELINES = {'8b': {'dspark': 'DS'}, '27b': {'dspark': 'DS'}}
+METHOD_ARMS = {'8b': 'JetSpec++', '27b': 'JetSpec++'}
 OFFSETS = (0, 32, 64, 96)
 WEIGHTS = dict(tok_s='steady_ms', tau='rounds', round='steady_rounds',
                verify='verify_rounds', hit='cache_rounds',
                tau_hit='hit_rounds', tau_miss='miss_rounds')
 # The 27B pair reads run the chain-graph error audit; the protocol requires its zero word every round.
 AUDIT = Path(__file__).resolve().parent / 'audit'
-AUDITED_27B = ('J1R1REF_F4', 'J3R3REF_F4', *protocol.DEV_ARMS_27B)
-# The public Hugging Face release swaps only the JetSpec++ recipes: same serving environment,
-# release drafter, adapter and calibration (release_recipes.py derives them from the paper ones).
-RELEASE_RECIPES = {
-    ('8b', 'J1R1REF_F4'): 'jetspecpp-reference-pair-e6v3-b16-chain-r4-j1r1-lean-swap-fast6-table3-release',
-    ('27b', 'J3R3DEV_F4'): 'jetspecpp-device-pair-27b-drafter6ep-p2-cal28-j3r3-swap-dspark-release'}
+AUDITED_27B = ('JetSpec++',)
 
 
 def parser():
@@ -51,14 +42,12 @@ def parser():
     p.add_argument('--devices', default='0,1')
     p.add_argument('--benchmarks', default='gsm8k,math500')
     p.add_argument('--baselines', default='dspark',
-                   help='comma-separated baselines beside AR and JetSpec++: dspark, dflash, ssd (8B only), '
+                   help='comma-separated baselines beside AR and JetSpec++: dspark, '
                         'or all for the paper population')
     p.add_argument('--arms', help='comma-separated protocol arm names, overriding --baselines; AR is always included')
     p.add_argument('--offsets', default='0,32,64,96',
                    help='prompt groups to read; fewer than four prints per-group values without pooling')
-    p.add_argument('--assets', choices=('paper', 'release'), default='paper',
-                   help='paper: the artifacts the paper measured; release: the public Hugging Face '
-                        'JetSpec++ release (baselines keep their checkpoints)')
+    p.add_argument('--assets', choices=('release',), default='release', help='public release checkpoints')
     p.add_argument('--output-dir', type=Path, default=Path('bench/outputs/jetspec_plus_plus_table3'))
     p.add_argument('--resolve-only', action='store_true', help='print config and launch plans on CPU, without weights')
     p.add_argument('--reduce-only', action='store_true', help='validate and reduce existing group outputs')
@@ -102,15 +91,14 @@ def write_json(path, value):
 
 
 def sealed_source(model, dataset, tokenizer=None):
-    name = ('27b-sys' if model == '27b' else model) + f'/prompts_{dataset}128.json'
-    path = protocol.INPUTS / name
-    seals = json.loads((protocol.INPUTS / 'seals.json').read_text())
-    assert protocol.sha256(path) == seals[name], 'SEALED_SOURCE_SHA'
+    from bench.jetspec_plus_plus.dataloader import pinned_prompts
+    path = pinned_prompts(protocol.SOURCES[model], dataset)
+    assert protocol.sha256(path) == protocol.HASHES[model][dataset], 'SEALED_SOURCE_SHA'
     source = json.loads(path.read_text())
     assert [r['index'] for r in source['prompts']] == list(range(128)), 'SEALED_SOURCE_INDICES'
     if tokenizer is not None:
-        for row in source['prompts']:
-            assert tokenizer.encode(row['text'], add_special_tokens=False) == row['token_ids'], 'TOKEN_IDENTITY'
+        assert all(tokenizer.encode(r['text'], add_special_tokens=False) == r['token_ids']
+                   for r in source['prompts']), 'TOKEN_IDENTITY'
     return source
 
 
@@ -121,33 +109,12 @@ def prepare(job, directory, args):
     prompts = directory / 'prompts.json'
     if not args.reduce_only:
         write_json(prompts, group)
-    method, name, _ = protocol.ARMS[job['model']][job['arm']]
-    recipe = runner.load_recipe(ROOT, method, 'graphed', name)
-    # All paper heads have budget 16; SSD and AR use the same minimum reservation.
-    # Execution additionally checks the actual local model/head configs below.
+    record = protocol.read_record(job, directory / 'read.json', args.output_dir / 'compiler-cache')
+    recipe = record['recipe']
     lookahead = max(runner.MIN_LOOKAHEAD, int(recipe['environment'].get('JETSPEC_BLOCK_SIZE_READ', '16')))
     needed = max(len(p['token_ids']) for p in group['prompts']) + 2048 + lookahead
     capacity = max(runner.MAX_MODEL_LEN_FLOOR, -(-needed // runner.KV_BLOCK_SIZE) * runner.KV_BLOCK_SIZE)
-    if not args.resolve_only and not args.reduce_only:
-        host = runner.load_host_values(args.host_values)
-        blockhead = host['artifacts'].get(recipe.get('blockhead_artifact'))
-        if blockhead is None and args.artifacts_dir and recipe.get('blockhead_artifact'):
-            blockhead, _ = runner.artifact_directory(recipe['blockhead_artifact'], runner._manifest_artifacts(),
-                                                     host, args.artifacts_dir)
-        capacity = runner.resolve_max_model_len(prompts, 32, 2048, method, recipe['environment'],
-                    host['environment']['JETSPEC_TARGET_MODEL_PATH'], blockhead,
-                    forced=recipe.get('max_model_len'))['value']
-    argv = protocol.build_argv(job['arm'], job['dataset'], job['devices'], directory, prompts,
-                               recipe.get('max_model_len', capacity), model=job['model'],
-                               allowed_devices=tuple(args.devices.split(',')))
-    # One persistent compiler cache root for the whole run, which the reader's --cache-root expects
-    # ("shared by serial reads"). A fresh root per group recompiles every group, and a pinned pair's
-    # cold warmup can then exceed the 10-minute NCCL timeout of the first pair receive.
-    argv[argv.index('--cache-root') + 1] = str((args.output_dir / 'compiler-cache').resolve())
-    if args.host_values:
-        argv[argv.index('--host-values') + 1] = str(args.host_values.resolve())
-    if args.artifacts_dir:
-        argv += ['--artifacts-dir', str(args.artifacts_dir.resolve())]
+    argv = protocol.build_argv(job, directory, prompts, capacity, record, args)
     return source, argv
 
 
@@ -166,19 +133,7 @@ def set_aside(directory):
     return target
 
 
-@contextlib.contextmanager
-def assets(name):
-    """Point the JetSpec++ arms at the chosen assets; every other condition and check stays the paper's."""
-    saved = {key: protocol.ARMS[key[0]][key[1]] for key in RELEASE_RECIPES}
-    try:
-        if name == 'release':
-            for (model, arm), recipe in RELEASE_RECIPES.items():
-                method, _, placement = saved[model, arm]
-                protocol.ARMS[model][arm] = (method, recipe, placement)
-        yield
-    finally:
-        for (model, arm), value in saved.items():
-            protocol.ARMS[model][arm] = value
+
 
 
 def read_environment(job, env):
@@ -189,21 +144,9 @@ def read_environment(job, env):
 
 
 def launch_plan(job, argv):
-    """Resolve the same named composition and protocol arguments without artifacts."""
     args = runner._parser().parse_args(argv[3:])
-    rows = json.loads((ROOT / 'launch/recipe-index.json').read_text())['rows']
-    row = next(r for r in rows if r.get('launch', {}).get('name') == args.recipe)
-    overrides = list(row['overrides']) + [
-        'hardware.placement=' + json.dumps(args.placement),
-        'hardware.devices=' + json.dumps(list(range(len(args.devices.split(','))))),
-        'hardware.cpu_pin=' + json.dumps(args.cpu_pin), 'benchmark.count=32', 'benchmark.cap=2048',
-        'benchmark.stop_at_eos=true', 'benchmark.temperature=0', 'benchmark.seed=0', 'benchmark.repeats=1']
-    record = entry.resolve_read(row['names'], overrides, root=ROOT / 'config', launch=row['launch'],
-                                output=args.output_json, sequential_prompts=True,
-                                cache_root=args.cache_root, wire_records='off', anatomy='off')
-    # The protocol supplies the exact runtime knobs, policy and deadline flags.
-    runtime_recipe = runner.load_recipe(ROOT, args.method, args.regime, args.recipe)
-    return dict(**job, composition=record, runtime_recipe=runtime_recipe, argv=argv)
+    record = protocol.read_record(job, args.output_json, args.cache_root)
+    return dict(**job, composition=record, runtime_recipe=record['recipe'], argv=argv)
 
 
 def reduce_rows(rows):
@@ -236,8 +179,8 @@ def reduce_directory(directory, job, source):
         saved = json.loads(saved_path.read_text())[0]
         assert protocol.sha256(output) == saved['output_sha256'], 'OUTPUT_RECEIPT_SHA'
         assert protocol.sha256(Path(str(output) + '.campaign.json')) == saved['campaign_sha256'], 'CAMPAIGN_RECEIPT_SHA'
-    receipt = protocol.validate_read(output, directory/'read.log', job['arm'], job['dataset'],
-                                     directory/'prompts.json', source, job['offset'], model=job['model'])
+    record = json.loads((directory/'plan.json').read_text())['composition']
+    receipt = protocol.validate_read(output, directory/'read.log', job, directory/'prompts.json', source, record)
     campaign = json.loads(Path(str(output) + '.campaign.json').read_text())
     raw = json.loads(output.read_text())
     measured = campaign['reads'][0]['measured']
@@ -247,7 +190,7 @@ def reduce_directory(directory, job, source):
                        campaign['resolved_condition']['eos_token_ids'],
                        chain_lite=measured.get('chain', {}).get('anatomy_lite'))
     eos = aggregate(rows)
-    native = receipt['ssd_eos'] if job['arm'] == 'SSD' else measured
+    native = measured
     assert abs(eos['tps_pooled']/native.get('tps_eos_stopped',native.get('tps_pooled'))-1) < 1e-10, 'NATIVE_TPS_MISMATCH'
     assert abs(eos['tau_eos']/native.get('tau_eos_stopped',native.get('tau_eos'))-1) < 1e-10, 'NATIVE_TAU_MISMATCH'
     result = dict(**job, **reduce_rows(rows), receipt=receipt)
@@ -296,8 +239,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     if not args.resolve_only and not args.reduce_only and args.host_values is None:
         parser().error('--host-values is required for execution')
-    with assets(args.assets):
-        return run(args)
+    return run(args)
 
 
 def run(args):
@@ -312,6 +254,8 @@ def run(args):
         source, command = prepare(job, directory, args)
         plan = launch_plan(job, command)
         plans.append(plan)
+        if not args.reduce_only:
+            write_json(directory/'plan.json', plan)
         if args.resolve_only:
             print(json.dumps(plan, sort_keys=True))
             continue
@@ -326,7 +270,8 @@ def run(args):
                 set_aside(directory)
             for attempt in (1, 2):
                 with (directory/'read.log').open('w') as log:
-                    rc = subprocess.run(command, cwd=repo, stdout=log, stderr=subprocess.STDOUT,
+                    rc = subprocess.run([sys.executable, '-m', 'bench.jetspec_plus_plus.paper.read',
+                                         str(directory/'plan.json')], cwd=repo, stdout=log, stderr=subprocess.STDOUT,
                                         env=read_environment(job, env)).returncode
                 if rc == 0:
                     break

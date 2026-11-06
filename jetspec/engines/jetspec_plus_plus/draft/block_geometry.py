@@ -34,6 +34,4 @@ def window_rows(environ=None, *, run_config=None):
     return Geometry(block_width(environ, run_config=run_config) or 0).window_rows
 
 
-def staged_context(run_config=None):
-    from jetspec.engines.jetspec_plus_plus.draft.drafter import OneRoundAdaptedContext
-    return OneRoundAdaptedContext(max_adapted=window_rows(run_config=run_config))
+

@@ -1,19 +1,19 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 import os
 import sys
 
 import torch
 from torch import nn
 from torch.nn import functional as torch_functional
-from jetspec.engines.jetspec_plus_plus._optional import triton
-from jetspec.engines.jetspec_plus_plus._optional import tl
+from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
+from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
 
 # A spawned rank imports this module before it installs its engine. install_engine binds the
 # backend again, here and in every module that imports the name.
 BACKEND_IMPORTERS = ('jetspec.engines.jetspec_plus_plus.serving.model_runner', 'jetspec.engines.jetspec_plus_plus.serving.graphs',
-                     'jetspec.engines.jetspec_plus_plus.verify.forward', 'jetspec.methods.baselines.fanout_graphs')
+                     'jetspec.engines.jetspec_plus_plus.verify.forward', 'bench.jetspec_plus_plus.baselines.fanout_graphs')
 
 
 def attention_backend(selected=None):
