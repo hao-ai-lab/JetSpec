@@ -138,161 +138,8 @@ def _draft_verifier_kind_from_pins(candidate, *, seq_id, round_id, true_k, corre
     return 'miss'
 
 
-class DraftRunner(ModelRunner):
-    
-    @classmethod
-    def create_draft_config(cls, cfg: Config, run_config=None) -> Config:
-        """Create a draft config from the main config without instantiating DraftRunner."""
-        run_config = (run_config if run_config is not None else
-                      getattr(cfg, 'run_config', None))
-        if run_config is None:
-            raise ValueError('DraftRunner missing RunConfig launch_overlay')
-        from jetspec.engines.jetspec_plus_plus.draft.live_rows import resolve_admission_count
-        if cfg.jetspec and run_config.engine.engine_settings.auto == '1':
-            raise ValueError('retired variant fuse: the automatic route requests all fusion')
-        draft_cfg = dataclasses.replace(
-            cfg,
-            model=cfg.draft,
-            jetspec_config_is_draft=True,
-            jetspec_passes=cfg.jetspec_passes,
-            jetspec_hyp=(resolve_admission_count(cfg.jetspec_hyp, run_config=run_config)
-                         if cfg.jetspec and run_config.engine.engine_settings.rows == "1" else cfg.jetspec_hyp),
-            # The rows module has its own KV and logits buffers after this
-            # ordinary draft cache is allocated (prefill can exceed decode N).
-            gpu_memory_utilization=((0.35 if run_config.engine.engine_settings.rows_fast == "1" else 0.5)
-                                    if cfg.jetspec and run_config.engine.engine_settings.rows == "1"
-                                    else (0.75 if not cfg.draft_async else 0.8)),
-            tokenizer_path=cfg.model if cfg.use_eagle else None,
-            d_model_target=cfg.hf_config.hidden_size if cfg.use_eagle and cfg.hf_config else None,
-            jetspec_tap_hidden_size=(
-                cfg.hf_config.hidden_size if cfg.jetspec_taps else None
-            ),
-            enforce_eager=True if cfg.jetspec else cfg.enforce_eager,
-            target_dtype=None,
-        )
-        # Config.__post_init__ skipped its target-only checks for this copy; the taps came validated.
-        assert draft_cfg.jetspec_config_is_draft
-        assert draft_cfg.jetspec_target_layer_ids == cfg.jetspec_target_layer_ids
-        draft_cfg.run_config = run_config
-        return draft_cfg
-
-    def __init__(self, cfg: Config, rank: int = 0, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting
-        from jetspec.engines.jetspec_plus_plus.draft.config import with_method_settings
-        self.run_config = (run_config if run_config is not None else
-                           getattr(cfg, 'run_config', None))
-        if self.run_config is None:
-            raise ValueError('DraftRunner missing RunConfig launch_overlay')
-        self.run_config = with_method_settings(self.run_config, getattr(cfg, 'method_settings', None))
-        self.profile_draft = self.run_config.engine.engine_settings.profile_draft == "1"
-        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, install_engine
-        self.engine = install_engine(engine if engine is not None else getattr(cfg, 'engine', None) or current_engine())
-        from jetspec.engines.jetspec_plus_plus.draft.serve_policy import install_method_settings
-        install_method_settings(getattr(cfg, 'method_settings', None))
-        self._hybrid_pair_layout = None
-        if self.run_config.engine.engine_settings.hybrid_pair == "1":
-            from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridPairLayout
-            if cfg.speculate_k not in (15, 31):
-                raise ValueError("hybrid pair transfer requires b16/b32")
-            self._hybrid_pair_layout = HybridPairLayout.from_config(
-                cfg.hf_config, lanes=cfg.speculate_k + 1)
-        self._chain_mode = cfg.jetspec and self.run_config.engine.engine_settings.chain_graph == "seg"
-        if self._chain_mode:
-            from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import apply_chain_capacity
-            capacities = legacy_values(self.run_config)
-            apply_chain_capacity(capacities, cfg.max_model_len, lanes=cfg.speculate_k + 1)
-            self.run_config = with_settings(self.run_config, {
-                path: capacities[legacy_name(path)] for path in (
-                    'engine.engine_settings.w259_c1_cache_capacity',
-                    'engine.engine_settings.decoder_cache_capacity')})
-            if cfg.max_num_seqs != 1:
-                raise ValueError("JETSPEC_CHAIN_GRAPH=seg requires N=1")
-            if (setting(self.run_config, 'engine.engine_settings.jetspec_verify_device', "0") != "1"
-                    and current_engine().kind != 'reference'):
-                raise ValueError("JETSPEC_CHAIN_GRAPH=seg requires device or reference verification")
-        self.draft_cfg = self.create_draft_config(cfg, run_config=self.run_config)
-        self.run_config = self.draft_cfg.run_config
-        self.draft_cfg.method_settings = getattr(cfg, 'method_settings', None)
-        super().__init__(self.draft_cfg, rank=rank, event=None, is_draft=True, num_tp_gpus=1, init_q=init_q, eagle3_model_class=eagle3_model_class, engine=self.engine, run_config=self.run_config)
-        
-        if self.config.use_eagle:
-            assert self.config.jit_speculate, \
-                "EAGLE requires jit_speculate=True (cache misses need draft activations)"
-
-        self.jetspec_tap_mirrors = {}
-        self._jetspec_tap_recv_ms = []
-        self._jetspec_tap_payload_bytes = []
-        self.jetspec_drafter = None
-        self.jetspec_sequences = {}
-        self.jetspec_candidate_sets = {}
-        self.jetspec_block_objects = {}
-        self.jetspec_candidate_ms = {}
-        self._jetspec_candidate_send_id = 0
-        self._jetspec_next_request_receive_id = 0
-        self._jetspec_control_receive_id = 0
-        self._jetspec_pending_rounds = {}
-        self._jetspec_last_drafted_round = {}
-        self._jetspec_sent_candidates = set()
-        self._jetspec_wire_capacity = None
-        self._chain_runtime = None
-        self._pair_transport = None
-        self.oracle_anchor = self.config.jetspec and anchor_mode(run_config=self.run_config) == 'oracle'
-        if self.oracle_anchor and (setting(self.run_config, 'engine.engine_settings.rows') != '1'
-                or self.config.jetspec_sync or self.config.jetspec_wait_ms != float('inf')):
-            raise ValueError('oracle anchor requires asynchronous rows with infinite wait')
-        if self.config.jetspec:
-            self.jetspec_drafter = JetSpecDrafter.load(
-                self.config.jetspec_checkpoint_dir,
-                self.config.jetspec_adapter_config,
-                self.config.jetspec_adapter_head,
-                self.config.jetspec_target_release_weights,
-                self.device,
-            run_config=run_config)
-            if setting(self.run_config, 'model.model_settings.draft_dtype') == "fp32":
-                for module in (self.jetspec_drafter.head, self.jetspec_drafter.embed_tokens,
-                               self.jetspec_drafter.lm_head, self.jetspec_drafter.adapter.head):
-                    module.float()
-                self.jetspec_drafter.dtype = torch.float32
-            self.jetspec_rows = None
-            if setting(self.run_config, 'engine.engine_settings.rows', "0") == "1":
-                if self.config.jetspec_sync or (self.config.jetspec_wait_ms != float("inf")
-                        and setting(self.run_config, 'engine.engine_settings.rows_fast', "0") != "1"
-                        and setting(self.run_config, 'engine.engine_settings.w241_async_rows', "0") != "1"):
-                    raise ValueError("JETSPEC_ROWS requires the waiting kth protocol")
-                from jetspec.engines.jetspec_plus_plus.draft.live_rows import KthRowsDrafter
-                backend = "sdpa" if self.jetspec_drafter.dtype == torch.float32 else "flashinfer"
-                self.jetspec_rows = KthRowsDrafter(self.jetspec_drafter, backend=backend,
-                    optimized=setting(self.run_config, 'engine.engine_settings.rows_fast', "0") == "1",
-                    graphs=setting(self.run_config, 'engine.engine_settings.rows_graphs', "0") == "1", branches=branch_count(run_config=self.run_config),
-                    f_graphs=setting(self.run_config, 'engine.engine_settings.f_graphs', "0") == "1", run_config=self.run_config, target_model_path=cfg.model)
-                print(f"W234_ROWS=enabled F={branch_count(run_config=run_config)} live-kth adapter=shared-prefix", flush=True)
-                # serving: the miss fallback row and the round-ahead draft deadline (both default off)
-                self._w320_redraft = miss_redraft(run_config=run_config)
-                self._w320_force = self._w320_redraft and miss_redraft_force(run_config=run_config)
-                self._w320_clock = DeadlineClock(run_config=self.run_config) if draft_deadline() else None
-                self.jetspec_rows.deadline = self._w320_clock
-                if (self._w320_redraft or self._w320_clock is not None) and (
-                        ((self.config.jetspec_wait_ms != float("inf")) or (self._w320_clock is not None and self.config.max_num_seqs != 1) or (anchor_mode(run_config=run_config) == 'oracle'))):
-                    raise ValueError("these flags require infinite wait, no tree budget, no oracle; "
-                                     "the deadline also requires N=1")
-            if self.config.jetspec_draft_graphs and self.jetspec_rows is None:
-                raise ValueError('retired graphed draft head requires a sealed historical read')
-            print("W220_DRAFT_GRAPHS=disabled adapter=eager", flush=True)
-
-        self.jetspec_catchup_drafter = self.jetspec_drafter
-        if (self.config.jetspec and self.jetspec_rows is not None and self.jetspec_rows.optimized
-                and self.config.jetspec_wait_ms != float('inf') and self.config.jetspec_draft_graphs):
-            raise ValueError('retired graphed catchup head requires a sealed historical read')
-
-        if self.is_draft and self.draft_async:
-            self._prepare_async_draft()
-            self._draft_step_times = []
-            print(f'DraftRunner set up, starting draft_loop', flush=True)
-            self.draft_loop(run_config=self.run_config)
-
-    def _prepare_async_draft(self):
-        """Prepare method-specific buffers before entering the async loop."""
-        pass
+class DraftPrefill:
+    """Receive draft prefill inputs and prepare their attention context."""
 
     def draft_async_prefill(self, run_config=None):
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
@@ -517,6 +364,45 @@ class DraftRunner(ModelRunner):
 
 
 
+
+    def prepare_prefill_ctxt(
+        self,
+        num_tokens: torch.Tensor,  # [B]
+        draft_block_table: torch.Tensor,  # [B, max_blocks]
+    ) -> dict:
+        """
+        Prepare context for prefill forward pass.
+        """
+        B = num_tokens.shape[0]
+        total = num_tokens.sum().item()
+        cu_seqlens_q = torch.zeros(B + 1, dtype=torch.int32, device=self.device)
+        cu_seqlens_q[1:] = torch.cumsum(num_tokens, dim=0)
+        batch_indices = torch.arange(B, device=self.device, dtype=torch.int64).repeat_interleave(num_tokens)
+        positions = torch.arange(total, device=self.device, dtype=torch.int64) - cu_seqlens_q[:-1].to(torch.int64).repeat_interleave(num_tokens)
+        max_seqlen_q = num_tokens.max().item()
+
+        # Calculate block indices and offsets for ALL positions
+        block_indices = (positions // self.block_size).to(torch.int64)
+        offsets = (positions % self.block_size).to(torch.int32)
+
+        # Get block IDs for each position from dbt
+        block_ids = draft_block_table[batch_indices, block_indices]
+
+        # Calculate slot_map for each position
+        slot_map = (block_ids * self.block_size + offsets).to(torch.int32)
+
+        return {
+            "positions": positions,
+            "slot_map": slot_map,
+            "cu_seqlens_q": cu_seqlens_q,
+            "cu_seqlens_k": cu_seqlens_q.clone(),
+            "max_seqlen_q": max_seqlen_q,
+            "max_seqlen_k": max_seqlen_q,
+        }
+
+
+class DraftRequestTransport:
+    """Receive speculation requests and publish candidate responses."""
 
     def _send_jetspec_candidates(
         self,
@@ -849,65 +735,9 @@ class DraftRunner(ModelRunner):
                 jetspec_payload['oracle_verify'] = oracle_verify
             return None, jetspec_payload
 
-    def prepare_prefill_ctxt(
-        self,
-        num_tokens: torch.Tensor,  # [B]
-        draft_block_table: torch.Tensor,  # [B, max_blocks]
-    ) -> dict:
-        """
-        Prepare context for prefill forward pass.
-        """
-        B = num_tokens.shape[0]
-        total = num_tokens.sum().item()
-        cu_seqlens_q = torch.zeros(B + 1, dtype=torch.int32, device=self.device)
-        cu_seqlens_q[1:] = torch.cumsum(num_tokens, dim=0)
-        batch_indices = torch.arange(B, device=self.device, dtype=torch.int64).repeat_interleave(num_tokens)
-        positions = torch.arange(total, device=self.device, dtype=torch.int64) - cu_seqlens_q[:-1].to(torch.int64).repeat_interleave(num_tokens)
-        max_seqlen_q = num_tokens.max().item()
 
-        # Calculate block indices and offsets for ALL positions
-        block_indices = (positions // self.block_size).to(torch.int64)
-        offsets = (positions % self.block_size).to(torch.int32)
-
-        # Get block IDs for each position from dbt
-        block_ids = draft_block_table[batch_indices, block_indices]
-
-        # Calculate slot_map for each position
-        slot_map = (block_ids * self.block_size + offsets).to(torch.int32)
-
-        return {
-            "positions": positions,
-            "slot_map": slot_map,
-            "cu_seqlens_q": cu_seqlens_q,
-            "cu_seqlens_k": cu_seqlens_q.clone(),
-            "max_seqlen_q": max_seqlen_q,
-            "max_seqlen_k": max_seqlen_q,
-        }
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+class DraftChainSetup:
+    """Warm the draft session and capture its reachable chain graphs."""
 
     @torch.inference_mode()
     def _warm_jetspec_session(self, run_config=None):
@@ -1580,6 +1410,172 @@ class DraftRunner(ModelRunner):
             publish_redraft=publish_redraft, fallback=fallback, start_round=0,
             pre_stage=(pre_stage if handoff else None), recorder=recorder,
             rows=self.jetspec_rows, run_config=run_config)
+
+
+class DraftRunner(
+    DraftPrefill,
+    DraftRequestTransport,
+    DraftChainSetup,
+    ModelRunner,
+):
+    """Coordinate the rank through components sharing this instance and its tensor state.
+
+    Method calls retain their original stream and graph capture order.
+    """
+
+    @classmethod
+    def create_draft_config(cls, cfg: Config, run_config=None) -> Config:
+        """Create a draft config from the main config without instantiating DraftRunner."""
+        run_config = (run_config if run_config is not None else
+                      getattr(cfg, 'run_config', None))
+        if run_config is None:
+            raise ValueError('DraftRunner missing RunConfig launch_overlay')
+        from jetspec.engines.jetspec_plus_plus.draft.live_rows import resolve_admission_count
+        if cfg.jetspec and run_config.engine.engine_settings.auto == '1':
+            raise ValueError('retired variant fuse: the automatic route requests all fusion')
+        draft_cfg = dataclasses.replace(
+            cfg,
+            model=cfg.draft,
+            jetspec_config_is_draft=True,
+            jetspec_passes=cfg.jetspec_passes,
+            jetspec_hyp=(resolve_admission_count(cfg.jetspec_hyp, run_config=run_config)
+                         if cfg.jetspec and run_config.engine.engine_settings.rows == "1" else cfg.jetspec_hyp),
+            # The rows module has its own KV and logits buffers after this
+            # ordinary draft cache is allocated (prefill can exceed decode N).
+            gpu_memory_utilization=((0.35 if run_config.engine.engine_settings.rows_fast == "1" else 0.5)
+                                    if cfg.jetspec and run_config.engine.engine_settings.rows == "1"
+                                    else (0.75 if not cfg.draft_async else 0.8)),
+            tokenizer_path=cfg.model if cfg.use_eagle else None,
+            d_model_target=cfg.hf_config.hidden_size if cfg.use_eagle and cfg.hf_config else None,
+            jetspec_tap_hidden_size=(
+                cfg.hf_config.hidden_size if cfg.jetspec_taps else None
+            ),
+            enforce_eager=True if cfg.jetspec else cfg.enforce_eager,
+            target_dtype=None,
+        )
+        # Config.__post_init__ skipped its target-only checks for this copy; the taps came validated.
+        assert draft_cfg.jetspec_config_is_draft
+        assert draft_cfg.jetspec_target_layer_ids == cfg.jetspec_target_layer_ids
+        draft_cfg.run_config = run_config
+        return draft_cfg
+
+    def __init__(self, cfg: Config, rank: int = 0, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
+        from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting
+        from jetspec.engines.jetspec_plus_plus.draft.config import with_method_settings
+        self.run_config = (run_config if run_config is not None else
+                           getattr(cfg, 'run_config', None))
+        if self.run_config is None:
+            raise ValueError('DraftRunner missing RunConfig launch_overlay')
+        self.run_config = with_method_settings(self.run_config, getattr(cfg, 'method_settings', None))
+        self.profile_draft = self.run_config.engine.engine_settings.profile_draft == "1"
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, install_engine
+        self.engine = install_engine(engine if engine is not None else getattr(cfg, 'engine', None) or current_engine())
+        from jetspec.engines.jetspec_plus_plus.draft.serve_policy import install_method_settings
+        install_method_settings(getattr(cfg, 'method_settings', None))
+        self._hybrid_pair_layout = None
+        if self.run_config.engine.engine_settings.hybrid_pair == "1":
+            from jetspec.engines.jetspec_plus_plus.wire.hybrid import HybridPairLayout
+            if cfg.speculate_k not in (15, 31):
+                raise ValueError("hybrid pair transfer requires b16/b32")
+            self._hybrid_pair_layout = HybridPairLayout.from_config(
+                cfg.hf_config, lanes=cfg.speculate_k + 1)
+        self._chain_mode = cfg.jetspec and self.run_config.engine.engine_settings.chain_graph == "seg"
+        if self._chain_mode:
+            from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import apply_chain_capacity
+            capacities = legacy_values(self.run_config)
+            apply_chain_capacity(capacities, cfg.max_model_len, lanes=cfg.speculate_k + 1)
+            self.run_config = with_settings(self.run_config, {
+                path: capacities[legacy_name(path)] for path in (
+                    'engine.engine_settings.w259_c1_cache_capacity',
+                    'engine.engine_settings.decoder_cache_capacity')})
+            if cfg.max_num_seqs != 1:
+                raise ValueError("JETSPEC_CHAIN_GRAPH=seg requires N=1")
+            if (setting(self.run_config, 'engine.engine_settings.jetspec_verify_device', "0") != "1"
+                    and current_engine().kind != 'reference'):
+                raise ValueError("JETSPEC_CHAIN_GRAPH=seg requires device or reference verification")
+        self.draft_cfg = self.create_draft_config(cfg, run_config=self.run_config)
+        self.run_config = self.draft_cfg.run_config
+        self.draft_cfg.method_settings = getattr(cfg, 'method_settings', None)
+        super().__init__(self.draft_cfg, rank=rank, event=None, is_draft=True, num_tp_gpus=1, init_q=init_q, eagle3_model_class=eagle3_model_class, engine=self.engine, run_config=self.run_config)
+        
+        if self.config.use_eagle:
+            assert self.config.jit_speculate, \
+                "EAGLE requires jit_speculate=True (cache misses need draft activations)"
+
+        self.jetspec_tap_mirrors = {}
+        self._jetspec_tap_recv_ms = []
+        self._jetspec_tap_payload_bytes = []
+        self.jetspec_drafter = None
+        self.jetspec_sequences = {}
+        self.jetspec_candidate_sets = {}
+        self.jetspec_block_objects = {}
+        self.jetspec_candidate_ms = {}
+        self._jetspec_candidate_send_id = 0
+        self._jetspec_next_request_receive_id = 0
+        self._jetspec_control_receive_id = 0
+        self._jetspec_pending_rounds = {}
+        self._jetspec_last_drafted_round = {}
+        self._jetspec_sent_candidates = set()
+        self._jetspec_wire_capacity = None
+        self._chain_runtime = None
+        self._pair_transport = None
+        self.oracle_anchor = self.config.jetspec and anchor_mode(run_config=self.run_config) == 'oracle'
+        if self.oracle_anchor and (setting(self.run_config, 'engine.engine_settings.rows') != '1'
+                or self.config.jetspec_sync or self.config.jetspec_wait_ms != float('inf')):
+            raise ValueError('oracle anchor requires asynchronous rows with infinite wait')
+        if self.config.jetspec:
+            self.jetspec_drafter = JetSpecDrafter.load(
+                self.config.jetspec_checkpoint_dir,
+                self.config.jetspec_adapter_config,
+                self.config.jetspec_adapter_head,
+                self.config.jetspec_target_release_weights,
+                self.device,
+            run_config=run_config)
+            if setting(self.run_config, 'model.model_settings.draft_dtype') == "fp32":
+                for module in (self.jetspec_drafter.head, self.jetspec_drafter.embed_tokens,
+                               self.jetspec_drafter.lm_head, self.jetspec_drafter.adapter.head):
+                    module.float()
+                self.jetspec_drafter.dtype = torch.float32
+            self.jetspec_rows = None
+            if setting(self.run_config, 'engine.engine_settings.rows', "0") == "1":
+                if self.config.jetspec_sync or (self.config.jetspec_wait_ms != float("inf")
+                        and setting(self.run_config, 'engine.engine_settings.rows_fast', "0") != "1"
+                        and setting(self.run_config, 'engine.engine_settings.w241_async_rows', "0") != "1"):
+                    raise ValueError("JETSPEC_ROWS requires the waiting kth protocol")
+                from jetspec.engines.jetspec_plus_plus.draft.live_rows import KthRowsDrafter
+                backend = "sdpa" if self.jetspec_drafter.dtype == torch.float32 else "flashinfer"
+                self.jetspec_rows = KthRowsDrafter(self.jetspec_drafter, backend=backend,
+                    optimized=setting(self.run_config, 'engine.engine_settings.rows_fast', "0") == "1",
+                    graphs=setting(self.run_config, 'engine.engine_settings.rows_graphs', "0") == "1", branches=branch_count(run_config=self.run_config),
+                    f_graphs=setting(self.run_config, 'engine.engine_settings.f_graphs', "0") == "1", run_config=self.run_config, target_model_path=cfg.model)
+                print(f"W234_ROWS=enabled F={branch_count(run_config=run_config)} live-kth adapter=shared-prefix", flush=True)
+                # serving: the miss fallback row and the round-ahead draft deadline (both default off)
+                self._w320_redraft = miss_redraft(run_config=run_config)
+                self._w320_force = self._w320_redraft and miss_redraft_force(run_config=run_config)
+                self._w320_clock = DeadlineClock(run_config=self.run_config) if draft_deadline() else None
+                self.jetspec_rows.deadline = self._w320_clock
+                if (self._w320_redraft or self._w320_clock is not None) and (
+                        ((self.config.jetspec_wait_ms != float("inf")) or (self._w320_clock is not None and self.config.max_num_seqs != 1) or (anchor_mode(run_config=run_config) == 'oracle'))):
+                    raise ValueError("these flags require infinite wait, no tree budget, no oracle; "
+                                     "the deadline also requires N=1")
+            if self.config.jetspec_draft_graphs and self.jetspec_rows is None:
+                raise ValueError('retired graphed draft head requires a sealed historical read')
+            print("W220_DRAFT_GRAPHS=disabled adapter=eager", flush=True)
+
+        self.jetspec_catchup_drafter = self.jetspec_drafter
+        if (self.config.jetspec and self.jetspec_rows is not None and self.jetspec_rows.optimized
+                and self.config.jetspec_wait_ms != float('inf') and self.config.jetspec_draft_graphs):
+            raise ValueError('retired graphed catchup head requires a sealed historical read')
+
+        if self.is_draft and self.draft_async:
+            self._prepare_async_draft()
+            self._draft_step_times = []
+            print(f'DraftRunner set up, starting draft_loop', flush=True)
+            self.draft_loop(run_config=self.run_config)
+
+    def _prepare_async_draft(self):
+        """Prepare method-specific buffers before entering the async loop."""
+        pass
 
     def draft_loop(self, run_config=None):
         """
