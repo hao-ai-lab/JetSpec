@@ -1,5 +1,5 @@
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 import os
 import warnings
 import time
@@ -55,7 +55,7 @@ def tree_budget(*, run_config=None):
 
 def _required_env(var_name: str, note: str, *, run_config=None) -> str:
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
     value = setting(run_config, var_name)
     if value:
         return value
@@ -713,9 +713,9 @@ class Verifier(VerifierBase):
     }
 
     def __getattr__(self, name):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if name == '_jetspec_verify_reference':
-            from jetspec.engines.jetspec_plus_plus.engine import current_engine
+            from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
             return current_engine().kind == 'reference'
         env_name = type(self)._round_env.get(name)
         if env_name is None:
@@ -726,7 +726,7 @@ class Verifier(VerifierBase):
         else:
             value = kernel_enabled(env_name)
             if not value:
-                from jetspec.engines.jetspec_plus_plus.profiles import verify_cut_lean27b
+                from jetspec.engines.jetspec_plus_plus.runtime.profiles import verify_cut_lean27b
                 value = verify_cut_lean27b(
                     env_name, self, getattr(self, 'target_model_runner', None))
         setattr(self, name, value)
@@ -1014,7 +1014,7 @@ class Verifier(VerifierBase):
                        else mask.to(torch.bool).cpu())
         full_indices = [i for i, value in enumerate(verify_mask.tolist()) if value]
         ar_indices = [i for i, value in enumerate(verify_mask.tolist()) if not value]
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if ar_indices and current_engine().budget.uncut:
             raise RuntimeError("uncut verify cannot execute an AR fallback")
         if reference and ar_indices:
@@ -1303,7 +1303,7 @@ class Verifier(VerifierBase):
     def _verify_jetspec_device(self, seq: Sequence, speculate_result: SpeculateResult) -> VerifyResult:
         """N=1 verify with one small host outcome read after device commit."""
         from jetspec.engines.jetspec_plus_plus.models.state import has_state
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         # Recovery is staged for the next suffix, not accepted in this one.
         # The scheduler finishes only after EOS enters the committed suffix.
         recovery_eos_terminal = False

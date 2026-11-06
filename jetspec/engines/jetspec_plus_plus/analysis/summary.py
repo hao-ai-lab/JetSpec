@@ -12,7 +12,7 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(ROOT)]
 from jetspec.engines.jetspec_plus_plus.analysis import paper_metrics
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 
 def quantile(values, q):

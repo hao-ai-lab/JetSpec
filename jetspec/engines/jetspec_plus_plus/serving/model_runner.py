@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import io
 import pickle
@@ -83,7 +83,7 @@ class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event], is_draft: bool = False, num_tp_gpus: int = -1, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         self.run_config = (run_config if run_config is not None else
                            getattr(config, 'run_config', None))
         if self.run_config is None:
@@ -91,11 +91,11 @@ class ModelRunner:
         self.verify_mask_cache = self.run_config.engine.engine_settings.verify_mask_cache == "1"
         from jetspec.engines.jetspec_plus_plus.runtime.paths import install_architecture
         install_architecture(self.run_config)
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine, install_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, install_engine
         self.engine = install_engine(engine if engine is not None else getattr(config, 'engine', None) or current_engine())
         from jetspec.engines.jetspec_plus_plus.draft.serve_policy import install_method_settings
         install_method_settings(getattr(config, 'method_settings', None))
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         pin_plan_value = setting(self, 'hardware.hardware_settings.cpu_pin_plan')
         pin_plan = json.loads(pin_plan_value) if pin_plan_value is not None else None
         if pin_plan is None or pin_plan["mode"] != "off":
@@ -586,7 +586,7 @@ class ModelRunner:
 
     def setup_and_warmup_model_and_cudagraphs(self, config: Config, hf_config: AutoConfig, init_q=None, is_draft=False):
         # cudagraphs 
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         self.graph_vars = {}
         self.graph_pools = {}
@@ -788,9 +788,9 @@ class ModelRunner:
 
     def _check_compile_pin_served(self):
         """Check both serving ranks before bench seals the run manifest."""
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not setting(self, 'engine.engine_settings.c1_compile_pin', ''):
             return False
         from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
@@ -927,9 +927,9 @@ class ModelRunner:
         Best-effort: send cmd=2 to draft (async_pg) from TARGET rank 0.
         Safe to call multiple times.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not (self.draft_async and not self.is_draft and self.rank == 0):
             return
         try:

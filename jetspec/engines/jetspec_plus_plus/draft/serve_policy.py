@@ -266,7 +266,7 @@ def method_settings(environ=None, *, resolved=None, run_config=None, engine=None
                     fill_zero=method.get('cache_rows', {}).get('fill_zero', False))
     if _method_settings is not None and environ is None and run_config is None:
         return _method_settings
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     config = run_config if run_config is not None else environ
     supplied = as_run_config(config).provided_values
     if 'method.refresh_cap' in supplied:

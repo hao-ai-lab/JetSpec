@@ -34,7 +34,7 @@ class Engine:
     @classmethod
     def from_config(cls, resolved, *, sealed_record=False):
         from jetspec.engines.jetspec_plus_plus.draft.method.config import validate_fields
-        from jetspec.engines.jetspec_plus_plus.config_schemas import ENGINE_SCHEMA, HARDWARE_SCHEMA
+        from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import ENGINE_SCHEMA, HARDWARE_SCHEMA
         for category, schema in (('engine', ENGINE_SCHEMA), ('hardware', HARDWARE_SCHEMA)):
             validate_fields(resolved[category], schema.fields, schema.required, category,
                             atomic=schema.atomic)
@@ -56,10 +56,10 @@ class Engine:
         cutoffs = values.get('cutoffs', True) and kind != 'reference'
         deadline = settings.get('draft_deadline')
         deadline = values.get('deadline', False) if deadline is None else deadline == '1'
-        from jetspec.engines.jetspec_plus_plus.profiles import select_config
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import select_config
         profile = select_config(resolved, profile)
         if not sealed_record:
-            from jetspec.engines.jetspec_plus_plus.profiles import require_live_execution
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import require_live_execution
             require_live_execution(profile)
         record = values.get('record', 'none')
         if record == 'none' and settings.get('anatomy_lite', '0') != '0':
@@ -72,8 +72,8 @@ class Engine:
     @classmethod
     def from_environment(cls, environ, *, regime=None, profile=None, sealed_record=False):
         """Adapt legacy switches; a launcher may supply its profile before spawn."""
-        from jetspec.engines.jetspec_plus_plus.profiles import PROFILES, execution, select_legacy, refuse_retired
-        from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import PROFILES, execution, select_legacy, refuse_retired
+        from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
         refuse_retired(environ)
         def name(field):
             return environment_name('engine', 'engine_settings.' + field)
@@ -101,7 +101,7 @@ class Engine:
                   'anatomy' if environ.get(name('anatomy_lite'), '0') != '0' else 'none')
         profile = named or select_legacy(environ, profile)
         if not sealed_record:
-            from jetspec.engines.jetspec_plus_plus.profiles import require_live_execution
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import require_live_execution
             require_live_execution(profile)
         return cls('reference' if kind == 'reference' or reference else 'fast',
                    cutoffs, cutoffs and deadline == '1', profile, mode != 'off', record,
@@ -112,12 +112,12 @@ class Engine:
 
     @property
     def execution(self):
-        from jetspec.engines.jetspec_plus_plus.profiles import execution
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import execution
         return execution(self.profile)
 
     @property
     def budget(self):
-        from jetspec.engines.jetspec_plus_plus.cutoffs import DeadlineBudget, NullBudget
+        from jetspec.engines.jetspec_plus_plus.runtime.cutoffs import DeadlineBudget, NullBudget
         return DeadlineBudget if self.cutoffs else NullBudget
 
     @property
@@ -161,7 +161,7 @@ def current_engine(environ=None):
 
 
 def install_engine(engine):
-    from jetspec.engines.jetspec_plus_plus.profiles import require_live_execution
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import require_live_execution
     require_live_execution(engine.profile)
     global _installed
     from jetspec.engines.jetspec_plus_plus.kernels import install
@@ -180,7 +180,7 @@ def install_engine(engine):
 
 @contextmanager
 def engine_scope(engine):
-    from jetspec.engines.jetspec_plus_plus.profiles import require_live_execution
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import require_live_execution
     require_live_execution(engine.profile)
     global _installed
     from jetspec.engines.jetspec_plus_plus.kernels import install

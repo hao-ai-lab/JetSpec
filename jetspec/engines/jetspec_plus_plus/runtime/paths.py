@@ -10,7 +10,7 @@ DEFAULT_DRAFT = None
 
 
 def _required_env(run_config, path: str, note: str) -> str:
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
     value = setting(run_config, path)
     if value:
         return value

@@ -6,7 +6,7 @@ portable tests exercise the same public path without requiring Triton.
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -40,7 +40,7 @@ def resolve_c1_qk_warps(tokens, *, run_config=None):
 
 def query_output(source, heads, tokens, dim, *, batch=1):
     """Uninitialized query storage for a QK writer that honors output strides."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if (kernel_enabled('adapter_query_layout_fused', '1')
             and source.dtype == torch.bfloat16 and batch == 1):
         return source.new_empty((batch, tokens, heads, dim)).transpose(1, 2)
@@ -1108,7 +1108,7 @@ def _lean_ops_extension():
 
 def _silu_mul_extension():
     if kernel_enabled('draft_fuse_w1', '1'):
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if current_engine().precision_draft == 'mxfp4_w4a8':
             from jetspec.engines.jetspec_plus_plus.kernels.nvfp4 import producers
             return producers
@@ -1176,7 +1176,7 @@ def launch_cached(kernel, grid, args, **options):
 
 
 def _lean():
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return kernel_enabled('c1_lean', '1')
 
 
@@ -1339,7 +1339,7 @@ def _module_reduce_threads(width, rows):
 
 
 def rms_norm(x: torch.Tensor, weight: torch.Tensor, eps: float) -> torch.Tensor:
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_w1', '1'):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, rms_norm as produce
         if enabled(x):
@@ -3043,7 +3043,7 @@ if triton is not None:
 def q_norm_rotary(fused, projected, weight, cos, sin, eps, heads, dim,
                   norm_offset=0, rotary_dim=None, gated=False, ulp=False, norm_round=None):
     """Head norm and RoPE in one BF16 launch for the batched adapter."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     rounding = norm_round or ("after_weight" if norm_offset else "before_weight")
     specialized = rounding == ("after_weight" if norm_offset else "before_weight")
     if specialized and norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):
@@ -3073,7 +3073,7 @@ def q_norm_rotary(fused, projected, weight, cos, sin, eps, heads, dim,
 def kv_norm_rotary_cache(key, value, weight, cos, sin, eps, heads, groups, dim,
                          cache, slots, norm_offset=0, rotary_dim=None, ulp=False, norm_round=None):
     """Head norm, partial/full rotary and broadcast cache writes in one launch."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     rounding = norm_round or ("after_weight" if norm_offset else "before_weight")
     specialized = rounding == ("after_weight" if norm_offset else "before_weight")
     if specialized and norm_offset == 1 and rotary_dim == 64 and dim == 256 and kernel_enabled('hybrid_c1_gluon', '1'):

@@ -78,7 +78,7 @@ def probe(root, environment):
     source.update(json.dumps({name: environment.get(name) for name in
         ('CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS', 'TORCH_CUDA_ARCH_LIST')},
         sort_keys=True).encode())
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
     inputs = dict(arch=environment.get(environment_name('hardware', 'hardware_settings.cuda_arch')) or environment.get('TORCH_CUDA_ARCH_LIST'),
                   driver=driver[0], cuda=hashlib.sha256((nvcc + str(torch.version.cuda)).encode()).hexdigest()[:16],
                   torch=torch.__version__, triton=metadata.version('triton'),

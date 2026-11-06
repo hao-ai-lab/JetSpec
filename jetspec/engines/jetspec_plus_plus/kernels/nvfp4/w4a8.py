@@ -321,7 +321,7 @@ def draft_config(n: int, k: int, m: int, sms: int = 148) -> W4A8Config:
     """Select compact CTAs only for the gated M16 draft projections, default off."""
     config = default_config(n, k, m, sms)
     if m == 16 and (n, k) in ((6144, 4096), (4096, 4096), (24576, 4096), (4096, 12288)):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
         if kernel_value('draft_fuse_gemm8b', '0') == '1':
             return replace(config, compact=True)
     return config

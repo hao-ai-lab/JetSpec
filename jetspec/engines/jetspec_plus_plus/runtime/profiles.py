@@ -124,7 +124,7 @@ def select_legacy(environ, mode='current'):
 
 def select_config(resolved, mode='current'):
     """Capture compatibility engine leaves; explicit named profiles need no switches."""
-    from jetspec.engines.jetspec_plus_plus.launch_env import execution_settings
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import execution_settings
     settings = execution_settings(resolved)
     refuse_retired({'JETSPEC_' + name.upper(): settings[name]
                    for name in RETIRED_SELECTORS if name in settings})
@@ -146,7 +146,7 @@ def select_config(resolved, mode='current'):
             and not engine.get('recipe') and resolved['hardware']['gpu'] == 'a100'
             and 'model' in resolved and 'method' in resolved):
         from jetspec.engines.jetspec_plus_plus.launch.entry import serving_recipe
-        from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+        from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
         qualified = serving_recipe(resolved)['environment']
         if qualified.get(environment_name('engine', 'engine_settings.hybrid_verify_triton')) == '1':
             # The immutable engine and launch overlay must select the same route.
@@ -159,7 +159,7 @@ def select_config(resolved, mode='current'):
 
 def kernel_value(name, default=None, *, environ=None):
     """Read only the Engine's frozen membership; environ is a legacy adapter input."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     profile = get_profile(current_engine(environ).profile)
     # Default-on flags are captured during selection, so absence always means off.
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
@@ -171,7 +171,7 @@ def kernel_value(name, default=None, *, environ=None):
 
 
 def kernel_enabled(name, value='1', *, environ=None):
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     kernels = get_profile(current_engine(environ).profile).kernels
     if value in ('0', 'off'):
         return not any(item.startswith(name + '=') for item in kernels)
@@ -179,7 +179,7 @@ def kernel_enabled(name, value='1', *, environ=None):
 
 
 def transport_enabled(name, *, environ=None, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine, _installed
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, _installed
     if _installed is None and run_config is not None and environ is None:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         environ = {'JETSPEC_' + switch.upper(): setting(
@@ -297,7 +297,7 @@ def verify_cut_lean27b(name, owner, runner):
     if (name not in VERIFY_CUT_LEAN27B
             or setting(owner, 'engine.engine_settings.verify_cut_lean27b', '0') != '1'):
         return False
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.models.state import has_state
     if current_engine().kind != 'fast' or not has_state(runner):
         return False
@@ -387,7 +387,7 @@ PROFILE_QUALIFICATION = MappingProxyType({
 })
 
 # Frozen selections, sealed from the recipe settings dumps and Table 3 basis manifests.
-_DATA = json.loads((Path(__file__).parent / 'config/profiles.json').read_text())
+_DATA = json.loads((Path(__file__).parent.parent / 'config/profiles.json').read_text())
 _KERNEL_SETS = {
     **{name: frozenset(items) for name, items in _DATA['kernel_sets'].items()},
     **{f'current-{gpu}-{name}': _qualified_kernel_set(*shape)

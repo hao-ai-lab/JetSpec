@@ -37,7 +37,7 @@ class RequestChannel:
 
     def _pack_jetspec_request(self, seqs):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         ring_enabled = getattr(self, "_outcome_wire_ring_enabled", False)
         verify_device = getattr(self, "_verify_device_enabled", None)
         if verify_device is None:
@@ -143,7 +143,7 @@ class RequestChannel:
                                chain_round=None, chain_length=None, chain_after_miss=None,
                                chain_eos=None, chain_sync_at=None, chain_true_k=None,
                                chain_recovery=None) -> None:
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         pair_outcome = chain_command == "outcome" and getattr(self, "_pair_outcome_push", False)
         pair_command_id = None

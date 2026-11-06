@@ -41,7 +41,7 @@ class OutcomePublisher:
     def _publish_chain_admission(self, seq):
         """Replace the suppressed legacy first request with a device packet."""
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         ring_enabled = getattr(self, "_outcome_wire_ring_enabled", False)
         if ring_enabled:
             if self._jetspec_outcome_wire_ring is None:
@@ -129,7 +129,7 @@ class OutcomePublisher:
     def publish_device_outcome(self, seqs, outcome):
         """Send the next-round correction and fixed tap block before host postprocess."""
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         ring_enabled = getattr(self, "_outcome_wire_ring_enabled", False)
         from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair

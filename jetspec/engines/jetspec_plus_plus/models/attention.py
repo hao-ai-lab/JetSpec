@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 import os
 import sys
 

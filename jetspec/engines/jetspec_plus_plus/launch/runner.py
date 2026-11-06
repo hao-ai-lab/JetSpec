@@ -31,7 +31,7 @@ if str(METHOD_ROOT) not in sys.path:
     sys.path.insert(0, str(METHOD_ROOT))
 
 from jetspec.engines.jetspec_plus_plus.launch.records import read_fields
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 
 class _RxProvenanceSubprocess:
@@ -2020,7 +2020,7 @@ def apply_knob_overrides(environment, knobs):
         return
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
-    from jetspec.engines.jetspec_plus_plus.profiles import RETIRED_SELECTORS, refuse_retired
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import RETIRED_SELECTORS, refuse_retired
     retired = {'JETSPEC_' + name.upper() for name in RETIRED_SELECTORS}
     for item in knobs:
         name, sep, value = item.partition("=")
@@ -2083,7 +2083,7 @@ def _base_environment(recipe, placement_environment, runtime, *, eager_wrapper=F
     from jetspec.engines.jetspec_plus_plus.runtime.env import unregistered_names
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
-    from jetspec.engines.jetspec_plus_plus.profiles import refuse_retired
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import refuse_retired
     refuse_retired(os.environ)
     inherited_unknown = sorted(unregistered_names(os.environ))
     if inherited_unknown:
@@ -2715,7 +2715,7 @@ def startup_summary(log):
 
 def record_target_autotune(target, *, run_config=None):
     """Record when a hybrid target's served outputs depend on unpinned Triton choices."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     config = json.loads((Path(target) / "config.json").read_text(encoding="utf-8"))
     config = config.get("text_config", config)
     if config.get("model_type") != "qwen3_5_text":
@@ -2767,8 +2767,8 @@ def recipe_model_entry(recipe, config_read=None, *, root=ROOT):
 
 def child_run_config(plan, environment, *, enforce_eager=None):
     """Build the child's rank record and execution policy without loading a model."""
-    from jetspec.engines.jetspec_plus_plus.run_config import RunConfig, config_environment
-    from jetspec.engines.jetspec_plus_plus.engine import Engine
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig, config_environment
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine
     resolved = (plan.get('config_read') or {}).get('config')
     config = RunConfig.from_overlay(plan.get('launch_overlay'), resolved,
                                     model_entry=plan.get('model_entry'))
@@ -2793,7 +2793,7 @@ def load_plan_engine(plan, load, model, *, environment=None, **kwargs):
             # A record rebuilt from the environment lacks the config read's batch overlay (C buckets,
             # max_num_seqs); take those keys from the plan record and keep everything else.
             from dataclasses import replace
-            from jetspec.engines.jetspec_plus_plus.run_config import FrozenMapping
+            from jetspec.engines.jetspec_plus_plus.runtime.run_config import FrozenMapping
             batch = {key: run_config.engine[key] for key in run_config.batch_capacity
                      if key in run_config.engine}
             given = replace(given, engine=FrozenMapping.from_mapping({**given.engine, **batch}))
@@ -2815,7 +2815,7 @@ def _plan_model_paths(plan):
 def _child(plan_path, *, resident=None, run_config=None):
     plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
     run_config, _ = child_run_config(plan, os.environ)
-    from jetspec.engines.jetspec_plus_plus.run_config import apply_child_concurrency
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import apply_child_concurrency
     apply_child_concurrency(plan, run_config)
     _install_roundtrace(run_config)
     _startup_stamp("child_start")
@@ -2998,7 +2998,7 @@ def _child(plan_path, *, resident=None, run_config=None):
 
     bench.run_benchmark = run
     if resident is not None and plan['method_mode'] == 'jetspecpp':
-        from jetspec.engines.jetspec_plus_plus.run_config import config_environment
+        from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
         values = config_environment(run_config)
         Path(os.environ['KIT_RESIDENT_BOUNDARY']).write_text(json.dumps(dict(
             dataset=plan['dataset'], index=plan['resident_index'], environment={
@@ -3145,9 +3145,9 @@ def _main_sync(args):
             plan.update(batch=args.batch, gpus_used=1,
                         sequential_prompts=args.sequential_prompts)
             plan_path = scratch / f"plan-{index}.json"
-            from jetspec.engines.jetspec_plus_plus.run_config import launch_overlay, child_environment
+            from jetspec.engines.jetspec_plus_plus.runtime.run_config import launch_overlay, child_environment
             plan['launch_overlay'] = launch_overlay(environment)
-            from jetspec.engines.jetspec_plus_plus.run_config import config_batch_overlay
+            from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_batch_overlay
             plan['launch_overlay'].update(config_batch_overlay(args))
             plan_path.write_text(json.dumps(plan), encoding="utf-8")
             command = [sys.executable, str(Path(__file__).resolve()),
@@ -3289,9 +3289,9 @@ def prepare_wire_records(method, mode, output, child_environment):
 def _main(args, *, resident=None):
     pin_environment = compile_pin_environment(args)
     args.batch = getattr(args, "batch", 1)
-    from jetspec.engines.jetspec_plus_plus.run_config import config_concurrency
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_concurrency
     args.batch = config_concurrency(args, args.batch)
-    from jetspec.engines.jetspec_plus_plus.config_schemas import require_single_request
+    from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import require_single_request
     require_single_request(args.batch)
     args.sequential_prompts = getattr(args, "sequential_prompts", False)
     if min(args.count, args.tokens, args.repeats, args.batch) < 1:
@@ -3325,13 +3325,13 @@ def _main(args, *, resident=None):
     recipe, policy_record = apply_policy_overrides(
         (args.resolved_recipe if hasattr(args, "resolved_recipe") else
          load_recipe(ROOT, args.method, args.regime, args.recipe)), args)
-    from jetspec.engines.jetspec_plus_plus.engine import Engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine
     selected = Engine.from_environment(recipe['environment'], regime=recipe['regime'], sealed_record=True)
     selected_engine = ('eval' if selected.deterministic else 'eager' if selected.profile.startswith('eager')
                        else selected.kind)
     if getattr(args, 'engine', None) is not None:
         if not args.resolve_only:
-            from jetspec.engines.jetspec_plus_plus.profiles import require_live_execution
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import require_live_execution
             require_live_execution(args.engine)
         if args.engine != selected_engine:
             raise ValueError(f"recipe {recipe['name']} selects {selected_engine}, not {args.engine}")
@@ -3370,7 +3370,7 @@ def _main(args, *, resident=None):
     if existing and not args.resolve_only:
         raise FileExistsError("refusing to overwrite serve read artifact(s): " + ", ".join(existing))
     if not args.resolve_only:
-        from jetspec.engines.jetspec_plus_plus.engine import Engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine
         Engine.from_environment(recipe['environment'], regime=recipe['regime'])
     output.parent.mkdir(parents=True, exist_ok=True)
     host = apply_host_artifact_overrides(
@@ -3638,13 +3638,13 @@ def _main(args, *, resident=None):
                             "JETSPEC_ROUNDTRACE_EVENT_PAIRS"]
                 if records is not None:
                     child_environment[environment_name('engine', 'engine_settings.pred_serve_read_records')] = str(records)
-                from jetspec.engines.jetspec_plus_plus.run_config import launch_overlay, child_environment as process_environment
+                from jetspec.engines.jetspec_plus_plus.runtime.run_config import launch_overlay, child_environment as process_environment
                 if plan.get('warmup_prefix_lengths'):
                     child_environment[environment_name('benchmark', 'benchmark_settings.warmup_prefix_lengths')] = json.dumps(plan['warmup_prefix_lengths'])
                 if plan.get('chain_warm_read'):
                     child_environment[environment_name('engine', 'engine_settings.chain_warm_read')] = json.dumps(plan['chain_warm_read'])
                 plan['launch_overlay'] = launch_overlay(child_environment)
-                from jetspec.engines.jetspec_plus_plus.run_config import config_batch_overlay as batch_overlay
+                from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_batch_overlay as batch_overlay
                 plan['launch_overlay'].update(batch_overlay(args))
                 plan_path.write_text(json.dumps(plan), encoding='utf-8')
                 child_environment = process_environment(child_environment)

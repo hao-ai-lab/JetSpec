@@ -85,7 +85,7 @@ def select_attention_backend(attention: AttentionSpec, has_state: bool, architec
 def require_hybrid_sdpa_verify(verify_backend: str, attention_backend: str, *, run_config=None,
                                attention=None, has_state=False, architecture=None) -> None:
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if attention is not None:
         qualifications = tuple(name for name in ('hybrid_verify_triton', 'hybrid_verify_flashinfer')
                                if setting(run_config, 'engine.engine_settings.' + name, '0') == '1')

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import json
 import os
@@ -102,8 +102,8 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
     def __getattr__(self, name):
         # The first access can follow serve_read's environment setup. Later
         # rounds use the instance attribute, including __new__ test instances.
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled, TRANSPORT_SWITCHES
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled, TRANSPORT_SWITCHES
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         env_name = type(self)._round_env.get(name)
         if env_name is None:
             raise AttributeError(name)
@@ -115,7 +115,7 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
         else:
             raw = "1" if kernel_enabled(env_name) else "0"
             if raw == "0":
-                from jetspec.engines.jetspec_plus_plus.profiles import verify_cut_lean27b
+                from jetspec.engines.jetspec_plus_plus.runtime.profiles import verify_cut_lean27b
                 raw = "1" if verify_cut_lean27b(
                     env_name, self, getattr(self, '_verify_stage_runner', None)) else "0"
         if name == "_chain_redraft_max_ms":
@@ -155,8 +155,8 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
         run_config=None,
     ):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         super().__init__(lookahead, device)
         self.run_config = run_config if run_config is not None else getattr(target_model_runner, 'run_config', None)
         self.async_fan_out = async_fan_out
@@ -260,7 +260,7 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
         if self._pair_outcome_push and max_num_seqs != 1:
             raise ValueError("JETSPEC_PAIR_OUTCOME_PUSH requires N=1")
         if self._outcome_prepost_no_ack:
-            from jetspec.engines.jetspec_plus_plus.engine import current_engine
+            from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
             if not ((self._verify_device_enabled or current_engine().kind == 'reference')
                     and not self._verify_device_legacy
                     and self._outcome_prepost and self._chain_cmd_local_counter
@@ -335,7 +335,7 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
 
     def prefill(self, seqs: list[Sequence], verify_result: VerifyResult) -> SpeculateResult:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         eagle_acts = verify_result.eagle_acts
         input_id_list = [seq.token_ids for seq in seqs]
 
@@ -579,8 +579,8 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
 
     def _speculation_request(self, seqs: list[Sequence], eagle: bool):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         B = len(seqs)
         chain_graph_seg = getattr(self, "_chain_graph_seg", None)

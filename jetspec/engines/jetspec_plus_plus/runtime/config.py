@@ -81,7 +81,7 @@ class Config:
         return (self.max_model_len + self.kvcache_block_size - 1) // self.kvcache_block_size
 
     def __post_init__(self):
-        from jetspec.engines.jetspec_plus_plus.config_schemas import require_single_request
+        from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import require_single_request
         require_single_request(self.max_num_seqs)
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         if self.jetspec:

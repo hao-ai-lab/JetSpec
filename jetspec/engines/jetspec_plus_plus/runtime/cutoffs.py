@@ -4,7 +4,7 @@ import math
 import time
 from jetspec.engines.jetspec_plus_plus.draft.method.schedule import CHAIN_SEGMENTS, Schedule, chain_variants
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 class DeadlineBudget:
     """Host-clock deadline for the round-ahead draft (JETSPEC_DRAFT_DEADLINE=1).
@@ -474,7 +474,7 @@ class NullBudget:
 
 def budget_type(environ=None):
     """Compatibility selector; live ranks read the installed Engine's cutoffs."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     return current_engine(environ).budget
 
 

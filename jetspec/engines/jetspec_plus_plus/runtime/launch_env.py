@@ -4,7 +4,7 @@ from pathlib import Path
 
 from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, flatten
 from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import _field, METHOD_EXECUTION_DEFAULTS
-from jetspec.engines.jetspec_plus_plus.profiles import RETIRED_SELECTORS
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import RETIRED_SELECTORS
 
 ROOT = next((parent for parent in Path(__file__).resolve().parents
              if (parent / 'artifacts/manifest.json').is_file()), Path.cwd())
@@ -73,7 +73,7 @@ def execution_settings(resolved):
 
 
 def environment_from_config(resolved):
-    from jetspec.engines.jetspec_plus_plus.profiles import RETIRED_SELECTORS, refuse_retired
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import RETIRED_SELECTORS, refuse_retired
     retired = {'JETSPEC_' + name.upper(): value
                for name, value in resolved['engine'].get('engine_settings', {}).items()
                if name in RETIRED_SELECTORS}

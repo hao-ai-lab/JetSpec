@@ -9,7 +9,7 @@ import sys
 import time
 
 from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, canonical_json, config_hash
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name, serving_environment, apply_serving_profile
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name, serving_environment, apply_serving_profile
 from .resolution import ROOT, resolve
 
 FAMILIES = {'dspark': 'blockhead', 'fanout-tree': 'ssd', 'domino': 'spec_sync',
@@ -24,7 +24,7 @@ COMPOSED_RECIPES = _COMPOSED['recipes']
 
 def profile_environment(config):
     """A named profile owns selectors; compatibility leaves own other values."""
-    from jetspec.engines.jetspec_plus_plus.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
     from jetspec.engines.jetspec_plus_plus.runtime.env import REQUIRED
     from jetspec.engines.jetspec_plus_plus.runtime.env import NO_DEFAULT
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
@@ -72,7 +72,7 @@ def _without_inert_dependents(environment, selectors):
 
 def _recipe_environment(environment):
     """Project canonical compatibility fields through the existing legacy binding."""
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
     return {(environment_name(*key.split('.', 1)) if '.' in key else key): value
             for key, value in environment.items()}
 
@@ -191,7 +191,7 @@ def build_plan(config, *, launch=None, root=ROOT, prompts_root=None, output='rea
             '--temperature', str(benchmark['temperature']), '--seed', str(benchmark['seed']),
             '--repeats', str(benchmark['repeats']), '--output-json', str(output),
             '--cpu-pin', hardware['cpu_pin']]
-    from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
     run_config = RunConfig.from_config(config)
     if sequential_prompts:
         if run_config.concurrency != 1:
@@ -290,7 +290,7 @@ def main(argv=None):
         record = resolve_read(names, overrides, output=args.output,
                               sequential_prompts=args.sequential_prompts, cache_root=args.cache_root,
                               wire_records=args.wire_records, anatomy=args.anatomy)
-        from jetspec.engines.jetspec_plus_plus.engine import Engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine
         Engine.from_config(record['config'], sealed_record=args.resolve_only)
     except (ValueError, OSError) as error:
         parser.error(str(error))

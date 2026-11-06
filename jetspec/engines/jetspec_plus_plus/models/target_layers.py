@@ -20,7 +20,7 @@ class RMSNorm(nn.Module):
         # verify_cut_norm27b: the owning layer routes this after-weight norm to kernels/verify_norm27b.py.
         self.norm27b = False
         if norm_round == 'after_weight':
-            from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
             self.fused = kernel_enabled('hybrid_fused_norm', '1')
             if self.fused:
                 from fla.modules.layernorm import rms_norm
@@ -166,7 +166,7 @@ class FullAttention(nn.Module):
         self.verify_cut_prewait8b = setting(
             run_config, 'engine', 'engine_settings.verify_cut_prewait8b', '0') == '1'
         if self.verify_cut_w1prod8b:
-            from jetspec.engines.jetspec_plus_plus.engine import current_engine
+            from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
             if (not self.verify_cut_persist8b_attention
                     or current_engine().precision_target != 'mxfp4_w4a8'):
                 raise ValueError('verify_cut_w1prod8b requires dense persist8b>=3 and '
@@ -426,7 +426,7 @@ class DecoderLayer(nn.Module):
         from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import cut_mode
         self.verify_cut_pdl27b = cut_mode(run_config)
         if self.verify_cut_w1prod27b:
-            from jetspec.engines.jetspec_plus_plus.engine import current_engine
+            from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
             if not self.verify_cut_norm27b or current_engine().precision_target != 'mxfp4_w4a8':
                 raise ValueError('w1prod27b requires norm27b and precision_target=mxfp4_w4a8')
         self.norm27b_defer = False  # set by the model shell: return (x, mlp out) for the next norm

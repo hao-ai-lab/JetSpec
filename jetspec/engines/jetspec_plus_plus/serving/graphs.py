@@ -44,7 +44,7 @@ def capture_commit_graphs(model_runner):
 def run_verify_cudagraph(model_runner, input_ids, positions, last_only, graph_vars):
     from jetspec.engines.jetspec_plus_plus.models.state import has_state
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.verify.verify_plan_helpers import verify_plan_signature
     context = get_context()
     k_plus_1 = model_runner.config.speculate_k + 1
@@ -463,7 +463,7 @@ def capture_cudagraph(model_runner):
 @torch.inference_mode()
 def capture_verify_cudagraph(model_runner):
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.models.state import has_state
     stateful = has_state(model_runner)
     model_forward = model_runner.state_model_forward if stateful else model_runner.model

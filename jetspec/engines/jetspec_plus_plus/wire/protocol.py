@@ -1,7 +1,7 @@
 """Pure bookkeeping for the JetSpec candidate-set protocol."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import math
 import os
@@ -338,7 +338,7 @@ class CandidateSet:
 
     def __post_init__(self, row_keys_host, run_config=None) -> None:
         width = draft_width(run_config=run_config) + 1
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if self.blocks.ndim not in (2, 3) or self.blocks.shape[-1] != width:
             raise ValueError(f"candidate blocks must have shape [H, {width}] or [H, F, {width}]")
         if self.row_keys is not None:
@@ -560,7 +560,7 @@ def select_candidate_drafts_host(candidate_set: CandidateSet | None, *, seq_id: 
     if miss_mode not in {"ar", "verify"}:
         raise ValueError("miss_mode must be ar or verify")
     if candidate_set is None:
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         current_engine().budget.late(False)
         counters.late += 1
         return ProtocolDecision("late", torch.empty(0, dtype=torch.int64)), None
@@ -572,7 +572,7 @@ def select_candidate_drafts_host(candidate_set: CandidateSet | None, *, seq_id: 
                      index=getattr(candidate_set, "_row_index", {}))
     block = rows[row] if row is not None else [-1] * candidate_set.blocks.shape[-1]
     if candidate_set.seq_id != int(seq_id) or candidate_set.round_id != int(round_id):
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         current_engine().budget.late(False)
         counters.late += 1
         return ProtocolDecision("late", torch.empty(0, dtype=torch.int64)), block
@@ -583,7 +583,7 @@ def select_candidate_drafts_host(candidate_set: CandidateSet | None, *, seq_id: 
         counters.hit += 1
         return ProtocolDecision("hit", torch.tensor(block[1:], dtype=candidate_set.blocks.dtype)), block
     counters.miss += 1
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     drafts = [] if current_engine().budget.ar_step("miss", miss_mode) else block[1:]
     return ProtocolDecision("miss", torch.tensor(drafts, dtype=candidate_set.blocks.dtype)), block
 
@@ -596,7 +596,7 @@ def select_candidate_drafts_list(candidate_set: CandidateSet | None, *, seq_id: 
     if miss_mode not in {"ar", "verify"}:
         raise ValueError("miss_mode must be ar or verify")
     if candidate_set is None:
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         current_engine().budget.late(False)
         counters.late += 1
         return ProtocolDecision("late", []), None
@@ -608,7 +608,7 @@ def select_candidate_drafts_list(candidate_set: CandidateSet | None, *, seq_id: 
                      index=getattr(candidate_set, "_row_index", {}))
     block = rows[row] if row is not None else [-1] * candidate_set.blocks.shape[-1]
     if candidate_set.seq_id != int(seq_id) or candidate_set.round_id != int(round_id):
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         current_engine().budget.late(False)
         counters.late += 1
         return ProtocolDecision("late", []), block
@@ -619,7 +619,7 @@ def select_candidate_drafts_list(candidate_set: CandidateSet | None, *, seq_id: 
         counters.hit += 1
         return ProtocolDecision("hit", block[1:]), block
     counters.miss += 1
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     return ProtocolDecision("miss", [] if current_engine().budget.ar_step("miss", miss_mode) else block[1:]), block
 
 
@@ -714,7 +714,7 @@ def select_candidate_drafts(
         or candidate_set.seq_id != int(seq_id)
         or candidate_set.round_id != int(round_id)
     ):
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         current_engine().budget.late(False)
         counters.late += 1
         return ProtocolDecision("late", torch.empty(0, dtype=torch.int64))
@@ -734,7 +734,7 @@ def select_candidate_drafts(
         return ProtocolDecision("hit", block[1:])
 
     counters.miss += 1
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     drafts = block.new_empty((0,)) if current_engine().budget.ar_step("miss", miss_mode) else block[1:]
     return ProtocolDecision("miss", drafts)
 

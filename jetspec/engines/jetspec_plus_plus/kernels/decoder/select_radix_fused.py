@@ -176,7 +176,7 @@ def select(logits, rejected, q_a, q_b, cap, width, *, copy=None, stats=None,
     debug=True checks the zero invariant before the first histogram update.
     """
     from jetspec.engines.jetspec_plus_plus.draft.heads.anchor_select_fused import select_post
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     slab = 8 if kernel_value('draft_fuse_sf', '0') == '1' else 0
     mode = kernel_value('draft_fuse_sel', '0')
     small = 128 if mode in ('1', '3') else 0
