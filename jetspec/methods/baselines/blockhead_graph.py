@@ -714,14 +714,7 @@ class StaticBlockheadGraph:
         if not self.lmhead_kn:
             self._markov_logits.copy_(self._query_logits)
         self._markov_anchor.copy_(context_ids[:, -1])
-        from jetspec.engines.jetspec_plus_plus.trace.current import active_recorder
-        trace = active_recorder()
-        if trace is None:
-            self._graphs["markov"].replay()
-        else:
-            label = 'sampling' if self.draft_offset else 'markov_sampling'
-            with trace.span(label, 'draft'):
-                self._graphs["markov"].replay()
+        self._graphs["markov"].replay()
         corrected = self._markov_corrected[:, self.draft_offset:].clone()
         tokens = self._markov_tokens[:, self.draft_offset:].clone()
         parity_root = self.run_config.engine.engine_settings.w277_blockhead_parity_record

@@ -1,7 +1,21 @@
 """Reduce Table 3 reads with the original EOS-stopped yardstick."""
 from statistics import mean
 from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped, stop_lengths, round_is_miss
-from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import unpack
+import base64
+import json
+import zlib
+
+
+def unpack(payload, width=None):
+    if payload['schema'] not in ('jetspec.anatomy_lite/1', 'jetspec.anatomy_lite/2') or payload['clock'] != 'CLOCK_MONOTONIC':
+        raise ValueError('ANATOMY_LITE_SCHEMA')
+    if width is None:
+        width = 12 if payload['schema'].endswith('/2') else 11
+    rows = json.loads(zlib.decompress(base64.b64decode(payload['rows_zlib'])))
+    if len(rows) != payload['rounds'] or any(len(row) != width for row in rows):
+        raise ValueError('ANATOMY_LITE_ALIGNMENT')
+    return rows
+
 
 
 def lite_targets(metrics):

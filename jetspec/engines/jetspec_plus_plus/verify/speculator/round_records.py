@@ -5,7 +5,6 @@ class RoundRecords:
     def _append_jetspec_round_record(self, seq, candidate_set, true_k, decision_kind,
                                      selected_guess, selected_candidate_ids, candidate_kind,
                                      previous_round_ar, candidate_gap, fallback, trace):
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         coverage = {}
         if trace:
             served_ks = []
@@ -50,7 +49,6 @@ class RoundRecords:
             "wait_ms": self.jetspec_wait_ms,
             **({} if fallback is None else fallback),
         })
-        _census_mark("record", run_config=getattr(self, 'run_config', None))
 
     def finish_jetspec_late_record(self, seq):
         pending = getattr(self, "_pending_jetspec_record", None)

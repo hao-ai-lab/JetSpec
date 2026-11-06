@@ -37,8 +37,6 @@ from jetspec.engines.jetspec_plus_plus.serving.speculate_types import VerifierBa
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import append_committed_taps
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import stage_committed_taps
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import finish_staged_taps
-from jetspec.engines.jetspec_plus_plus.trace.attribution import FirstDivergenceDumper
-from jetspec.engines.jetspec_plus_plus.trace.attribution import prompt_index
 from jetspec.engines.jetspec_plus_plus.wire.protocol import anchor_mode
 from jetspec.engines.jetspec_plus_plus.wire.contract import OUTCOME_WORDS
 from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset
@@ -381,7 +379,6 @@ class TargetRunner(ModelRunner):
     @torch.inference_mode()
     def prepare_jetspec_mixed_device(self, seq: Sequence, full: bool):
         """Stage host-known graph inputs and plan while the candidate is in flight."""
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         width = self.config.speculate_k + 1 if full else 1
         prefix_len = getattr(seq, "_jetspec_last_packet_l", seq.num_cached_tokens)
         if prefix_len != seq.num_cached_tokens:
@@ -393,7 +390,6 @@ class TargetRunner(ModelRunner):
         if page_ids != self._jetspec_staged_page_ids:
             stage_single_verify_pages(seq, gv["block_tables"][0], pages)
             self._jetspec_staged_page_ids = page_ids
-        _census_mark("stage_pages", run_config=getattr(self, 'run_config', None))
         if getattr(self, "_verify_stage_blob_enabled", False):
             if self._verify_stage_blob_fast_enabled:
                 mismatches = stage_single_verify_inputs_blob_fast(
@@ -416,7 +412,6 @@ class TargetRunner(ModelRunner):
             stage_single_verify_inputs_host(
                 gv, None, prefix_len, seq.block_table, self.block_size,
                 self._jetspec_verify_stage_host[width], query_width=width)
-        _census_mark("stage_inputs", run_config=getattr(self, 'run_config', None))
         plan_host = self._jetspec_n1_plan_host[width]
         if getattr(self, "_verify_plan_lean_enabled", False):
             plan_host["np"]["context_lens"][0] = kv_len
@@ -444,7 +439,6 @@ class TargetRunner(ModelRunner):
                         graph_batch_size=1, static_q_len=width, static_kv_pages=pages,
                         static_kv_indptr=plan_host["kv_indptr"],
                         static_kv_last_page_len=plan_host["kv_last_page_len"], causal_only=True)
-            _census_mark("plan", run_config=getattr(self, 'run_config', None))
         finally:
             reset_context()
         self._jetspec_prepared = (seq.seq_id, prefix_len, width, page_ids)
@@ -485,7 +479,6 @@ class TargetRunner(ModelRunner):
         """Replay the N=1 mixed graph from device proposal IDs and static widths."""
         from jetspec.engines.jetspec_plus_plus.models.state import has_state
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if eager_pair(self):
             # The same incremental pair protocol, with an uncaptured target
@@ -562,13 +555,11 @@ class TargetRunner(ModelRunner):
             if not direct:
                 gv["input_ids"][:width].copy_(source[:width], non_blocking=gv["input_ids"].is_cuda)
         else:
-            _census_mark("stage_head", run_config=getattr(self, 'run_config', None))
             page_ids = tuple(seq.block_table[:pages]) if host_stage else None
             if not host_stage or page_ids != self._jetspec_staged_page_ids:
                 stage_single_verify_pages(seq, gv["block_tables"][0], pages)
                 if host_stage:
                     self._jetspec_staged_page_ids = page_ids
-            _census_mark("stage_pages", run_config=getattr(self, 'run_config', None))
             if host_stage:
                 proposal_host = getattr(seq, "_jetspec_verify_proposal_host", None)
                 if proposal_host is None or proposal_host.shape[0] < width:
@@ -607,7 +598,6 @@ class TargetRunner(ModelRunner):
                     stage_single_verify_inputs(
                         gv, proposals[:width], prefix_len,
                         gv["block_tables"][0], self.block_size)
-            _census_mark("stage_inputs", run_config=getattr(self, 'run_config', None))
         if (getattr(self, "_verify_input_direct_enabled", False) and
                 hasattr(self, "_jetspec_n1_context")):
             context_state._CONTEXT = self._jetspec_n1_context[width]
@@ -616,7 +606,6 @@ class TargetRunner(ModelRunner):
                         context_lens=gv["context_lens"][:1],
                         block_tables=gv["block_tables"][:1],
                         cu_seqlens_q=gv["cu_seqlens_q"][:2], max_seqlen_q=width)
-        _census_mark("stage", run_config=getattr(self, 'run_config', None))
         try:
             plan_started = time.perf_counter()
             if ATTENTION_BACKEND == "flashinfer" and not early:
@@ -630,19 +619,11 @@ class TargetRunner(ModelRunner):
                         static_kv_indptr=plan_host["kv_indptr"],
                         static_kv_last_page_len=plan_host["kv_last_page_len"], causal_only=True)
             replay_started = time.perf_counter()
-            if not early:
-                _census_mark("plan", run_config=getattr(self, 'run_config', None))
-            kernel_profile = getattr(self, "_verify_kernel_profile", None)
-            if kernel_profile is not None and kernel_profile.active is not None:
-                kernel_profile.step("replay")
             timing = getattr(self, '_anatomy_lite', None)
             if timing is not None:
                 timing.gpu_begin()
             graph.replay()
             logits_started = time.perf_counter()
-            _census_mark("replay", run_config=getattr(self, 'run_config', None))
-            if kernel_profile is not None and kernel_profile.active is not None:
-                kernel_profile.step("logits")
             # lm_head keeps a leading batch dim; greedy accept wants [width, vocab].
             logits = self.model.compute_logits(gv["outputs"][:width], last_only=False).reshape(width, -1)
             if timing is not None:
@@ -753,20 +734,11 @@ class Verifier(VerifierBase):
         self.jit_speculate = jit_speculate
         self.tokenizer = tokenizer
         self.metrics = metrics
-        self.lossless_dumper = FirstDivergenceDumper.from_env(run_config=run_config)
         self.hybrid_verify_audit = setting(self, 'engine.engine_settings.hybrid_verify_audit', '0') == "1"
-        # The EAGLE target prefill returns its conditioning in place of logits, so the fork skips
-        # the dumper there; JETSPEC_LOGIT_DUMP_EAGLE=1 asks the target for both (registered in env.py).
-        self.dump_eagle_prefill = setting(self, 'engine.engine_settings.logit_dump_eagle', '0') == "1"
-        self._jetspec_offsets: dict[int, int] = {}
         self.oracle_anchor = getattr(getattr(self.target_model_runner, "config", None), "jetspec", False) and anchor_mode(run_config=run_config) == "oracle"
         self.perseq = setting(self, 'engine.engine_settings.perseq', '0') == "1"
         self._hash16_weights = None
         self._jetspec_deferred_metrics = []
-        if setting(self, 'engine.engine_settings.verify_kernel_profile'):
-            from jetspec.engines.jetspec_plus_plus.trace.verify_kprofile import VerifyKernelProfile
-            self._verify_kernel_profile = VerifyKernelProfile.from_env(run_config=run_config)
-            self.target_model_runner._verify_kernel_profile = self._verify_kernel_profile
 
     def prefill(self, seqs: list[Sequence], eagle: bool = False) -> VerifyResult:
         if self.hybrid_verify_audit and any(seq.temperature > 0 for seq in seqs):
@@ -774,7 +746,7 @@ class Verifier(VerifierBase):
         from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if (self._jetspec_verify_device or eager_pair(self.target_model_runner)) and self._hash16_weights is None:
             self._hash16_weights = make_hash16_weights(self.device)
-        if (self.lossless_dumper is not None or self.hybrid_verify_audit) and (not eagle or self.dump_eagle_prefill):
+        if self.hybrid_verify_audit and not eagle:
             result = self.target_model_runner.call("run", seqs, True, True, True)
             if eagle:
                 token_ids, eagle_acts, prefill_logits = result
@@ -795,24 +767,13 @@ class Verifier(VerifierBase):
                 top = prefill_logits[index].float().topk(2)
                 greedy = int(prefill_logits[index].argmax().item())
                 self.metrics.setdefault("jetspec_hybrid_prefill_verify", []).append({
-                    "prompt_index": prompt_index(seq), "emitted": int(token_id),
+                    "prompt_index": int(seq.seq_id if seq.jetspec_prompt_index is None else seq.jetspec_prompt_index), "emitted": int(token_id),
                     "verify_argmax": greedy,
                     "verify_top2_ids": top.indices.tolist(),
                     "verify_top2_logits": top.values.tolist(),
                 })
                 if int(token_id) != greedy:
                     raise AssertionError("hybrid prefill token differs from target verify argmax")
-            if self.lossless_dumper is not None and prefill_logits is not None:
-                self.lossless_dumper.consider(
-                    prompt_index=prompt_index(seq),
-                    seq_id=seq.seq_id,
-                    position=0,
-                    round_id="prefill",
-                    decision="prefill",
-                    actual=token_id,
-                    logits=prefill_logits[index],
-                    source="prefill",
-                )
             if eagle:
                 seq_len = seq.num_prompt_tokens
                 # this doesn't move acts onto cpu does it? 
@@ -992,7 +953,7 @@ class Verifier(VerifierBase):
             return self._verify_jetspec_device(seqs[0], speculate_result)
         if (self._jetspec_verify_device and len(seqs) == 1
                 and seqs[0].temperature >= 0 and not tree_budget(run_config=self.target_model_runner.run_config)
-                and not self.oracle_anchor and self.lossless_dumper is None):
+                and not self.oracle_anchor):
             if self._jetspec_verify_sync_audit:
                 torch.cuda.set_sync_debug_mode("warn")
                 with warnings.catch_warnings(record=True) as seen:
@@ -1170,30 +1131,6 @@ class Verifier(VerifierBase):
                     self._save_chain_logits(by_seq[seq.seq_id], logits_p[local_index, :len(suffix)])
                 if self.oracle_anchor:
                     by_seq[seq.seq_id]['greedy_predictions'] = full_predictions[local_index]
-                if self.lossless_dumper is not None:
-                    record = by_seq[seq.seq_id]
-                    generated_offset = self._jetspec_offsets.get(seq.seq_id, 0)
-                    for suffix_index in range(1, len(suffix)):
-                        self.lossless_dumper.consider(
-                            prompt_index=prompt_index(seq),
-                            seq_id=seq.seq_id,
-                            position=generated_offset + suffix_index,
-                            round_id=record["round"],
-                            decision=record["decision"],
-                            actual=suffix[suffix_index],
-                            logits=logits_p[local_index, suffix_index - 1],
-                            source="block_verify_draft",
-                        )
-                    self.lossless_dumper.consider(
-                        prompt_index=prompt_index(seq),
-                        seq_id=seq.seq_id,
-                        position=generated_offset + len(suffix),
-                        round_id=record["round"],
-                        decision=record["decision"],
-                        actual=recovery,
-                        logits=logits_p[local_index, len(suffix) - 1],
-                        source="block_verify_recovery",
-                    )
 
         if ar_indices:
             ar_seqs = [seqs[i] for i in ar_indices]
@@ -1213,8 +1150,8 @@ class Verifier(VerifierBase):
                         append_committed_taps(
                             seq, mixed_taps[full_rows + index:full_rows + index + 1], 1
                         )
-                ar_logits = logits if self.lossless_dumper is not None or independent_chain else None
-            elif self.lossless_dumper is not None or independent_chain:
+                ar_logits = logits if independent_chain else None
+            elif independent_chain:
                 ar_recoveries, ar_logits = self.target_model_runner.call(
                     "run", ar_seqs, False, True, True
                 )
@@ -1241,26 +1178,9 @@ class Verifier(VerifierBase):
                 if self.oracle_anchor:
                     # An AR miss has only its one real target prediction.
                     by_seq[seq.seq_id]['greedy_predictions'] = [int(recovery)] + [-1] * 14
-                if ar_logits is not None and self.lossless_dumper is not None:
-                    record = by_seq[seq.seq_id]
-                    generated_offset = self._jetspec_offsets.get(seq.seq_id, 0)
-                    self.lossless_dumper.consider(
-                        prompt_index=prompt_index(seq),
-                        seq_id=seq.seq_id,
-                        position=generated_offset + 1,
-                        round_id=record["round"],
-                        decision=record["decision"],
-                        actual=recovery,
-                        logits=ar_logits[local_index],
-                        source="ar_recovery",
-                    )
 
         assert all(suffix is not None for suffix in new_suffixes)
         assert all(token is not None for token in recovery_tokens)
-        for seq, suffix in zip(seqs, new_suffixes):
-            self._jetspec_offsets[seq.seq_id] = (
-                self._jetspec_offsets.get(seq.seq_id, 0) + len(suffix)
-            )
         if timing is not None:
             timing.stamp('native_verify_end')
         self.metrics["target_verify_times"].append(perf_counter() - started)
@@ -1310,8 +1230,6 @@ class Verifier(VerifierBase):
         temperature = getattr(seq, "temperature", 0)
         if temperature > 0 and getattr(self, "hybrid_verify_audit", False):
             raise ValueError("JETSPEC_HYBRID_VERIFY_AUDIT only supports T=0 argmax auditing")
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
-        _census_mark("verify_entry", run_config=getattr(self, 'run_config', None))
         started = perf_counter()
         blockhead = getattr(speculate_result, "blockhead_anatomy", None) is not None
         if blockhead:
@@ -1323,25 +1241,16 @@ class Verifier(VerifierBase):
             full = bool(mask[0])
         width = self.lookahead + 1 if full else 1
         proposal = speculate_result.speculations[0, :width]
-        kernel_profile = getattr(self, "_verify_kernel_profile", None)
-        profiled = not blockhead and kernel_profile is not None and kernel_profile.begin()
-        if profiled:
-            kernel_profile.step("runner_stage")
         logits, taps, site_ms = self.target_model_runner.call(
             "run_jetspec_mixed_device", seq, proposal, full)
         verify_top2 = logits.float().topk(2, dim=-1) if getattr(self, "hybrid_verify_audit", False) else None
         verify_argmax = logits.argmax(dim=-1) if getattr(self, "hybrid_verify_audit", False) else None
         launched = perf_counter()
-        if profiled:
-            kernel_profile.step("late_record")
         late_record = getattr(self, "_jetspec_late_record_hook", None)
         if late_record is not None:
             late_record(seq)
         for site, duration in site_ms.items():
             self.metrics.setdefault(f"jetspec_device_{site}_host_ms", []).append(duration)
-        _census_mark("logits", run_config=getattr(self, 'run_config', None))
-        if profiled:
-            kernel_profile.step("accept")
         if temperature == 0:
             counts, recoveries = greedy_accept_device(logits[None], proposal[None])
         else:
@@ -1350,7 +1259,6 @@ class Verifier(VerifierBase):
                 logits[None], proposal[None], temperatures,
                 sampler_x=self.sampler_x, async_fan_out=self.async_fan_out)
         accepted = perf_counter()
-        _census_mark("accept", run_config=getattr(self, 'run_config', None))
         count, recovery = counts[0], recoveries[0]
         suffix_len = count + 1
         if has_state(self.target_model_runner):
@@ -1360,14 +1268,10 @@ class Verifier(VerifierBase):
             if blockhead or self.device.type != "cuda" or not self._jetspec_verify_device:
                 raise RuntimeError("JETSPEC_VERIFY_OUTCOME_FUSED requires N=1 CUDA JetSpec device verify, not blockhead")
         else:
-            if profiled:
-                kernel_profile.step("stage_ids")
             stage_committed_ids(seq, proposal,
                 capacity=self.target_model_runner.config.max_model_len + self.lookahead + 2)
             # The second stage below writes the same slot after the packet D2H is queued.
             if taps is not None and not getattr(self, "_verify_cut_glue8b", False):
-                if profiled:
-                    kernel_profile.step("stage_taps_first")
                 stage_committed_taps(seq, taps,
                     capacity=self.target_model_runner.config.max_model_len + self.lookahead + 1)
 
@@ -1417,8 +1321,6 @@ class Verifier(VerifierBase):
             host_words = torch.empty(OUTCOME_WORDS, dtype=torch.int64,
                                      device="cpu", pin_memory=True)
             outcome = torch.empty(OUTCOME_WORDS, dtype=torch.int64, device=self.device)
-            if profiled:
-                kernel_profile.step("outcome_fused")
             launch_outcome_fused(
                 proposal, count, recovery, storage, taps, tap_storage,
                 self._hash16_weights, outcome, start=seq.num_cached_tokens,
@@ -1431,8 +1333,6 @@ class Verifier(VerifierBase):
                 ignore_eos=seq.ignore_eos,
                 recovery_eos_terminal=recovery_eos_terminal)
             seq._jetspec_device_outcome = outcome
-            _census_mark("outcome_head", run_config=getattr(self, 'run_config', None))
-            _census_mark("recovery_id", run_config=getattr(self, 'run_config', None))
             if fused_check:
                 from types import SimpleNamespace
                 scratch = SimpleNamespace(
@@ -1475,8 +1375,6 @@ class Verifier(VerifierBase):
                     scratch._jetspec_tap_storage = torch.empty_like(tap_storage)
                     stage_committed_taps(scratch, taps, capacity=tap_storage.shape[0])
         else:
-            if profiled:
-                kernel_profile.step("packet_head")
             host_words = torch.zeros(OUTCOME_WORDS, dtype=torch.int64,
                                      device="cpu", pin_memory=self.device.type == "cuda")
             host_words[OutcomeOffset.CMD] = 1
@@ -1486,25 +1384,15 @@ class Verifier(VerifierBase):
             host_words[OutcomeOffset.K] = row_k
             host_words[OutcomeOffset.A] = row_a
             outcome = host_words.to(self.device, non_blocking=True)
-            if profiled:
-                kernel_profile.step("outcome_writes")
             outcome[OutcomeOffset.TRUE_K].copy_(count)
             outcome[OutcomeOffset.RECOVERY].copy_(recovery)
             outcome[OutcomeOffset.TAP_COUNT].copy_(suffix_len)
             committed_length = seq.num_cached_tokens + suffix_len
-            _census_mark("outcome_head", run_config=getattr(self, 'run_config', None))
-            if profiled:
-                kernel_profile.step("recovery_id")
             stage_recovery_id(seq, committed_length, recovery)
-            _census_mark("recovery_id", run_config=getattr(self, 'run_config', None))
-            if profiled:
-                kernel_profile.step("hash")
             outcome[OutcomeOffset.L].copy_(committed_length)
             outcome[OutcomeOffset.HASH16].copy_(
                 hash16_committed(seq._jetspec_token_storage, committed_length + 1,
                                  self._hash16_weights))
-            if profiled:
-                kernel_profile.step("eos")
             eos_id = getattr(self.tokenizer, "eos_token_id", None)
             eos = torch.zeros((), dtype=torch.bool, device=self.device)
             if eos_id is not None and not seq.ignore_eos:
@@ -1520,8 +1408,6 @@ class Verifier(VerifierBase):
 
         # Post the packet D2H as soon as it is complete, then enqueue tap
         # staging before the one wait needed by host sequence metadata.
-        if profiled:
-            kernel_profile.step("packet_mirror")
         host_words.copy_(outcome, non_blocking=outcome.is_cuda)
         if outcome.is_cuda:
             mirror_event = getattr(seq, "_jetspec_packet_mirror_event", None)
@@ -1530,18 +1416,11 @@ class Verifier(VerifierBase):
                 seq._jetspec_packet_mirror_event = mirror_event
             mirror_event.record(torch.cuda.current_stream(self.device))
         if taps is not None and not outcome_fused:
-            if profiled:
-                kernel_profile.step("stage_taps_second")
             stage_committed_taps(seq, taps,
                 capacity=self.target_model_runner.config.max_model_len + self.lookahead + 1)
         presync_pack = getattr(self, "_jetspec_presync_pack_hook", None)
         if presync_pack is not None:
-            if profiled:
-                kernel_profile.step("presync_pack")
             presync_pack(seq)
-        _census_mark("pre_sync", run_config=getattr(self, 'run_config', None))
-        if profiled:
-            kernel_profile.step("sync")
         if outcome.is_cuda:
             mirror_event.synchronize()
         if fused_check:
@@ -1560,12 +1439,6 @@ class Verifier(VerifierBase):
             self._outcome_fused_check_mismatches = getattr(self, "_outcome_fused_check_mismatches", 0) + int(mismatch)
             print(f"OUTCOME_FUSED_CHECK rounds={self._outcome_fused_check_rounds} "
                   f"mismatches={self._outcome_fused_check_mismatches}", flush=True)
-        if profiled:
-            kernel_profile.step("verify_post")
-            kernel_profile.round_meta = dict(seq_id=seq.seq_id,
-                                             round=seq.jetspec_round + 1,
-                                             width=width, full=full)
-        _census_mark("sync", run_config=getattr(self, 'run_config', None))
         words = host_words.tolist() if getattr(self, "_jetspec_verify_post_lean", False) else host_words
         committed = int(words[OutcomeOffset.TAP_COUNT])
         recovery_id = int(words[OutcomeOffset.RECOVERY])
@@ -1609,14 +1482,12 @@ class Verifier(VerifierBase):
                 seq, suffix, committed, recovery_id, width, full, taps is not None,
                 started, launched, accepted, perf_counter(),
                 self.metrics["jetspec_round_records"][-1])
-            _census_mark("verify_post", run_config=getattr(self, 'run_config', None))
             return VerifyResult([suffix], [recovery_id], device_outcome=outcome)
         if taps is not None:
             finish_staged_taps(seq, committed)
         finish_committed_ids(seq, committed)
         seq._jetspec_device_tap_count = committed
         seq.num_cached_tokens += width
-        self._jetspec_offsets[seq.seq_id] = self._jetspec_offsets.get(seq.seq_id, 0) + committed
         self.metrics["target_verify_times"].append(perf_counter() - started)
         self.metrics["accepted_suffix_lens_with_recovery"].append(committed)
         self.metrics["jetspec_verify_round_ms"].append((perf_counter() - started) * 1000)
@@ -1632,7 +1503,6 @@ class Verifier(VerifierBase):
             (accepted - launched) * 1000)
         self.metrics.setdefault("jetspec_device_commit_host_ms", []).append(
             (perf_counter() - accepted) * 1000)
-        _census_mark("verify_post", run_config=getattr(self, 'run_config', None))
         return VerifyResult([suffix], [recovery_id], device_outcome=outcome)
 
     def finish_jetspec_postpublish(self, seq):
@@ -1647,7 +1517,6 @@ class Verifier(VerifierBase):
             finish_staged_taps(seq, committed)
         finish_committed_ids(seq, committed)
         seq.num_cached_tokens += width
-        self._jetspec_offsets[seq.seq_id] = self._jetspec_offsets.get(seq.seq_id, 0) + committed
         self._jetspec_deferred_metrics.append((
             record, suffix, committed, recovery_id, full,
             started, launched, accepted, word_stamp))

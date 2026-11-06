@@ -30,7 +30,7 @@ The other paths support these three:
 | `launch/` | The public command, recipe resolution, artifact checks, the child process |
 | `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
 | `runtime/` | Run settings and DSpark serving integration |
-| `launch/anatomy.py`, `launch/eos_stop.py`, `launch/run_manifest.py`, `trace/` | Read analysis, run records and tracing |
+| `launch/eos_stop.py`, `launch/run_manifest.py`, `runtime/round_timing.py` | EOS reduction, run records and round timing |
 | `bench/jetspec_plus_plus/third_party/`, `bench/jetspec_plus_plus/baselines/` | Pinned DSpark code and comparison routes, loaded only when selected from a source checkout |
 
 ## From the command to the first forward pass

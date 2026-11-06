@@ -59,7 +59,7 @@ def read_record(job, output, cache_root):
                       count=128, turn=1, temperature=0)])]
     record = entry.resolve_read(names, overrides, root=ROOT / 'config', prompts_root=PROMPTS, launch=launch,
                                 output=str(output), sequential_prompts=True,
-                                cache_root=str(cache_root), wire_records='off', anatomy='off')
+                                cache_root=str(cache_root), wire_records='off')
     if method != 'jetspecpp':
         # Baselines replay their recorded environments, including thread caps.
         record['recipe']['environment'] = dict(row['environment'])
@@ -76,7 +76,7 @@ def build_argv(job, run, prompts, capacity, record, args):
             '--batch', '1', '--sequential-prompts', '--tokens', '2048', '--stop-at-eos', 'on',
             '--temperature', '0', '--seed', '0', '--repeats', '1',
             '--cache-root', str((args.output_dir / 'compiler-cache').resolve()),
-            '--wire-records', 'off', '--anatomy', 'off',
+            '--wire-records', 'off',
             '--cpu-pin', 'auto' if recipe['method'] == 'jetspecpp' else 'off',
             '--max-model-len', str(capacity), '--child-wall-seconds', '2400',
             '--output-json', str(run / 'read.json'), '--knob', 'SSD_SHARED_GPU_KV_UTILIZATION=0.10']
@@ -259,8 +259,4 @@ def validate_read(output, log, job, prompts, original, record):
                                          measured['chain']['capacity_fallback']))
         assert receipt['ar_steps_inside_eos'] == 0, 'NONZERO_AR_STEPS_INSIDE_EOS'
         assert receipt['capacity_fallback_inside_eos'] == 0, 'CAPACITY_FALLBACK_INSIDE_EOS'
-        if job['model'] == '27b':
-            errors = [int(v) for v in re.findall(r'W645_CHAIN_AUDIT .*"error_bits": (\d+)', text)]
-            assert errors and max(errors) == 0, 'CHAIN_ERR'
-            receipt.update(chain_err=max(errors), chain_audit_rounds=len(errors))
     return receipt

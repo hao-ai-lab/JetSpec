@@ -1,7 +1,7 @@
 """Host command and fixed-envelope dispatch for one served chain sequence."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import enabled as anatomy_enabled
+from jetspec.engines.jetspec_plus_plus.runtime.round_timing import enabled as anatomy_enabled
 
 from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 

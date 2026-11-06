@@ -14,7 +14,6 @@ from jetspec.engines.jetspec_plus_plus.verify.step import InferenceStep
 from jetspec.engines.jetspec_plus_plus.verify.step import AutoRegressiveStep
 from jetspec.engines.jetspec_plus_plus.verify.step import SpecDecodeStep
 from jetspec.engines.jetspec_plus_plus.verify.forward import Verifier, TargetRunner
-from jetspec.engines.jetspec_plus_plus.trace import host_census
 from jetspec.engines.jetspec_plus_plus.runtime.linear_head import blockhead_config_overrides
 from jetspec.engines.jetspec_plus_plus.runtime.linear_head import complete_metric_rounds
 from jetspec.engines.jetspec_plus_plus.wire.protocol import summarize_candidate_kinds
@@ -198,11 +197,11 @@ class LLMEngine:
         self.model_runner = TargetRunner(
             config, 0, self.events, is_draft=False, num_tp_gpus=self.num_tp_gpus,
             eagle3_model_class=eagle3_model_class, engine=self.engine, run_config=self.run_config)
-        from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import enabled as anatomy_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.round_timing import enabled as anatomy_enabled
         if (anatomy_enabled(self.run_config, engine=self.engine)
                 and config.max_num_seqs == 1):
-            from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import RoundTiming
-            from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import target_host_stamps
+            from jetspec.engines.jetspec_plus_plus.runtime.round_timing import RoundTiming
+            from jetspec.engines.jetspec_plus_plus.runtime.round_timing import target_host_stamps
             self.model_runner._anatomy_lite = RoundTiming(
                 host_stamps=target_host_stamps(config.jetspec, self.run_config, engine=self.engine))
         else:
@@ -311,9 +310,7 @@ class LLMEngine:
         t = perf_counter()
         timing = getattr(self.model_runner, '_anatomy_lite', None)
         start_ns = monotonic_ns() if timing is not None else None
-        host_census.mark("step_start", run_config=getattr(self, 'run_config', None))
         seqs, is_prefill = self.scheduler.schedule()
-        host_census.mark("schedule", run_config=getattr(self, 'run_config', None))
         if timing is not None and not is_prefill:
             if len(seqs) != 1:
                 raise ValueError("anatomy-lite requires sequential N=1 reads")
@@ -346,7 +343,6 @@ class LLMEngine:
                         "taps": seq.jetspec_taps.detach().cpu(),
                     }
 
-        host_census.flush(METRICS, run_config=getattr(self, 'run_config', None))
         if timing is not None and not is_prefill:
             timing.close_step()
         return outputs

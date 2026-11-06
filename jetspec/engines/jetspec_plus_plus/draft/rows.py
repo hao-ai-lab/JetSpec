@@ -419,7 +419,6 @@ class EarlyContextKV:
         self._slots = torch.arange(N * (P + self.T), device=self.device) if N > 1 else None
         self.stream = torch.cuda.Stream(device=self.device) if self.device.type == 'cuda' else None
         self.event = None
-        self.start_event = self.end_event = None
         self.key = None
 
     @torch.inference_mode()
@@ -455,7 +454,6 @@ class EarlyContextKV:
 
     @torch.inference_mode()
     def _issue_batch(self, prefixes, tails, *, key):
-        self.start_event = self.end_event = None
         lengths = tuple(prefix.shape[0] for prefix in prefixes)
         if len(prefixes) != self.N or any(length > self.P for length in lengths):
             raise ValueError('batched prefix count or length exceeds bucket')
@@ -471,9 +469,6 @@ class EarlyContextKV:
             import contextlib
             context_manager = contextlib.nullcontext()
         with context_manager:
-            if self.stream is not None and config_values(self.run_config).get('engine.engine_settings.device_split', '0') == '1':
-                self.start_event = torch.cuda.Event(enable_timing=True)
-                self.start_event.record(self.stream)
             padded = torch.nn.utils.rnn.pad_sequence(prefixes, batch_first=True)
             context = self.contexts.view(self.N, self.P + self.T, -1)
             context.zero_()
@@ -488,9 +483,6 @@ class EarlyContextKV:
             self.sin.view(self.N, self.P + self.T, width)[:, self.P:].copy_(
                 self._table[1].index_select(0, tail).view(self.N, self.T, width))
             self._project()
-            if self.start_event is not None:
-                self.end_event = torch.cuda.Event(enable_timing=True)
-                self.end_event.record(self.stream)
             if self.stream is not None:
                 self.event = torch.cuda.Event()
                 self.event.record(self.stream)

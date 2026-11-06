@@ -973,11 +973,6 @@ class KthRowsDrafter:
         ids = torch.cat((torch.cat([s.committed_ids[:, -1:].to(d.device) for s in sequences]),
                          torch.stack([b.draft_ids.to(d.device) for b in blocks])), dim=1)
         previous = prefix[torch.arange(count, device=d.device), length_tensor-1][:, None]
-        split = (count > 1 and config_values(self.run_config).get('engine.engine_settings.device_split', '0') == '1'
-                 and d.device.type == 'cuda')
-        adapter_start = torch.cuda.Event(enable_timing=True) if split else None
-        if split:
-            adapter_start.record()
         predicted = d.adapter.head(token_embeddings=d.embed_tokens(ids), h_prev=previous,
             prefix_h=prefix, prefix_position_ids=positions[None].expand(count, -1),
             query_position_ids=length_tensor[:, None]+query, attention_mask=mask,
@@ -985,10 +980,6 @@ class KthRowsDrafter:
             **({'batched_uncached': True} if batched_uncached else {}),
             **({'prefix_keys': sequences, 'prefix_lengths': lengths} if multi_cached else {}),
             **({"prefix_key": sequences[0] if len(sequences) == 1 else None, "run_config": run_config if run_config is not None else getattr(self, 'run_config', None)} if isinstance(d.adapter.head, ServingCtxKVC1Head) else {}))
-        if split:
-            adapter_end = torch.cuda.Event(enable_timing=True)
-            adapter_end.record()
-            self.__dict__.setdefault('_w434_adapter_events', []).append((adapter_start, adapter_end))
         # These are per-sequence protocol state transitions; tensor work is batched.
         if admission:
             sequences[-1].staged.stage(start_position=lengths[-1], token_ids=ids[-1:],
@@ -1010,8 +1001,7 @@ class KthRowsDrafter:
 
     def _admission_fast_ok(self, blocks):
         from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
-        return (len(blocks) > 1 and isinstance(self.drafter.adapter.head, ServingCtxKVC1Head)
-                and config_values(self.run_config).get('engine.engine_settings.device_split', '0') != '1')
+        return (len(blocks) > 1 and isinstance(self.drafter.adapter.head, ServingCtxKVC1Head))
 
     def _admission_forward(self, exact, ids, run_config=None):
         """_stage_packed(admission=True)'s adapter call on one shared prefix, as a pure function.
@@ -1147,16 +1137,8 @@ class KthRowsDrafter:
         prefixes = [s.exact_hidden(device=d.device, dtype=d.dtype)[0] for s in sequences]
         ids = torch.cat((torch.cat([s.committed_ids[:, -1:].to(d.device) for s in sequences]),
                          torch.stack([b.draft_ids.to(d.device) for b in blocks])), dim=1)
-        split = config_values(self.run_config).get('engine.engine_settings.device_split', '0') == '1' and d.device.type == 'cuda'
-        adapter_start = torch.cuda.Event(enable_timing=True) if split else None
-        if split:
-            adapter_start.record()
         predicted = head.forward_batch_graph(sequences, prefixes, d.embed_tokens(ids),
                                              bucket=batch_draft_bucket(len(sequences)), run_config=self.run_config)
-        if split:
-            adapter_end = torch.cuda.Event(enable_timing=True)
-            adapter_end.record()
-            self.__dict__.setdefault('_w434_adapter_events', []).append((adapter_start, adapter_end))
         for row, (s, b, prefix) in enumerate(zip(sequences, blocks, prefixes)):
             s.staged.stage(start_position=prefix.shape[0], token_ids=ids[row:row+1],
                            predicted_hidden=predicted[row:row+1])
