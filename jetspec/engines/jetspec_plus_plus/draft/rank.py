@@ -1098,7 +1098,7 @@ class DraftRunner(ModelRunner):
     def _init_chain_runtime(self, seq_id, run_config=None):
         """Bind the admission sequence and capture every reachable chain key."""
         from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
-        from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import enabled as anatomy_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.round_timing import enabled as anatomy_enabled
         from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting

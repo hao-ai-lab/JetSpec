@@ -1506,7 +1506,6 @@ class ModelRunner:
             token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
             reset_context()
             if conditioning is not None:
-                # the verifier's lossless dumper asks for logits too (JETSPEC_LOGIT_DUMP_EAGLE=1)
                 return (token_ids, conditioning, logits) if draft_return_logits else (token_ids, conditioning)
             return (token_ids, logits) if draft_return_logits else token_ids
         else:

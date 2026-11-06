@@ -407,7 +407,7 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
             _name('engine', 'engine_settings.verify_plan_reuse'), _name('engine', 'engine_settings.verify_plan_lean'),
             _name('engine', 'engine_settings.verify_prestage_mixed'), _name('engine', 'engine_settings.verify_outcome_fused'),
             _name('engine', 'engine_settings.verify_publish_first'), _name('engine', 'engine_settings.outcome_pack_presync'),
-            _name('engine', 'engine_settings.candidate_recv_ahead'), _name('engine', 'engine_settings.verify_host_census'),
+            _name('engine', 'engine_settings.candidate_recv_ahead'),
         )
         for name in forbidden:
             if environ.get(name, "0") == "1":

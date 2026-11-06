@@ -94,7 +94,6 @@ class OutcomePublisher:
 
     def pack_device_outcome_presync(self, seq):
         """Enqueue the final packet and tap copies after the mirror event."""
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         if not self._outcome_pack_presync:
             return
         if self._presync_packed_outcome is not None:
@@ -111,9 +110,7 @@ class OutcomePublisher:
                 raise RuntimeError("pair outcome transport is not ready for pre-sync push")
             self._pair_pending_id = claim_command_id(self.jetspec_mailbox_store)
             self._pair_transport.push(self._pair_pending_id, message)
-        _census_mark("pack", run_config=getattr(self, 'run_config', None))
         self._prune_jetspec_request_sends()
-        _census_mark("prune", run_config=getattr(self, 'run_config', None))
 
     def prepare_reference_taps(self, seq, taps):
         """Prepare immutable taps while the target forward is in flight."""
@@ -130,7 +127,6 @@ class OutcomePublisher:
         """Send the next-round correction and fixed tap block before host postprocess."""
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         ring_enabled = getattr(self, "_outcome_wire_ring_enabled", False)
         from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if (self._verify_device_legacy or
@@ -186,15 +182,12 @@ class OutcomePublisher:
             self.metrics["jetspec_device_sync_warnings"][-1] += sum(
                 "synchroniz" in str(warning.message).lower() for warning in seen)
         else:
-            _census_mark("publish_head", run_config=getattr(self, 'run_config', None))
             if getattr(self, "_outcome_pack_presync", False):
                 self.check_device_outcome_presync(seq)
             _, tensors = self._pack_jetspec_request(seqs)
             if not getattr(self, "_outcome_pack_presync", False):
-                _census_mark("pack", run_config=getattr(self, 'run_config', None))
                 if not getattr(self, "_reference_tap_prepare", False):
                     self._prune_jetspec_request_sends()
-                _census_mark("prune", run_config=getattr(self, 'run_config', None))
             self._queue_jetspec_request(tensors, signal_store=False,
                                         chain_command="outcome", **command_fields)
         seqs[0]._jetspec_device_outcome_published = True
@@ -205,4 +198,3 @@ class OutcomePublisher:
                 ahead_max=self._pair_transport.ahead_max))
         self.metrics.setdefault("jetspec_device_publish_host_ms", []).append(
             (time.perf_counter() - started) * 1000)
-        _census_mark("publish_tail", run_config=getattr(self, 'run_config', None))

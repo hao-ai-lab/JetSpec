@@ -221,11 +221,10 @@ def rows_from_path(path, *, eos_token_ids=None):
             raw = json.loads(read_path.read_text())
             if "outputs" not in raw or "metrics" not in raw:
                 continue
-            anatomy = _sidecar(read_path, ".anatomy/anatomy.json") or {}
             population_file = _sidecar(read_path, ".populations.json") or {}
-            method = anatomy.get("method") or population_file.get("method")
+            method = population_file.get("method")
             if method is None:
-                raise ValueError(f"{read_path}: missing method in anatomy/populations sidecar")
+                raise ValueError(f"{read_path}: missing method in populations sidecar")
             reads.append((read_path, method, raw["max_new"]))
         if not reads:
             raise ValueError(f"no saved reads in {path}")
@@ -243,10 +242,7 @@ def rows_from_path(path, *, eos_token_ids=None):
             try:
                 raw = json.loads(read_path.read_text())
                 measured = raw["metrics"]["serve_read"]["measured"]
-                anatomy = _sidecar(read_path, ".anatomy/anatomy.json")
-                if anatomy:
-                    row["tau_to_cap"] = anatomy["tau"]
-                elif read.get("measured", {}).get("tau_to_cap") is not None:
+                if read.get("measured", {}).get("tau_to_cap") is not None:
                     row["tau_to_cap"] = read["measured"]["tau_to_cap"]
                 elif method == "ar":
                     row["tau_to_cap"] = 1

@@ -239,8 +239,6 @@
       "JETSPEC_CHAIN_INTAKE_FUSED": "engine_settings.chain_intake_fused",
       "JETSPEC_CHAIN_J_SWITCH_L": "engine_settings.chain_j_switch_l",
       "JETSPEC_CHAIN_SINGLE_KEY": "engine_settings.chain_single_key",
-      "JETSPEC_CHAIN_KERNEL_PROFILE": "engine_settings.chain_kernel_profile",
-      "JETSPEC_CHAIN_KERNEL_PROFILE_EVERY": "engine_settings.chain_kernel_profile_every",
       "JETSPEC_CHAIN_MISS_REDRAFT": "engine_settings.chain_miss_redraft",
       "JETSPEC_CHAIN_MISS_REDRAFT_MAX_MS": "engine_settings.chain_miss_redraft_max_ms",
       "JETSPEC_CHAIN_MISS_REDRAFT_TIMING": "engine_settings.chain_miss_redraft_timing",
@@ -290,7 +288,6 @@
       "JETSPEC_DEVICE_HOST_STAMPS": "engine_settings.device_host_stamps",
       "JETSPEC_DEVICE_PUBLISH": "engine_settings.device_publish",
       "JETSPEC_DEVICE_PUBLISH_CHECK": "engine_settings.device_publish_check",
-      "JETSPEC_DEVICE_SPLIT": "engine_settings.device_split",
       "JETSPEC_DRAFT_DEADLINE": "engine_settings.draft_deadline",
       "JETSPEC_DRAFT_DEADLINE_MARGIN_MS": "engine_settings.draft_deadline_margin_ms",
       "JETSPEC_DRAFT_FUSE_CGM27": "engine_settings.draft_fuse_cgm27",
@@ -361,10 +358,6 @@
       "JETSPEC_KIT_WORK_ROOT": "engine_settings.kit_work_root",
       "JETSPEC_LEGACY_KPRED_FORWARD": "engine_settings.legacy_kpred_forward",
       "JETSPEC_LMHEAD_FUSED": "engine_settings.lmhead_fused",
-      "JETSPEC_LOGIT_DUMP_DIR": "engine_settings.logit_dump_dir",
-      "JETSPEC_LOGIT_DUMP_EAGLE": "engine_settings.logit_dump_eagle",
-      "JETSPEC_LOGIT_REFERENCE": "engine_settings.logit_reference",
-      "JETSPEC_LOGIT_TARGETS": "engine_settings.logit_targets",
       "JETSPEC_OUTCOME_PACK_PRESYNC": "engine_settings.outcome_pack_presync",
       "JETSPEC_OUTCOME_PACK_PRESYNC_CHECK": "engine_settings.outcome_pack_presync_check",
       "JETSPEC_OUTCOME_PREPOST_NO_ACK": "engine_settings.outcome_prepost_no_ack",
@@ -412,9 +405,6 @@
       "JETSPEC_REFRESH_SWAP_LEAN_CHECK": "engine_settings.refresh_swap_lean_check",
       "JETSPEC_REFRESH_SWAP_WRITE_FUSED": "engine_settings.refresh_swap_write_fused",
       "JETSPEC_REQUEST_LEAN": "engine_settings.request_lean",
-      "JETSPEC_ROUNDTRACE": "engine_settings.roundtrace",
-      "JETSPEC_ROUNDTRACE_DEVICE": "engine_settings.roundtrace_device",
-      "JETSPEC_ROUNDTRACE_EVENT_PAIRS": "engine_settings.roundtrace_event_pairs",
       "JETSPEC_ROWS": "engine_settings.rows",
       "JETSPEC_ROWS_ASSEMBLY": "engine_settings.rows_assembly",
       "JETSPEC_ROWS_CAP": "engine_settings.rows_cap",
@@ -485,11 +475,8 @@
       "JETSPEC_VERIFY_CUT_MERGEFP8_8B": "engine_settings.verify_cut_mergefp8_8b",
       "JETSPEC_VERIFY_CUT_GLUE8B2": "engine_settings.verify_cut_glue8b2",
       "JETSPEC_VERIFY_DEVICE_TRANSPORT": "engine_settings.verify_device_transport",
-      "JETSPEC_VERIFY_HOST_CENSUS": "engine_settings.verify_host_census",
       "JETSPEC_VERIFY_INPUT_DIRECT": "engine_settings.verify_input_direct",
       "JETSPEC_VERIFY_INPUT_VIEW": "engine_settings.verify_input_view",
-      "JETSPEC_VERIFY_KERNEL_PROFILE": "engine_settings.verify_kernel_profile",
-      "JETSPEC_VERIFY_KERNEL_PROFILE_EVERY": "engine_settings.verify_kernel_profile_every",
       "JETSPEC_VERIFY_OUTCOME_FUSED": "engine_settings.verify_outcome_fused",
       "JETSPEC_VERIFY_OUTCOME_FUSED_CHECK": "engine_settings.verify_outcome_fused_check",
       "JETSPEC_VERIFY_PLAN_LEAN": "engine_settings.verify_plan_lean",
@@ -584,7 +571,6 @@
       "W328_DEFER_TAPS": "engine_settings.w328_defer_taps",
       "W328_DIGEST": "engine_settings.w328_digest",
       "W328_DIGEST_TAPS": "engine_settings.w328_digest_taps",
-      "W446_KERNEL_PROFILE": "engine_settings.w446_kernel_profile",
       "W632_HEAD_CAPTURE": "engine_settings.w632_head_capture",
       "W632_HEAD_FUSE": "engine_settings.w632_head_fuse",
       "JETSPEC_EVAL_MODE": "engine_settings.eval_mode"
@@ -707,8 +693,7 @@
       "JETSPEC_VERIFY_OUTCOME_FUSED": "0",
       "JETSPEC_VERIFY_PUBLISH_FIRST": "0",
       "JETSPEC_OUTCOME_PACK_PRESYNC": "0",
-      "JETSPEC_CANDIDATE_RECV_AHEAD": "0",
-      "JETSPEC_VERIFY_HOST_CENSUS": "0"
+      "JETSPEC_CANDIDATE_RECV_AHEAD": "0"
     }
   },
   "contract": {
@@ -762,17 +747,6 @@
         "allowed": null,
         "reader": "serve",
         "note": "compile cache path; required when recording tuning without a pin"
-      },
-      "W446_KERNEL_PROFILE": {
-        "name": "W446_KERNEL_PROFILE",
-        "kind": "flag",
-        "default": "NO_DEFAULT",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "serve",
-        "note": "roundtrace kernel profiling; absent disables profiling"
       },
       "W632_HEAD_CAPTURE": {
         "name": "W632_HEAD_CAPTURE",
@@ -1389,33 +1363,6 @@
         "allowed": null,
         "reader": "serve",
         "note": "set by bench.py so the spawned draft process writes its run-manifest part"
-      },
-      "JETSPEC_ROUNDTRACE": {
-        "name": "JETSPEC_ROUNDTRACE",
-        "kind": "path",
-        "default": "NO_DEFAULT",
-        "allowed": null,
-        "reader": "launcher",
-        "note": "opt-in trace directory consumed by engine/jetspec_engine/trace before serving starts"
-      },
-      "JETSPEC_ROUNDTRACE_DEVICE": {
-        "name": "JETSPEC_ROUNDTRACE_DEVICE",
-        "kind": "flag",
-        "default": "0",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "launcher",
-        "note": "enable buffered CUDA event pairs in the roundtrace recorder"
-      },
-      "JETSPEC_ROUNDTRACE_EVENT_PAIRS": {
-        "name": "JETSPEC_ROUNDTRACE_EVENT_PAIRS",
-        "kind": "int",
-        "default": "8192",
-        "allowed": null,
-        "reader": "launcher",
-        "note": "fail-closed per-rank roundtrace CUDA event-pair pool size"
       },
       "JETSPEC_TARGET_RELEASE_WEIGHTS": {
         "name": "JETSPEC_TARGET_RELEASE_WEIGHTS",
@@ -2596,17 +2543,6 @@
         "reader": "serve",
         "note": ""
       },
-      "JETSPEC_VERIFY_HOST_CENSUS": {
-        "name": "JETSPEC_VERIFY_HOST_CENSUS",
-        "kind": "flag",
-        "default": "0",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "serve",
-        "note": "a47: per-round host segment stamps of the N=1 device-verify round (verify_host_census)"
-      },
       "JETSPEC_VERIFY_CUT_MLPGLUE": {
         "name": "JETSPEC_VERIFY_CUT_MLPGLUE",
         "kind": "flag",
@@ -2969,22 +2905,6 @@
         ],
         "reader": "serve",
         "note": ""
-      },
-      "JETSPEC_VERIFY_KERNEL_PROFILE": {
-        "name": "JETSPEC_VERIFY_KERNEL_PROFILE",
-        "kind": "path",
-        "default": "NO_DEFAULT",
-        "allowed": null,
-        "reader": "serve",
-        "note": "diagnostic: sampled verify-rank kernel and idle-gap JSONL"
-      },
-      "JETSPEC_VERIFY_KERNEL_PROFILE_EVERY": {
-        "name": "JETSPEC_VERIFY_KERNEL_PROFILE_EVERY",
-        "kind": "int",
-        "default": "20",
-        "allowed": null,
-        "reader": "serve",
-        "note": "profile every Nth verify round when JETSPEC_VERIFY_KERNEL_PROFILE is set"
       },
       "JETSPEC_ROW_LAYOUT": {
         "name": "JETSPEC_ROW_LAYOUT",
@@ -3613,22 +3533,6 @@
         ],
         "reader": "serve",
         "note": ""
-      },
-      "JETSPEC_CHAIN_KERNEL_PROFILE": {
-        "name": "JETSPEC_CHAIN_KERNEL_PROFILE",
-        "kind": "path",
-        "default": "NO_DEFAULT",
-        "allowed": null,
-        "reader": "serve",
-        "note": "diagnostic: append per-kernel device time of sampled chain rounds to this JSONL"
-      },
-      "JETSPEC_CHAIN_KERNEL_PROFILE_EVERY": {
-        "name": "JETSPEC_CHAIN_KERNEL_PROFILE_EVERY",
-        "kind": "int",
-        "default": "20",
-        "allowed": null,
-        "reader": "serve",
-        "note": "profile every Nth chain round when JETSPEC_CHAIN_KERNEL_PROFILE is set"
       },
       "JETSPEC_CHAIN_FIXED_CONFIG": {
         "name": "JETSPEC_CHAIN_FIXED_CONFIG",
@@ -5866,17 +5770,6 @@
         "reader": "serve",
         "note": ""
       },
-      "JETSPEC_DEVICE_SPLIT": {
-        "name": "JETSPEC_DEVICE_SPLIT",
-        "kind": "flag",
-        "default": "0",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "serve",
-        "note": ""
-      },
       "JETSPEC_DECODER_BATCH_PREFETCH": {
         "name": "JETSPEC_DECODER_BATCH_PREFETCH",
         "kind": "flag",
@@ -5895,41 +5788,6 @@
         "allowed": null,
         "reader": "serve",
         "note": "required only on the debug dump path"
-      },
-      "JETSPEC_LOGIT_DUMP_DIR": {
-        "name": "JETSPEC_LOGIT_DUMP_DIR",
-        "kind": "path",
-        "default": "NO_DEFAULT",
-        "allowed": null,
-        "reader": "serve",
-        "note": ""
-      },
-      "JETSPEC_LOGIT_DUMP_EAGLE": {
-        "name": "JETSPEC_LOGIT_DUMP_EAGLE",
-        "kind": "flag",
-        "default": "0",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "serve",
-        "note": "0: the EAGLE target prefill returns conditioning, not logits, and the lossless dumper skips it (the fork's behaviour); 1: the prefill returns both and the dumper considers it (verifier.py)"
-      },
-      "JETSPEC_LOGIT_REFERENCE": {
-        "name": "JETSPEC_LOGIT_REFERENCE",
-        "kind": "path",
-        "default": "NO_DEFAULT",
-        "allowed": null,
-        "reader": "serve",
-        "note": ""
-      },
-      "JETSPEC_LOGIT_TARGETS": {
-        "name": "JETSPEC_LOGIT_TARGETS",
-        "kind": "csv",
-        "default": "",
-        "allowed": null,
-        "reader": "serve",
-        "note": ""
       },
       "JETSPEC_SYNC_DUMP_DIR": {
         "name": "JETSPEC_SYNC_DUMP_DIR",
@@ -8834,18 +8692,6 @@
           "1"
         ],
         "why": "device verify sends host commands and a fixed outcome envelope",
-        "always": false
-      },
-      {
-        "name": "JETSPEC_VERIFY_HOST_CENSUS",
-        "flag": "JETSPEC_VERIFY_DEVICE",
-        "values": [
-          "1"
-        ],
-        "when": [
-          "1"
-        ],
-        "why": "the host census stamps the N=1 device-verify round",
         "always": false
       },
       {

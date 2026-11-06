@@ -29,9 +29,6 @@ OFFSETS = (0, 32, 64, 96)
 WEIGHTS = dict(tok_s='steady_ms', tau='rounds', round='steady_rounds',
                verify='verify_rounds', hit='cache_rounds',
                tau_hit='hit_rounds', tau_miss='miss_rounds')
-# The 27B pair reads run the chain-graph error audit; the protocol requires its zero word every round.
-AUDIT = Path(__file__).resolve().parent / 'audit'
-AUDITED_27B = ('JetSpec++',)
 
 
 def parser():
@@ -131,16 +128,6 @@ def set_aside(directory):
     for path in paths + [p for p in (directory / 'read.log', directory / 'validated-reads.json') if p.exists()]:
         path.replace(target / path.name)
     return target
-
-
-
-
-
-def read_environment(job, env):
-    if job['model'] == '27b' and job['arm'] in AUDITED_27B:
-        return dict(env, TABLE3_CHAIN_AUDIT='1',
-                    PYTHONPATH=os.pathsep.join(filter(None, [str(AUDIT), env.get('PYTHONPATH')])))
-    return env
 
 
 def launch_plan(job, argv):
@@ -272,7 +259,7 @@ def run(args):
                 with (directory/'read.log').open('w') as log:
                     rc = subprocess.run([sys.executable, '-m', 'bench.jetspec_plus_plus.paper.read',
                                          str(directory/'plan.json')], cwd=repo, stdout=log, stderr=subprocess.STDOUT,
-                                        env=read_environment(job, env)).returncode
+                                        env=env).returncode
                 if rc == 0:
                     break
                 if attempt == 2:

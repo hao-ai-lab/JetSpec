@@ -33,17 +33,6 @@ def pack(rows):
                 rounds=len(rows), rows_zlib=base64.b64encode(zlib.compress(raw)).decode())
 
 
-def unpack(payload, width=None):
-    if payload['schema'] not in ('jetspec.anatomy_lite/1', 'jetspec.anatomy_lite/2') or payload['clock'] != 'CLOCK_MONOTONIC':
-        raise ValueError('ANATOMY_LITE_SCHEMA')
-    if width is None:
-        width = 12 if payload['schema'].endswith('/2') else 11
-    rows = json.loads(zlib.decompress(base64.b64decode(payload['rows_zlib'])))
-    if len(rows) != payload['rounds'] or any(len(row) != width for row in rows):
-        raise ValueError('ANATOMY_LITE_ALIGNMENT')
-    return rows
-
-
 class _DeviceVerifyTimes(list):
     """Observe the existing native metric without wrapping the verifier.
 

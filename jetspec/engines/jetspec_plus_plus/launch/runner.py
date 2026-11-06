@@ -1897,7 +1897,7 @@ def chain_round_summary(log, verify_metrics, *, require_t0=False, t0_scope="swee
     lite = [[record['seq_id'], record['published_round'], *record['lite']]
             for record in records if 'lite' in record]
     if lite:
-        from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import pack
+        from jetspec.engines.jetspec_plus_plus.runtime.round_timing import pack
         summary['anatomy_lite'] = pack(lite)
     return summary
 
@@ -2032,24 +2032,13 @@ def apply_knob_overrides(environment, knobs):
         environment[name] = value
 
 
-def apply_verify_host_census_override(environment, choice):
-    if choice is None:
-        return
-    if choice == "on" and environment.get(environment_name('engine', 'engine_settings.jetspec_verify_device')) != "1":
-        raise ValueError("--verify-host-census on requires a device-verify recipe")
-    environment[environment_name('engine', 'engine_settings.verify_host_census')] = "1" if choice == "on" else "0"
-
-
-def apply_chain_tail_trace_override(environment, enabled, kernel_profile=None, every=None):
-    if not enabled and kernel_profile is None:
+def apply_chain_tail_trace_override(environment, enabled):
+    if not enabled:
         return
     if environment.get(environment_name('engine', 'engine_settings.chain_graph')) != "seg":
         raise ValueError("--chain-tail-trace requires a segmented chain recipe")
     if enabled:
         environment[environment_name('engine', 'engine_settings.chain_tail_trace')] = "1"
-    if kernel_profile is not None:
-        environment[environment_name('engine', 'engine_settings.chain_kernel_profile')] = str(Path(kernel_profile).resolve())
-        environment[environment_name('engine', 'engine_settings.chain_kernel_profile_every')] = str(every or 20)
 
 
 def apply_chain_attn3_override(environment, choice):
@@ -2255,9 +2244,6 @@ def _sync_environment(recipe, placement, paths, runtime, pins_path, passes):
             "target_release", paths["drafter"] / SYNC_DRAFTER_FILES[3])),
         environment_name('engine', 'engine_settings.pins'): str(pins_path),
     })
-    if os.environ.get("JETSPEC_ROUNDTRACE"):
-        result["JETSPEC_ROUNDTRACE"] = os.environ["JETSPEC_ROUNDTRACE"]
-        result["JETSPEC_ROUNDTRACE_DEVICE"] = "1"
     validate_environment(result, jetspec=False)
     return result
 
@@ -2514,8 +2500,6 @@ def _parser():
                         help="pre-stage the next supported fixed R0 chain key")
     parser.add_argument("--chain-handoff-timing", action="store_true",
                         help="print per-round draft and verify handoff timestamps")
-    parser.add_argument("--verify-host-census", choices=("on", "off"),
-                        help="stamp each host segment of the N=1 device-verify round")
     parser.add_argument("--knob", action="append", default=[], metavar="NAME=VALUE",
                         help="set one registered JETSPEC_* knob for this read (repeatable)")
     parser.add_argument("--verify-lean", choices=("on", "off"),
@@ -2528,10 +2512,6 @@ def _parser():
                         help="print P-sync to next Seg A and verifier ready-key wait")
     parser.add_argument("--chain-tail-trace", action="store_true",
                         help="print absolute host stamps for every draft chain round")
-    parser.add_argument("--chain-kernel-profile",
-                        help="diagnostic: append per-kernel device time of sampled chain rounds to this JSONL")
-    parser.add_argument("--chain-kernel-profile-every", type=int,
-                        help="profile every Nth chain round (default 20)")
     parser.add_argument("--chain-k3", choices=("on", "off"),
                         help="override both segmented-chain K3 kernels")
     parser.add_argument("--chain-attn3", choices=("on", "off"),
@@ -2556,10 +2536,6 @@ def _parser():
                              % (HOST_VALUES_SCHEMA, ", ".join(HOST_VARIABLES)))
     parser.add_argument("--host-artifact", action="append", metavar="KEY=ABS_DIR",
                         help="override one manifest artifact directory on this host")
-    parser.add_argument("--roundtrace",
-                        help="write rank-local host spans, CUDA event pairs, report, and SVG here")
-    parser.add_argument("--device-split", action="store_true",
-                        help="record adapter, decoder, row, refresh, and Jacobi CUDA spans")
     parser.add_argument("--cpu-pin", default="auto", metavar="auto|off|A-B[;C-D]",
                         help="NUMA-local CPU pinning (default: auto); off or explicit ranges")
     parser.add_argument("--rank-cpus", metavar="VERIFY_RANGE;DRAFT_RANGE[;SPLIT_RANGE]",
@@ -2570,8 +2546,6 @@ def _parser():
                         help="write JetSpec proposal wire records (default: on)")
     parser.add_argument("--causal-n1", action="store_true",
                          help="use the FlashInfer causal kernel for a single verify chain")
-    parser.add_argument("--anatomy", choices=("on", "off"), default="on",
-                 help="write cheap per-read host anatomy (default: on)")
     parser.add_argument("--resolve-only", action="store_true",
                         help="print RESOLVED_CONDITION and exit 0 before any model load")
     parser.add_argument("--internal-plan", help=argparse.SUPPRESS)
@@ -2588,82 +2562,12 @@ def _read_proposals(directory, offsets):
     return rows
 
 
-
-
-def _install_roundtrace(run_config):
-    """Attach only in explicitly traced child processes, including spawned ranks."""
-    from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    if not setting(run_config, 'engine.engine_settings.roundtrace'):
-        return None
-    from jetspec.engines.jetspec_plus_plus.trace.current import install
-    return install(run_config)
-
-
-def resolve_roundtrace(args):
-    value = getattr(args, "roundtrace", None) or os.environ.get("JETSPEC_ROUNDTRACE")
-    return None if not value else Path(value).resolve()
-
-
 def source_git_sha(root):
     return source_revision(root)[0]
 
 
 def source_git_dirty(root):
     return source_revision(root)[1]
-
-
-def build_roundtrace(directory, environment, *, regime, method_display, placement,
-                     recipe_name, method=None, measured_path=None):
-    """Generate the report and exhaustive figure after both ranks flushed at teardown."""
-    commands = [
-        [sys.executable, "-m", "jetspec.engines.jetspec_plus_plus.trace.report", str(directory)],
-        [sys.executable, "-m", "jetspec.engines.jetspec_plus_plus.trace.plot", str(Path(directory) / "report.json"),
-         "--output", str(Path(directory) / "round.svg"),
-         "--title", f"{method_display} {regime} {placement} · {recipe_name}"],
-    ]
-    if method in ("ar", "blockhead", "dflash", SYNC_METHOD):
-        commands[0].extend(("--measured", str(measured_path), "--method", method))
-    for command in commands:
-        done = subprocess.run(command, cwd=METHOD_ROOT, env=environment,
-                              text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        sys.stdout.write(done.stdout); sys.stdout.flush()
-        if done.returncode:
-            raise RuntimeError(f"roundtrace artifact command failed ({done.returncode}): {command}")
-
-
-def write_anatomy(run_output, method, regime, measured, populations, *,
-                  refresh="off", passes=None, rows_cap=None, trace_directory=None,
-                  replace=False, eos_stopped=None, cpu_pin=None):
-    """Write one post-run report; no instrumentation is installed in the child."""
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    from jetspec.engines.jetspec_plus_plus.launch.anatomy import build_anatomy
-    from jetspec.engines.jetspec_plus_plus.launch.anatomy import headline
-    from jetspec.engines.jetspec_plus_plus.launch.eos_stop import round_is_miss
-    if method == "jetspecpp":
-        decisions = {(row["seq_id"], row["candidate_round"]): row
-                     for row in measured["metrics"]["jetspec_round_records"]}
-        populations = [dict(row, fallback=round_is_miss(
-            decisions.get((row["seq_id"], row["candidate_round"]), {}), row)) for row in populations]
-    trace_report = None
-    trace_records = None
-    if trace_directory is not None:
-        trace_report = json.loads((Path(trace_directory) / "report.json").read_text())
-        trace_records = [json.loads(line) for path in Path(trace_directory).glob("rounds-*.jsonl")
-                         for line in path.read_text().splitlines() if line]
-    anatomy = build_anatomy(method, regime, measured, populations,
-                            refresh=refresh, passes=passes, rows_cap=rows_cap,
-                            trace_report=trace_report, trace_records=trace_records,
-                            eos_stopped=eos_stopped)
-    if cpu_pin is not None:
-        anatomy["cpu_pin"] = cpu_pin
-    path = Path(str(run_output) + ".anatomy") / "anatomy.json"
-    path.parent.mkdir(parents=True, exist_ok=replace)
-    if path.exists() and not replace:
-        raise FileExistsError(path)
-    path.write_text(json.dumps(anatomy, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(headline(anatomy), flush=True)
-    return str(path)
 
 
 def measured_output_check(outputs, *, count, tokens, temperature, seed, stop_at_eos):
@@ -2817,7 +2721,6 @@ def _child(plan_path, *, resident=None, run_config=None):
     run_config, _ = child_run_config(plan, os.environ)
     from jetspec.engines.jetspec_plus_plus.runtime.run_config import apply_child_concurrency
     apply_child_concurrency(plan, run_config)
-    _install_roundtrace(run_config)
     _startup_stamp("child_start")
     from jetspec.engines.jetspec_plus_plus.launch import bench
     import torch
@@ -2852,12 +2755,6 @@ def _child(plan_path, *, resident=None, run_config=None):
         run_manifest.record_value("cpu_pin", plan["cpu_pin"]["mode"], run_config=run_config)
         if "thresholds_override" in plan:
             run_manifest.record_value("thresholds_override", plan["thresholds_override"], run_config=run_config)
-        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        trace = setting(run_config, 'engine.engine_settings.roundtrace')
-        run_manifest.record_value("roundtrace_enabled", bool(trace), run_config=run_config)
-        if trace:
-            run_manifest.record_value("roundtrace_directory", trace, run_config=run_config)
-            run_manifest.record_value("roundtrace_device", setting(run_config, 'engine.engine_settings.roundtrace_device') == "1", run_config=run_config)
         for role, path in sorted(plan.get("declared_manifest_files", {}).items()):
             run_manifest.record_file(role, path, run_config=run_config)
     bench.record_run_inputs = record_inputs
@@ -3023,8 +2920,6 @@ def _main_sync(args):
         raise ValueError(f"method {SYNC_METHOD} runs with --placement one_gpu")
     if getattr(args, "draft_deadline", None) is not None:
         raise ValueError("--draft-deadline is supported only for jetspecpp")
-    if getattr(args, "roundtrace", None) is not None:
-        raise ValueError("--roundtrace is not supported for jetspec_sync")
     recipe = (args.resolved_recipe if hasattr(args, "resolved_recipe") else
               load_sync_recipe(ROOT, args.regime, args.recipe))
     passes = resolve_sync_passes(recipe, args.passes)
@@ -3038,8 +2933,6 @@ def _main_sync(args):
     claimed = [campaign_path]
     for run_output in run_outputs:
         claimed.extend((run_output, Path(str(run_output) + ".manifest.json")))
-        if args.anatomy == "on":
-            claimed.append(Path(str(run_output) + ".anatomy"))
     existing = [str(path) for path in claimed if path.exists()]
     if existing and not args.resolve_only:
         raise FileExistsError("refusing to overwrite serve read artifact(s): " + ", ".join(existing))
@@ -3200,9 +3093,6 @@ def _main_sync(args):
                     "per_request_decode_tok_s_mean", "per_request_decode_tok_s_p50",
                     "total_decode_tok_s", "gpus_used", "decode_tok_s_per_gpu",
                     "max_running_requests")})
-            anatomy_path = (write_anatomy(run_output, SYNC_METHOD, args.regime, measured, [],
-                                          eos_stopped=eos_stopped, cpu_pin=cpu_pin)
-                            if args.anatomy == "on" else None)
             reads.append({
                 **read_fields(condition, done.stdout, getattr(args, "config_read", None)),
                 "process_index": index, "campaign_cold": index == 0,
@@ -3210,7 +3100,6 @@ def _main_sync(args):
                 "benign_finalizer_tracebacks": benign_finalizer_tracebacks,
                 "cold": run["cold"],
                 "summary": summary,
-                "anatomy": anatomy_path,
                 "manifest": {"path": str(run_output) + ".manifest.json",
                              "manifest_sha256": manifest["manifest_sha256"],
                              "content_sha256": manifest["content_sha256"]},
@@ -3228,52 +3117,6 @@ def _main_sync(args):
         print("SERVE_READ_COMPLETE " + json.dumps({
             "campaign": str(campaign_path), "first_read": str(output),
             "processes": len(reads), "measured": len(result["measured"])}), flush=True)
-
-
-def _main_sync_traced(args, trace_root):
-    """Keep the default-off sync resolver untouched while tracing one read."""
-    if args.repeats != 1:
-        raise ValueError("jetspec_sync roundtrace requires --repeats 1")
-    if list(trace_root.glob("rounds-*.jsonl")):
-        raise FileExistsError(f"refusing to append to existing roundtrace: {trace_root}")
-    traced_args = argparse.Namespace(**vars(args))
-    traced_args.roundtrace = None
-    previous = os.environ.get("JETSPEC_ROUNDTRACE")
-    os.environ["JETSPEC_ROUNDTRACE"] = str(trace_root)
-    try:
-        _main_sync(traced_args)
-    finally:
-        if previous is None:
-            os.environ.pop("JETSPEC_ROUNDTRACE", None)
-        else:
-            os.environ["JETSPEC_ROUNDTRACE"] = previous
-    if args.resolve_only:
-        return
-    recipe = load_sync_recipe(ROOT, args.regime, args.recipe)
-    build_roundtrace(trace_root, dict(os.environ), regime=args.regime,
-                     method_display=recipe["display_name"], placement=args.placement,
-                     recipe_name=recipe["name"], method=SYNC_METHOD,
-                     measured_path=Path(args.output_json).resolve())
-    campaign_path = Path(str(Path(args.output_json).resolve()) + ".campaign.json")
-    campaign = json.loads(campaign_path.read_text(encoding="utf-8"))
-    if args.anatomy == "on":
-        run_output = Path(args.output_json).resolve()
-        raw = json.loads(run_output.read_text(encoding="utf-8"))
-        write_anatomy(run_output, SYNC_METHOD, args.regime,
-                      raw["metrics"]["serve_read"]["measured"], [],
-                      trace_directory=trace_root, replace=True,
-                      eos_stopped={
-                          **{key: value for key, value in
-                             campaign["reads"][0]["summary"].items()
-                             if key.endswith("_eos_stopped") and key != "tau_eos_stopped"},
-                          "tau_eos_stopped": campaign["reads"][0]["summary"]
-                          ["tau_eos_stopped"]["pooled_kept"]},
-                      cpu_pin=campaign["resolved_condition"]["cpu_pin"])
-    campaign["reads"][0]["roundtrace"] = {
-        "directory": str(trace_root), "report": str(trace_root / "report.json"),
-        "figure": str(trace_root / "round.svg")}
-    campaign_path.write_text(json.dumps(campaign, indent=2, sort_keys=True) + "\n",
-                             encoding="utf-8")
 
 
 def prepare_wire_records(method, mode, output, child_environment):
@@ -3317,9 +3160,7 @@ def _main(args, *, resident=None):
         raise ValueError("--causal-n1 is supported only for jetspecpp")
     apply_mps_draft_environment({}, args, method)
     if method == SYNC_METHOD:
-        trace_root = resolve_roundtrace(args)
-        return (_main_sync(args) if trace_root is None
-                else _main_sync_traced(args, trace_root))
+        return _main_sync(args)
     if method not in ("jetspecpp", "ar", "blockhead", "dflash", "ssd", "spec_sync", "eagle3"):
         raise ValueError(f"method {args.method!r} is reserved but not implemented")
     recipe, policy_record = apply_policy_overrides(
@@ -3341,7 +3182,6 @@ def _main(args, *, resident=None):
     if args.draft_split or args.draft_split_frac is not None:
         raise ValueError('retired split draft requires a sealed historical read')
     require_supported_block_size(recipe)
-    roundtrace_root = resolve_roundtrace(args)
     if args.passes is not None and args.passes != recipe["passes"]:
         raise ValueError(
             f"--passes={args.passes} contradicts recipe passes={recipe['passes']}")
@@ -3359,13 +3199,8 @@ def _main(args, *, resident=None):
     for run_output in run_outputs:
         claimed.extend((run_output, Path(str(run_output) + ".manifest.json"),
                         Path(str(run_output) + ".populations.json")))
-        if args.anatomy == "on":
-            claimed.append(Path(str(run_output) + ".anatomy"))
         if method == "jetspecpp" and args.wire_records == "on":
             claimed.append(Path(str(run_output) + ".rows"))
-    if roundtrace_root is not None:
-        # Recorder IDs restart in every process; an earlier run's rounds files make read-N unreadable.
-        claimed.extend(sorted(roundtrace_root.glob("read-*/rounds-*.jsonl")))
     existing = [str(path) for path in claimed if path.exists()]
     if existing and not args.resolve_only:
         raise FileExistsError("refusing to overwrite serve read artifact(s): " + ", ".join(existing))
@@ -3422,13 +3257,6 @@ def _main(args, *, resident=None):
         environment.update(pin_environment)
         apply_cpu_pin_environment(environment, cpu_pin)
         apply_mps_draft_environment(environment, args, method)
-        if args.device_split:
-            if method != "jetspecpp":
-                raise ValueError("--device-split requires jetspecpp")
-            environment[environment_name('engine', 'engine_settings.device_split')] = "1"
-            from jetspec.engines.jetspec_plus_plus.runtime.env import validate_environment
-            validate_environment(environment, jetspec=True, max_num_seqs=args.batch,
-                                 recipe_name=recipe["name"], resolve_only=args.resolve_only)
         if getattr(args, "causal_n1", False):
             environment[environment_name('engine', 'engine_settings.eager_verify_causal_n1')] = "1"
         apply_miss_redraft_override(environment, args.miss_redraft)
@@ -3447,12 +3275,9 @@ def _main(args, *, resident=None):
         apply_chain_prepost_override(environment, args.chain_prepost,
                                      args.chain_prepost_timing)
         apply_chain_attn3_override(environment, args.chain_attn3)
-        apply_verify_host_census_override(environment, args.verify_host_census)
         apply_verify_lean_override(environment, getattr(args, "verify_lean", None),
                                    getattr(args, "verify_lean_stage_early", None))
-        apply_chain_tail_trace_override(environment, getattr(args, "chain_tail_trace", False),
-                                        getattr(args, "chain_kernel_profile", None),
-                                        getattr(args, "chain_kernel_profile_every", None))
+        apply_chain_tail_trace_override(environment, getattr(args, "chain_tail_trace", False))
         apply_knob_overrides(environment, getattr(args, "knob", None))
         if environment.get(environment_name("engine", "engine_settings.eval_mode"), "off") != "off":
             from jetspec.engines.jetspec_plus_plus.runtime.eval_determinism import WORKSPACE
@@ -3526,7 +3351,6 @@ def _main(args, *, resident=None):
             "artifacts": {key: None if value is None else str(value) for key, value in paths.items()},
             "environment": _condition_environment(environment, recipe),
             "argv": sys.argv,
-            "roundtrace": None if roundtrace_root is None else str(roundtrace_root),
             "git": source_git_sha(ROOT),
         }
         if args.sequential_prompts or 'CRUCIBLE_CACHE_RECEIPT' in environment:
@@ -3627,15 +3451,6 @@ def _main(args, *, resident=None):
                 if host["rendezvous_mode"] == "host_port":
                     child_environment["SSD_DIST_PORT"] = str(_free_local_port())
                     print("RENDEZVOUS_PORT " + child_environment["SSD_DIST_PORT"], flush=True)
-                trace_directory = None
-                if roundtrace_root is not None:
-                    trace_directory = roundtrace_root / f"read-{index}"
-                    child_environment["JETSPEC_ROUNDTRACE"] = str(trace_directory)
-                    child_environment["JETSPEC_ROUNDTRACE_DEVICE"] = os.environ.get(
-                        "JETSPEC_ROUNDTRACE_DEVICE", "1")
-                    if os.environ.get("JETSPEC_ROUNDTRACE_EVENT_PAIRS"):
-                        child_environment["JETSPEC_ROUNDTRACE_EVENT_PAIRS"] = os.environ[
-                            "JETSPEC_ROUNDTRACE_EVENT_PAIRS"]
                 if records is not None:
                     child_environment[environment_name('engine', 'engine_settings.pred_serve_read_records')] = str(records)
                 from jetspec.engines.jetspec_plus_plus.runtime.run_config import launch_overlay, child_environment as process_environment
@@ -3654,11 +3469,6 @@ def _main(args, *, resident=None):
                 sys.stdout.flush()
                 benign_finalizer_tracebacks = assert_completed_run(
                     done.returncode, done.stdout, run_output)
-                if trace_directory is not None:
-                    build_roundtrace(trace_directory, child_environment, regime=args.regime,
-                                     method_display=recipe["display_name"], placement=args.placement,
-                                     recipe_name=recipe["name"], method=method,
-                                     measured_path=run_output)
                 manifest = assert_run_manifest(
                     run_output, done.stdout, expected.get("heads/thresholds", "absent"))
                 assert_manifest_cpu_pin(manifest, cpu_pin)
@@ -3714,21 +3524,8 @@ def _main(args, *, resident=None):
                     "output": str(run_output), "campaign_cold": index == 0,
                     "populations": populations,
                 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-                anatomy_path = (write_anatomy(
-                    run_output, method, args.regime, measured, populations,
-                    refresh=environment.get(environment_name('method', 'method_settings.adapter_refresh'), "off"),
-                    passes=recipe.get("passes"),
-                    rows_cap=environment.get(environment_name('method', 'method_settings.rows_rule_cap'),
-                                             environment.get(environment_name('engine', 'engine_settings.rows_cap'))),
-                    trace_directory=trace_directory, eos_stopped=eos_stopped, cpu_pin=cpu_pin)
-                    if args.anatomy == "on" else None)
-                if anatomy_path:
-                    measured["tau_to_cap"] = json.loads(
-                        Path(anatomy_path).read_text(encoding="utf-8"))["tau"]
-                else:
-                    from jetspec.engines.jetspec_plus_plus.launch.anatomy import build_anatomy
-                    measured["tau_to_cap"] = build_anatomy(
-                        method, args.regime, measured, populations)["tau"]
+                from bench.jetspec_plus_plus.acceptance import tau_to_cap
+                measured["tau_to_cap"] = tau_to_cap(method, measured)
                 child_roles = sorted({
                     entry["role"] for entry in manifest["files"]
                     if entry["role"].startswith(("adapter/", "drafter/", "heads/"))
@@ -3743,13 +3540,7 @@ def _main(args, *, resident=None):
                     "launch_census": launch_census,
                     "benign_finalizer_tracebacks": benign_finalizer_tracebacks,
                     "population_audit": str(population_path), "cold": run["cold"],
-                    "anatomy": anatomy_path,
                     "wire_records": None if wire_records is None else str(wire_records),
-                    "roundtrace": None if trace_directory is None else {
-                        "directory": str(trace_directory),
-                        "report": str(trace_directory / "report.json"),
-                        "figure": str(trace_directory / "round.svg"),
-                    },
                     "measured": measured,
                     "manifest": {"path": str(run_output) + ".manifest.json",
                                  "manifest_sha256": manifest["manifest_sha256"],

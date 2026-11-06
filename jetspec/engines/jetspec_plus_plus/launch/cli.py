@@ -175,7 +175,7 @@ def resolve(args):
             '--placement', args.placement, '--devices', args.devices, '--dataset', args.dataset,
             '--prompts-json', args.prompts_json, '--count', str(args.count), '--tokens', str(args.tokens),
             '--temperature', '0', '--sequential-prompts', '--output-json', args.output_json,
-            '--cpu-pin', args.cpu_pin, '--anatomy', 'off', '--wire-records', 'off',
+            '--cpu-pin', args.cpu_pin, '--wire-records', 'off',
             '--stop-at-eos', args.stop_at_eos]
     if args.cache_root:
         argv += ['--cache-root', args.cache_root]

@@ -183,8 +183,6 @@ class ChainGraph:
         self.fallback_counts = {"capacity": 0}
         self.round_syncs = 0
         self._prewarmed = False
-        from jetspec.engines.jetspec_plus_plus.trace.kprofile import ChainKernelProfile
-        self.kernel_profile = ChainKernelProfile(run_config=run_config)
 
     @staticmethod
     def _cuda_capture(body):
@@ -519,7 +517,7 @@ class ChainGraph:
             before_a1=None, pre_a0_event=None, miss=False, after_redraft=None,
             ctx_append=False, run_config=None) -> dict:
         # prepare is deliberately outside the timed region, including its warm-up.
-        from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import enabled as anatomy_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.round_timing import enabled as anatomy_enabled
         from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
@@ -545,10 +543,10 @@ class ChainGraph:
                 timing = [name for name in ('chain_tail_trace', 'chain_glue2_profile',
                                             'chain_miss_redraft_timing')
                           if setting(run_config, 'engine.engine_settings.' + name, '0') == '1']
-                if anatomy_enabled(run_config) or timing or self.kernel_profile.enabled:
+                if anatomy_enabled(run_config) or timing:
                     raise ValueError('draft_fuse_noev=1 requires anatomy_lite, chain_tail_trace, '
-                                     'chain_glue2_profile, chain_miss_redraft_timing and '
-                                     'chain_kernel_profile off; they consume segment timings')
+                                     'chain_glue2_profile and chain_miss_redraft_timing '
+                                     'off; they consume segment timings')
                 self._noev_checked = run_config, engine
             self.last_ms.clear()
             self.last_span_ms.clear()
@@ -612,7 +610,6 @@ class ChainGraph:
                                      lambda intake=shadow_bodies['A0'], first=shadow_bodies['A1_miss']:
                                      (intake(), first())}
         cuda = entry.buffers["rp"].device.type == "cuda"
-        profiled = cuda and not self.check and self.kernel_profile.begin()
         events = []
         launch_name = ("A1_miss" if miss else
                        "A1_inc" if "A1_inc" in names else
@@ -626,8 +623,7 @@ class ChainGraph:
                 start.record()
             if name == launch_name and on_first_launch is not None:
                 on_first_launch()
-            with self.kernel_profile.segment(name):
-                entry.graphs[name]()
+            entry.graphs[name]()
             if cuda and not noev:
                 end.record()
                 events.append((name, start, end))
@@ -673,12 +669,6 @@ class ChainGraph:
                 print("CHAIN_SEGMENT_MS " + json.dumps(dict(
                     glue=kernel_value('chain_sega_glue', "0"),
                     key=str(key), segments=self.last_ms[key])), flush=True)
-            if profiled:
-                from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset as _Outcome
-                self.kernel_profile.finish(
-                    names, key=key.L_bucket, J=J_round, miss=bool(miss),
-                    L=int(entry.buffers["packet"][_Outcome.L]),
-                    segments_ms=self.last_ms[key])
             if names[:2] in (("A0", "A1"), ("A0", "A1_miss")):
                 self.last_a0_to_a1_gap_ms[key] = events[0][2].elapsed_time(events[1][1])
         host_error = (int(entry.buffers['err_host'][0])

@@ -31,11 +31,8 @@ def required_setting(owner, path):
 
 
 def run_rank(runner, config, *args):
-    """Install per-process trace hooks from the record before constructing a rank."""
+    """Validate the launch record before constructing a rank."""
     record = getattr(config, 'run_config', None)
     if record is None:
         raise ValueError('rank missing RunConfig launch_overlay')
-    if setting(record, 'engine.engine_settings.roundtrace'):
-        from jetspec.engines.jetspec_plus_plus.trace.current import install
-        install(record)
     return runner(config, *args)

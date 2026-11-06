@@ -13,7 +13,6 @@ from typing import Literal
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.trace import host_census
 
 
 DecisionKind = Literal["hit", "miss", "late"]
@@ -211,7 +210,6 @@ class CandidateReceiver:
         # A blocking get must not hold the request publisher's TCP connection.
         store = store.clone()
         self.pending = SimpleQueue()
-        census = host_census.enabled(run_config)
         id_trace = setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1'
 
         def receive():
@@ -221,12 +219,6 @@ class CandidateReceiver:
                     if id_trace:
                         print(f"MAILBOX_ID side=verify event=candidate_await key={key}", flush=True)
                     wire = self._read(store, key)
-                    if census:
-                        got = host_census.perf_counter()
-                        delivery = decode(wire)
-                        message.census_stamps = (got, host_census.perf_counter())
-                        message.ready.set_result(delivery)
-                        continue
                     message.ready.set_result(decode(wire))
                 except Exception as error:
                     message.ready.set_exception(error)

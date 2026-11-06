@@ -54,8 +54,6 @@ class CandidateChannel:
             message, buffers = buffers, buffers.cpu()
             if timing is not None:
                 timing.mark(4)
-            from jetspec.engines.jetspec_plus_plus.trace.host_census import note_candidate
-            note_candidate(message, run_config=getattr(self, 'run_config', None))
         delivery = (buffers if isinstance(buffers, CandidateDelivery) else
                     unpack_candidate_delivery(buffers, run_config=getattr(self, 'run_config', None)))
         if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':

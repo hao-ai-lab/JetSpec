@@ -144,7 +144,6 @@ class RequestChannel:
                                chain_eos=None, chain_sync_at=None, chain_true_k=None,
                                chain_recovery=None) -> None:
         from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         pair_outcome = chain_command == "outcome" and getattr(self, "_pair_outcome_push", False)
         pair_command_id = None
         if pair_outcome:
@@ -171,7 +170,6 @@ class RequestChannel:
                      ([tensors[0], tensors[1].detach().clone().contiguous()]
                       if eager_outcome else
                       [tensor.detach().clone().contiguous() for tensor in tensors]))
-        _census_mark("clone", run_config=getattr(self, 'run_config', None))
         request_id = self._jetspec_next_request_send_id
         self._jetspec_next_request_send_id += 1
         if chain_command is not None:
@@ -192,7 +190,6 @@ class RequestChannel:
                     prepost=getattr(self, "_outcome_prepost", None),
                     attn3=False,
                     local_counter=getattr(self, "_chain_cmd_local_counter", None), run_config=getattr(self, 'run_config', None))
-            _census_mark("announce", run_config=getattr(self, 'run_config', None))
             if (chain_command == "outcome"
                     and not getattr(self, "_outcome_prepost_no_ack", False)):
                 timing = getattr(self, "_chain_prepost_timing", None)
@@ -201,30 +198,20 @@ class RequestChannel:
                 else:
                     await_chain_receive(self.jetspec_mailbox_store, chain_command_id,
                                         timing=timing, run_config=getattr(self, 'run_config', None))
-            _census_mark("ack", run_config=getattr(self, 'run_config', None))
         publication = None
         if control is not None:
             if self._jetspec_request_publisher is None:
                 self._jetspec_request_publisher = RequestPublisher(self.jetspec_mailbox_store)
             publication = self._jetspec_request_publisher.post(
                 f"request_{request_id}", control.numpy().tobytes())
-        kernel_profile = getattr(self, "_verify_kernel_profile", None)
-        if kernel_profile is not None and kernel_profile.active is not None:
-            works = []
-            for index, tensor in enumerate(snapshots):
-                kernel_profile.step(f"send_{index}")
-                works.append(dist.isend(
-                    tensor, dst=self.draft_runner_rank,
-                    group=self.jetspec_request_pg))
-        else:
-            works = [
-                dist.isend(
-                    tensor,
-                    dst=self.draft_runner_rank,
-                    group=self.jetspec_request_pg,
-                )
-                for tensor in snapshots
-            ]
+        works = [
+            dist.isend(
+                tensor,
+                dst=self.draft_runner_rank,
+                group=self.jetspec_request_pg,
+            )
+            for tensor in snapshots
+        ]
         if borrowed_wire:
             self._jetspec_outcome_wire_ring.sent(works)
         # Gloo CPU staging (one-GPU placements) copies each payload to the host inside isend,
@@ -237,4 +224,3 @@ class RequestChannel:
             works.append(publication)
         elif signal_store:
             self.jetspec_mailbox_store.set(f"request_{request_id}", "1")
-        _census_mark("isend", run_config=getattr(self, 'run_config', None))

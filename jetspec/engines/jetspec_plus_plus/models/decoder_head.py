@@ -3325,15 +3325,11 @@ class AnchorDecoder(MethodAnchorDecoder):
         for sequence in sequences:
             staged = sequence.staged.predicted_hidden
             if staged is None or staged.shape[1] < count:
-                if setting(self.run_config, 'engine', 'engine_settings.device_split', '0') == '1':
-                    print('B22_DECODER_FALLBACK batch_unready=1', flush=True)
                 return [self.predict(seq, block, dataset=dataset, coverage=coverage,
                                      grouped=grouped, cap=cap, after_miss=miss, run_config=run_config if run_config is not None else getattr(self, 'run_config', None))
                         for seq, block, miss in zip(sequences, pending_blocks, after_misses)]
             length = int(sequence.taps.shape[0])
             if length < 0:
-                if setting(self.run_config, 'engine', 'engine_settings.device_split', '0') == '1':
-                    print('B22_DECODER_FALLBACK prefix_unready=1', flush=True)
                 return [self.predict(seq, block, dataset=dataset, coverage=coverage,
                                      grouped=grouped, cap=cap, after_miss=miss, run_config=run_config if run_config is not None else getattr(self, 'run_config', None))
                         for seq, block, miss in zip(sequences, pending_blocks, after_misses)]
