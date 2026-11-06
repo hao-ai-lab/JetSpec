@@ -1004,145 +1004,8 @@ class ServingCtxKVC1Stream(CtxKVC1Stream):
         return draft_linear(source, weight, bias).split(widths, dim=-1)
 
 
-class ServingCtxKVC1Head(CtxKVC1Head):
-    """Reference serving translation plus default-off per-sequence C1 KV/replay."""
-    def __init__(self, config, *, run_config=None):
-        super().__init__(config)
-        for child in self.modules():
-            if type(child) is CtxKVC1Stream:
-                child.__class__ = ServingCtxKVC1Stream
-        DraftLinear.bind(self)
-        self.run_config = run_config
-
-
-    @staticmethod
-    def _c1_fused_module():
-        name = "jetspec_fused_decoder"
-        if name not in sys.modules:
-            path = (Path(__file__).parent.parent / 'kernels/fused_decoder.py')
-            spec = importlib.util.spec_from_file_location(name, path)
-            module = importlib.util.module_from_spec(spec)
-            assert spec.loader is not None
-            sys.modules[name] = module
-            spec.loader.exec_module(module)
-        return sys.modules[name]
-
-    @staticmethod
-    def _rows_module():
-        """The rows kernels; by package when this module has one, else by path
-        (the test harness loads drafter.py as a bare file)."""
-        if __package__:
-            import jetspec.engines.jetspec_plus_plus.draft.rows as rows
-            return rows
-        name = "jetspec_rows"
-        if name not in sys.modules:
-            path = (Path(__file__).parent / 'rows.py')
-            spec = importlib.util.spec_from_file_location(name, path)
-            module = importlib.util.module_from_spec(spec)
-            assert spec.loader is not None
-            sys.modules[name] = module
-            spec.loader.exec_module(module)
-        return sys.modules[name]
-
-    @staticmethod
-    def _c1_fused_enabled():
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        return kernel_enabled('c1_fused', '1')
-
-    @staticmethod
-    def _c1_fused2_enabled(tensor):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        return (
-            kernel_enabled('c1_fused', '2')
-            and tensor.device.type == "cuda"
-            and tensor.dtype == torch.bfloat16
-        )
-
-    def _c1_fused2_prepare(self):
-        if hasattr(self, "_c1_fast_kv_norm"):
-            return
-        blocks = [
-            layer
-            for index, stream in enumerate(self.streams)
-            for layer in (stream, *self.extra_stream_layers[index])
-        ]
-        self._c1_fast_kv_norm = torch.stack([
-            layer.kv_norm.weight for layer in blocks
-        ])
-        self._c1_fast_k_norm = torch.stack([
-            layer.k_norm.weight for layer in blocks
-        ])
-        self._c1_fast_streams = torch.tensor(
-            [
-                index
-                for index, stream in enumerate(self.streams)
-                for _ in (stream, *self.extra_stream_layers[index])
-            ],
-            device=blocks[0].kv_norm.weight.device,
-        )
-
-    def forward(self, *, shared_prefix_projection=False, prefix_row_indices=None, prefix_key=None,
-                prefix_keys=None, prefix_lengths=None,
-                batched_uncached=False, run_config=None, **kwargs):
-        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
-        rows = kwargs["token_embeddings"].shape[0]
-        cached = config_values(self.run_config).get('engine.engine_settings.c1_kvcache', "0") == "1"
-        graphed = config_values(self.run_config).get('engine.engine_settings.c1_graph', "0") == "1"
-        eval_mode = current_engine().execution in ("pipelined", "critical-path", "on")
-        if graphed and (config_values(self.run_config).get('engine.engine_settings.torchdynamo_disable') == "1"
-                        or (config_values(self.run_config).get('engine.engine_settings.host_fast', "0") == "0"
-                            and not eval_mode)):
-            raise ValueError("C1 GRAPH refuses E")
-        if graphed and not cached:
-            raise ValueError("C1 GRAPH requires KVCACHE")
-        if batched_uncached:
-            if (not cached or (graphed and config_values(self.run_config).get('engine.engine_settings.chain_admit_batch', "0") != "1")
-                    or rows < 2 or prefix_key is not None or prefix_row_indices is not None):
-                raise ValueError("batched C1 staging requires eager cached mode and independent rows")
-            return super().forward(**kwargs)
-        if prefix_keys is not None:
-            if (not cached or graphed or prefix_key is not None or prefix_row_indices is not None
-                    or rows < 2 or len(prefix_keys) != rows or prefix_lengths is None
-                    or len(prefix_lengths) != rows):
-                raise ValueError("multi-slot C1 requires eager cached N>1 and per-row identities/lengths")
-            return self._forward_multi_cached(prefix_keys, prefix_lengths, **kwargs)
-        if config_values(self.run_config).get('engine.engine_settings.c1_compile', "0") == "1" and not graphed:
-            # The compiled kernel set serves in the graphed regime only
-            raise ValueError("C1 COMPILE requires the graphed regime (JETSPEC_C1_GRAPH=1)")
-        if cached:
-            if config_values(self.run_config).get('engine.engine_settings.c1_shared_prefix', "0") == "1":
-                raise ValueError("C1 KVCACHE refuses SHARED_PREFIX")
-            if rows != 1 or prefix_row_indices is not None or prefix_key is None:
-                raise ValueError("C1 KVCACHE requires N1 and a sequence identity")
-            output = self._forward_cached(prefix_key=prefix_key, graphed=graphed, **kwargs, run_config=run_config)
-            if config_values(self.run_config).get('engine.engine_settings.w328_defer_adapter'):
-                from jetspec.engines.jetspec_plus_plus.serving.compile_pin import digest_defer
-                digest_defer("adapter", 'engine.engine_settings.w328_defer_adapter', run_config=self.run_config, embeddings=kwargs["token_embeddings"],
-                             taps=kwargs["prefix_h"], output=output)
-            if config_values(self.run_config).get('engine.engine_settings.w328_digest'):
-                from jetspec.engines.jetspec_plus_plus.serving.compile_pin import digest_log
-                digest_log("adapter", run_config=self.run_config, embeddings=kwargs["token_embeddings"],
-                           taps=kwargs["prefix_h"], positions=kwargs["query_position_ids"],
-                           mask=kwargs.get("attention_mask"), output=output)
-            return output
-        if prefix_row_indices is not None:
-            if not shared_prefix_projection:
-                raise ValueError("row mapping requires shared_prefix_projection")
-            if prefix_row_indices.shape != (rows,) or prefix_row_indices.dtype != torch.long:
-                raise ValueError("prefix_row_indices must be int64 [rows]")
-        if shared_prefix_projection and config_values(self.run_config).get('engine.engine_settings.c1_shared_prefix', "0") == "1":
-            if self.resolved_config.get("window_causal_over_tokens", False):
-                raise ValueError("C1 prefix sharing requires prefix-only attention")
-            owners = prefix_row_indices
-            if owners is None:
-                if kwargs["prefix_h"].shape[0] != rows:
-                    raise ValueError("shared sequences require a row mapping")
-                owners = torch.arange(rows, device=kwargs["prefix_h"].device)
-            return self._forward_shared(owners=owners, **kwargs)
-        if prefix_row_indices is not None:
-            kwargs["prefix_h"] = kwargs["prefix_h"].index_select(0, prefix_row_indices)
-        # C1 does not read h_prev. This baseline repeats each stream's K/V projections.
-        return super().forward(**kwargs)
+class AdapterBatchCache:
+    """Multi-sequence adapter cache slots, projections, and batched replay."""
 
     def _multi_slot(self, sequence, active):
         key = id(sequence)
@@ -1674,6 +1537,76 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         self._c1_multi_kv[0][:, indices[2], :, indices[3]] = keys[:, indices[1]].transpose(0, 1)
         self._c1_multi_kv[1][:, indices[2], :, indices[3]] = values[:, indices[1]].transpose(0, 1)
 
+
+class AdapterKVCache:
+    """Adapter KV projection, storage, rotary positions, and prefix appends."""
+
+    @staticmethod
+    def _c1_fused_module():
+        name = "jetspec_fused_decoder"
+        if name not in sys.modules:
+            path = (Path(__file__).parent.parent / 'kernels/fused_decoder.py')
+            spec = importlib.util.spec_from_file_location(name, path)
+            module = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            sys.modules[name] = module
+            spec.loader.exec_module(module)
+        return sys.modules[name]
+
+    @staticmethod
+    def _rows_module():
+        """The rows kernels; by package when this module has one, else by path
+        (the test harness loads drafter.py as a bare file)."""
+        if __package__:
+            import jetspec.engines.jetspec_plus_plus.draft.rows as rows
+            return rows
+        name = "jetspec_rows"
+        if name not in sys.modules:
+            path = (Path(__file__).parent / 'rows.py')
+            spec = importlib.util.spec_from_file_location(name, path)
+            module = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            sys.modules[name] = module
+            spec.loader.exec_module(module)
+        return sys.modules[name]
+
+    @staticmethod
+    def _c1_fused_enabled():
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        return kernel_enabled('c1_fused', '1')
+
+    @staticmethod
+    def _c1_fused2_enabled(tensor):
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        return (
+            kernel_enabled('c1_fused', '2')
+            and tensor.device.type == "cuda"
+            and tensor.dtype == torch.bfloat16
+        )
+
+    def _c1_fused2_prepare(self):
+        if hasattr(self, "_c1_fast_kv_norm"):
+            return
+        blocks = [
+            layer
+            for index, stream in enumerate(self.streams)
+            for layer in (stream, *self.extra_stream_layers[index])
+        ]
+        self._c1_fast_kv_norm = torch.stack([
+            layer.kv_norm.weight for layer in blocks
+        ])
+        self._c1_fast_k_norm = torch.stack([
+            layer.k_norm.weight for layer in blocks
+        ])
+        self._c1_fast_streams = torch.tensor(
+            [
+                index
+                for index, stream in enumerate(self.streams)
+                for _ in (stream, *self.extra_stream_layers[index])
+            ],
+            device=blocks[0].kv_norm.weight.device,
+        )
+
     def _cache_init(self, prefix_h, run_config=None):
         self._c1_capacity = int(config_values(self.run_config).get('engine.engine_settings.w259_c1_cache_capacity', "768"))
         _run_manifest().record_value("c1_cache_capacity", self._c1_capacity, run_config=self.run_config)
@@ -1903,6 +1836,117 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             kv_heads=layer.num_key_value_heads, groups=layer.num_key_value_groups,
             head_dim=layer.head_dim, BLOCK=width, num_warps=4, enable_fp_fusion=False)
         return query, key, value
+
+    def _d1_append(self, token_embeddings, prefix_h, prefix_position_ids, query_position_ids,
+                   attention_mask, start, length):
+        """JETSPEC_C1_APPEND=1: the steady-state work of ``_forward_cached`` before the loop
+        (the query and prefix rotary rows, ``_eager_extend``'s D1 fused2 append, the PRELOOP
+        mask) in one C++ call on the same ops and compiled Triton entries; None when this
+        round is not that steady state or an entry is not compiled yet (the Python path,
+        which compiles them, runs instead)."""
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        if not _adapter_dense_shape(self):
+            return None
+        table = getattr(self, "_c1_rope_table", None)
+        weights = getattr(self, "_d1_projection_weights", None)
+        if (not self.resolved_config.get("window_causal_over_tokens", False)
+                or kernel_enabled('fused_qkv', '1')
+                or config_values(self.run_config).get('engine.engine_settings.c1_preloop', "0") != "1"
+                or config_values(self.run_config).get('engine.engine_settings.c1_loop', "0") != "1"
+                or not kernel_enabled('c1_rope_table', '1')
+                or table is None or weights is None
+                or self._d1_projection_biases[0] is not None
+                or not self._c1_fused2_enabled(prefix_h) or not hasattr(self, "_c1_fast_key_cache")
+                or not hasattr(self, "_c1_fast_kv_norm")
+                or token_embeddings.dtype != torch.bfloat16 or table[0].dtype != torch.bfloat16
+                or table[0].device != prefix_h.device
+                or attention_mask is None or attention_mask.dtype != torch.bfloat16
+                or attention_mask.dim() != 4 or tuple(attention_mask.shape[:3]) != (1, 1, 15)
+                or attention_mask.shape[3] < length or attention_mask.stride(-1) != 1
+                or query_position_ids.dtype != torch.long
+                or tuple(query_position_ids.shape) != (1, 15)
+                or prefix_position_ids.dtype != torch.long):
+            return None
+        fused = self._c1_fused_module()
+        layer = self._c1_blocks[0][1]
+        device = prefix_h.device.index
+        entries = getattr(self, "_d1_append_entries", None)
+        if entries is None or entries[0] is not self._c1_kv:
+            width = self._c1_fast_kv_norm.shape[1]
+            stand_in = self._c1_fast_kv_norm  # a 16-byte aligned bf16 tensor: the key is dtype + alignment
+            heads = layer.num_key_value_heads * layer.num_key_value_groups
+            head_dim = layer.head_dim
+            norm_entry = fused.compiled_launcher(
+                fused._grouped_rms_norm_kernel, device,
+                (stand_in, stand_in, self._c1_fast_streams, stand_in, 16,
+                 self.hspace_dim // width, width, layer.kv_norm.variance_epsilon,
+                 fused.triton.next_power_of_2(width)), num_warps=8)
+            kv_width = layer.num_key_value_heads * head_dim
+            post_entry = fused.compiled_launcher(
+                fused._batched_kv_postprocess_kernel, device,
+                (stand_in, stand_in, stand_in, stand_in, stand_in, stand_in, stand_in, 16,
+                 layer.num_key_value_heads, layer.num_key_value_groups, head_dim, 16 * kv_width,
+                 kv_width, layer.k_norm.variance_epsilon, fused.triton.next_power_of_2(head_dim)),
+                num_warps=4)
+            if norm_entry is None or post_entry is None:
+                return None
+            entries = self._d1_append_entries = (self._c1_kv, norm_entry, post_entry)
+        try:
+            return fused._loop_extension().d1_append(
+                prefix_h[:, start:length], prefix_position_ids[:, start:length],
+                query_position_ids.contiguous(), table[0], table[1], self._c1_fast_kv_norm,
+                self._c1_fast_streams, weights[0], weights[1], self._c1_fast_k_norm,
+                self._c1_fast_key_cache, self._c1_fast_value_cache, attention_mask, start, length,
+                layer.kv_norm.variance_epsilon, layer.k_norm.variance_epsilon,
+                layer.num_key_value_heads, layer.num_key_value_groups, layer.head_dim,
+                entries[1], entries[2])
+        except RuntimeError as error:
+            if ("not 16-byte aligned" not in str(error)
+                    and "C1 APPEND requires dense prefix rows" not in str(error)
+                    and "C1 APPEND requires dense operands" not in str(error)):
+                raise
+            return None
+
+    def _c1_rope(self, like, position_ids):
+        """``rotary_emb(like, position_ids)``; with JETSPEC_C1_ROPE_TABLE=1 on CUDA, the rows
+        gathered from one table of positions 0..8191 computed by that same call (each
+        position's cos/sin is a single product, so the gather is bitwise the call; the
+        cached path's position ids are cache indices, below the capacity + 16)."""
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        rotary = self.streams[0].rotary_emb
+        if ((not kernel_enabled('c1_rope_table', '1')
+             and not kernel_enabled('c1_prep_lean', '1')) or like.device.type != "cuda"
+                or position_ids.dim() != 2 or position_ids.shape[0] != 1):
+            return rotary(like, position_ids)
+        table = getattr(self, "_c1_rope_table", None)
+        if table is None or table[0].dtype != like.dtype or table[0].device != like.device:
+            cos, sin = rotary(like, torch.arange(8192, device=like.device)[None])
+            table = self._c1_rope_table = (cos[0], sin[0])
+        flat = position_ids.reshape(-1)
+        if config_values(self.run_config).get('engine.engine_settings.chain_gather_vec', "0") == "1":
+            return table[0][flat][None], table[1][flat][None]
+        return table[0].index_select(0, flat)[None], table[1].index_select(0, flat)[None]
+
+    def _eager_extend(self, prefix, positions, start, length):
+        cos, sin = self._c1_rope(prefix, positions)
+        if self._c1_fused2_enabled(prefix) and hasattr(self, "_c1_fast_key_cache"):
+            count = prefix.shape[1]
+            if self.resolved_config.get("window_causal_over_tokens", False) and count < 16:
+                prefix = F.pad(prefix, (0, 0, 0, 16 - count))
+                cos = F.pad(cos, (0, 0, 0, 16 - count))
+                sin = F.pad(sin, (0, 0, 0, 16 - count))
+            key, value = self._cache_project_fused2(prefix, cos, sin)
+            self._c1_fast_key_cache[:, :, :, start:length].copy_(key[:, :, :, :count])
+            self._c1_fast_value_cache[:, :, :, start:length].copy_(value[:, :, :, :count])
+            return
+        projected = self._cache_project(prefix, positions, cos, sin)
+        for (k, v), (new_k, new_v) in zip(self._c1_kv, projected):
+            k[:, :, start:length].copy_(new_k)
+            v[:, :, start:length].copy_(new_v)
+
+
+class AdapterCachedQuery:
+    """Evaluate adapter queries against the committed KV cache."""
 
     def _d1_cache_query(self, embeddings, cos, sin, mask, length):
         """Refresh lower-stream window K/V while retaining the committed prefix."""
@@ -2596,200 +2640,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
             outputs.append(u)
         return torch.cat(outputs, dim=-1)
 
-    def _forward_cached(self, *, prefix_key, graphed, token_embeddings, prefix_h,
-                        prefix_position_ids, query_position_ids, attention_mask=None,
-                        h_prev=None, c_prev=None, prefix_c=None, run_config=None):
-        if (c_prev is not None or prefix_c is not None or prefix_h.shape[0] != 1
-                or prefix_h.shape[-1] != self.hspace_dim
-                or tuple(token_embeddings.shape[:2]) not in ((1, 4), (1, 8),
-                                                              (1, 15), (1, 16), (1, 32))
-                or (graphed and token_embeddings.shape[1] != 15
-                    and config_values(self.run_config).get('engine.engine_settings.c1_graph_layout', "full") != "live")):
-            # serving: the graphed live layout takes the 16-row window (15 drafts) too
-            raise ValueError("C1 cache requires N1 and a supported query width with tapped hidden")
-        Q = int(token_embeddings.shape[1])
-        self._c1_window = Q  # serving: refresh_cached reads the staged window rows
-        if not hasattr(self, "_c1_kv"):
-            self._cache_init(prefix_h, run_config=run_config)
-        length = prefix_h.shape[1]
-        if length < 1 or length > self._c1_capacity:
-            raise ValueError("C1 prefix exceeds cache capacity or is empty")
-        old = self.c1_state["cache_length"]
-        rebuild = self._c1_prefix_key is not prefix_key or length < old or length-old > 16
-        start = 0 if rebuild else old
-        appended = None
-        if (not graphed and not rebuild and 1 <= length - start <= 16
-                and config_values(self.run_config).get('engine.engine_settings.c1_append', "0") == "1"):
-            appended = self._d1_append(token_embeddings, prefix_h, prefix_position_ids,
-                                       query_position_ids, attention_mask, start, length)
-        if appended is not None:
-            cos_q, sin_q = appended[:2]
-        else:
-            cos_q, sin_q = self._c1_rope(token_embeddings, query_position_ids)
-            if length > start:
-                positions = prefix_position_ids[:, start:length]
-                if graphed and not rebuild and self._c1_extension_enabled():
-                    self._graph_extend(prefix_h[:, start:length], positions, start, run_config=run_config)
-                else:
-                    self._eager_extend(prefix_h[:, start:length], positions, start, length)
-        self._c1_prefix_key = prefix_key
-        self.c1_state["cache_length"] = length
-        self.c1_state["cache_rebuilds" if rebuild else "cache_hits"] += 1
-        self.c1_state.update(last_update="rebuild" if rebuild else "hit", last_start=start,
-                             last_append=length-start)
-        mask = None if attention_mask is None else attention_mask[..., :length]
-        self._d1_preloop_mask = None
-        if appended is not None:
-            # JETSPEC_C1_APPEND wrote the PRELOOP mask too
-            mask = appended[2][..., :length + 15]
-            self._d1_preloop_mask = (mask, appended[2])
-        elif (not graphed and self.resolved_config.get("window_causal_over_tokens", False)
-                and config_values(self.run_config).get('engine.engine_settings.c1_preloop', "0") == "1"
-                and config_values(self.run_config).get('engine.engine_settings.c1_loop', "0") == "1"
-                and mask is not None and mask.dtype == torch.bfloat16 == token_embeddings.dtype
-                and mask.device.type == "cuda" and tuple(mask.shape[:3]) == (1, 1, 15)
-                and mask.stride(-1) == 1 and query_position_ids.dtype == torch.long
-                and tuple(query_position_ids.shape) == (1, 15)):
-            # JETSPEC_C1_PRELOOP: the torch.cat below, already in the lean loop's aligned
-            # layout (one kernel: the same values, the zero padding the lean path adds)
-            aligned = self._c1_fused_module()._loop_extension().d1_window_mask(
-                mask, query_position_ids.contiguous(), length)
-            mask = aligned[..., :length + 15]
-            self._d1_preloop_mask = (mask, aligned)
-        elif self.resolved_config.get("window_causal_over_tokens", False):
-            # Each served N1 staging call contains one block of 15 window slots.
-            window_allowed = query_position_ids[:, :, None] > query_position_ids[:, None, :]
-            window_mask = token_embeddings.new_zeros((1, 1, Q, Q)).masked_fill_(
-                ~window_allowed[:, None], torch.finfo(token_embeddings.dtype).min)
-            if mask is None:
-                mask = token_embeddings.new_zeros((1, 1, Q, length))
-            elif mask.dtype == torch.bool:
-                mask = token_embeddings.new_zeros(mask.shape).masked_fill_(
-                    ~mask, torch.finfo(token_embeddings.dtype).min)
-            mask = torch.cat((mask, window_mask), dim=-1)
-        if graphed:
-            return self._graph_query(token_embeddings, cos_q, sin_q, mask, length, run_config=run_config)
-        return self._cache_query(token_embeddings, cos_q, sin_q, mask, length)
 
-    def prime_admission_prefix(self, sequence, prefix_h, run_config=None):
-        """Retain the exact prefix K/V consumed by the first chain round."""
-        from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
-
-        if not hasattr(self, "_c1_kv"):
-            self._cache_init(prefix_h, run_config=run_config)
-        length = prefix_h.shape[1]
-        positions = torch.arange(length, device=prefix_h.device)[None]
-        self._eager_extend(prefix_h, positions, 0, length)
-        self._c1_prefix_key = sequence
-        self.c1_state["cache_length"] = length
-        self._c1_window = draft_width(run_config=run_config if run_config is not None else getattr(self, 'run_config', None)) + 1
-
-    def _d1_append(self, token_embeddings, prefix_h, prefix_position_ids, query_position_ids,
-                   attention_mask, start, length):
-        """JETSPEC_C1_APPEND=1: the steady-state work of ``_forward_cached`` before the loop
-        (the query and prefix rotary rows, ``_eager_extend``'s D1 fused2 append, the PRELOOP
-        mask) in one C++ call on the same ops and compiled Triton entries; None when this
-        round is not that steady state or an entry is not compiled yet (the Python path,
-        which compiles them, runs instead)."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        if not _adapter_dense_shape(self):
-            return None
-        table = getattr(self, "_c1_rope_table", None)
-        weights = getattr(self, "_d1_projection_weights", None)
-        if (not self.resolved_config.get("window_causal_over_tokens", False)
-                or kernel_enabled('fused_qkv', '1')
-                or config_values(self.run_config).get('engine.engine_settings.c1_preloop', "0") != "1"
-                or config_values(self.run_config).get('engine.engine_settings.c1_loop', "0") != "1"
-                or not kernel_enabled('c1_rope_table', '1')
-                or table is None or weights is None
-                or self._d1_projection_biases[0] is not None
-                or not self._c1_fused2_enabled(prefix_h) or not hasattr(self, "_c1_fast_key_cache")
-                or not hasattr(self, "_c1_fast_kv_norm")
-                or token_embeddings.dtype != torch.bfloat16 or table[0].dtype != torch.bfloat16
-                or table[0].device != prefix_h.device
-                or attention_mask is None or attention_mask.dtype != torch.bfloat16
-                or attention_mask.dim() != 4 or tuple(attention_mask.shape[:3]) != (1, 1, 15)
-                or attention_mask.shape[3] < length or attention_mask.stride(-1) != 1
-                or query_position_ids.dtype != torch.long
-                or tuple(query_position_ids.shape) != (1, 15)
-                or prefix_position_ids.dtype != torch.long):
-            return None
-        fused = self._c1_fused_module()
-        layer = self._c1_blocks[0][1]
-        device = prefix_h.device.index
-        entries = getattr(self, "_d1_append_entries", None)
-        if entries is None or entries[0] is not self._c1_kv:
-            width = self._c1_fast_kv_norm.shape[1]
-            stand_in = self._c1_fast_kv_norm  # a 16-byte aligned bf16 tensor: the key is dtype + alignment
-            heads = layer.num_key_value_heads * layer.num_key_value_groups
-            head_dim = layer.head_dim
-            norm_entry = fused.compiled_launcher(
-                fused._grouped_rms_norm_kernel, device,
-                (stand_in, stand_in, self._c1_fast_streams, stand_in, 16,
-                 self.hspace_dim // width, width, layer.kv_norm.variance_epsilon,
-                 fused.triton.next_power_of_2(width)), num_warps=8)
-            kv_width = layer.num_key_value_heads * head_dim
-            post_entry = fused.compiled_launcher(
-                fused._batched_kv_postprocess_kernel, device,
-                (stand_in, stand_in, stand_in, stand_in, stand_in, stand_in, stand_in, 16,
-                 layer.num_key_value_heads, layer.num_key_value_groups, head_dim, 16 * kv_width,
-                 kv_width, layer.k_norm.variance_epsilon, fused.triton.next_power_of_2(head_dim)),
-                num_warps=4)
-            if norm_entry is None or post_entry is None:
-                return None
-            entries = self._d1_append_entries = (self._c1_kv, norm_entry, post_entry)
-        try:
-            return fused._loop_extension().d1_append(
-                prefix_h[:, start:length], prefix_position_ids[:, start:length],
-                query_position_ids.contiguous(), table[0], table[1], self._c1_fast_kv_norm,
-                self._c1_fast_streams, weights[0], weights[1], self._c1_fast_k_norm,
-                self._c1_fast_key_cache, self._c1_fast_value_cache, attention_mask, start, length,
-                layer.kv_norm.variance_epsilon, layer.k_norm.variance_epsilon,
-                layer.num_key_value_heads, layer.num_key_value_groups, layer.head_dim,
-                entries[1], entries[2])
-        except RuntimeError as error:
-            if ("not 16-byte aligned" not in str(error)
-                    and "C1 APPEND requires dense prefix rows" not in str(error)
-                    and "C1 APPEND requires dense operands" not in str(error)):
-                raise
-            return None
-
-    def _c1_rope(self, like, position_ids):
-        """``rotary_emb(like, position_ids)``; with JETSPEC_C1_ROPE_TABLE=1 on CUDA, the rows
-        gathered from one table of positions 0..8191 computed by that same call (each
-        position's cos/sin is a single product, so the gather is bitwise the call; the
-        cached path's position ids are cache indices, below the capacity + 16)."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        rotary = self.streams[0].rotary_emb
-        if ((not kernel_enabled('c1_rope_table', '1')
-             and not kernel_enabled('c1_prep_lean', '1')) or like.device.type != "cuda"
-                or position_ids.dim() != 2 or position_ids.shape[0] != 1):
-            return rotary(like, position_ids)
-        table = getattr(self, "_c1_rope_table", None)
-        if table is None or table[0].dtype != like.dtype or table[0].device != like.device:
-            cos, sin = rotary(like, torch.arange(8192, device=like.device)[None])
-            table = self._c1_rope_table = (cos[0], sin[0])
-        flat = position_ids.reshape(-1)
-        if config_values(self.run_config).get('engine.engine_settings.chain_gather_vec', "0") == "1":
-            return table[0][flat][None], table[1][flat][None]
-        return table[0].index_select(0, flat)[None], table[1].index_select(0, flat)[None]
-
-    def _eager_extend(self, prefix, positions, start, length):
-        cos, sin = self._c1_rope(prefix, positions)
-        if self._c1_fused2_enabled(prefix) and hasattr(self, "_c1_fast_key_cache"):
-            count = prefix.shape[1]
-            if self.resolved_config.get("window_causal_over_tokens", False) and count < 16:
-                prefix = F.pad(prefix, (0, 0, 0, 16 - count))
-                cos = F.pad(cos, (0, 0, 0, 16 - count))
-                sin = F.pad(sin, (0, 0, 0, 16 - count))
-            key, value = self._cache_project_fused2(prefix, cos, sin)
-            self._c1_fast_key_cache[:, :, :, start:length].copy_(key[:, :, :, :count])
-            self._c1_fast_value_cache[:, :, :, start:length].copy_(value[:, :, :, :count])
-            return
-        projected = self._cache_project(prefix, positions, cos, sin)
-        for (k, v), (new_k, new_v) in zip(self._c1_kv, projected):
-            k[:, :, start:length].copy_(new_k)
-            v[:, :, start:length].copy_(new_v)
+class AdapterGraphReplay:
+    """Capture, warm, and replay adapter queries and prefix extensions."""
 
     def _c1_extension_enabled(self):
         return not getattr(self, "_c1_extension_failed", False)
@@ -3356,56 +3209,9 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         self.c1_state["query_path"] = "graph"
         return self._c1_output.clone()
 
-    def _forward_shared(self, *, owners, token_embeddings, prefix_h, prefix_position_ids,
-                        query_position_ids, attention_mask=None, h_prev=None,
-                        c_prev=None, prefix_c=None):
-        if c_prev is not None or prefix_c is not None:
-            raise ValueError("ctxkv c1 forbids c-space inputs")
-        if prefix_h.shape[-1] != self.hspace_dim:
-            raise ValueError("C1 requires tapped hidden prefix")
-        rows, queries = token_embeddings.shape[:2]
-        sequences, prefix = prefix_h.shape[:2]
-        first_rows = torch.full((sequences,), rows, dtype=torch.long, device=owners.device)
-        first_rows.scatter_reduce_(0, owners, torch.arange(rows, device=owners.device), reduce="amin")
-        positions = prefix_position_ids.index_select(0, first_rows)
-        mask = None if attention_mask is None else attention_mask[..., :prefix]
-        if not _adapter_dense_shape(self, any_dim=True):
-            cache = []
-            for index, stream in enumerate(self.streams):
-                for layer in (stream, *self.extra_stream_layers[index]):
-                    source = layer.kv_norm(prefix_h[..., index*self.hidden_size:(index+1)*self.hidden_size])
-                    key, value = layer.project_kv(source)
-                    key = layer.k_norm(key.view(sequences, prefix, layer.num_key_value_heads, layer.head_dim))
-                    cos, sin = layer.rotary_emb(source, positions)
-                    key = _c1_rotary(key.transpose(1, 2), cos, sin)
-                    value = value.view(sequences, prefix, layer.num_key_value_heads, layer.head_dim).transpose(1, 2)
-                    cache.append(tuple(part.repeat_interleave(layer.num_key_value_groups, dim=1)
-                                       .index_select(0, owners) for part in (key, value)))
-            cos, sin = self.streams[0].rotary_emb(token_embeddings, query_position_ids)
-            return self._adapter_cache_query(token_embeddings, cos, sin, mask, prefix, cache=cache)
-        u, outputs = token_embeddings, []
-        for index, stream in enumerate(self.streams):
-            prefix_tap = prefix_h[..., index*self.hidden_size:(index+1)*self.hidden_size]
-            for layer in (stream, *self.extra_stream_layers[index]):
-                normed = layer.input_norm(u)
-                key_source = layer.kv_norm(prefix_tap)
-                q = layer.q_norm(layer.q_proj(normed).view(rows, queries, layer.num_heads, layer.head_dim)).transpose(1,2)
-                k = layer.k_norm(layer.k_proj(key_source).view(sequences, prefix, layer.num_key_value_heads, layer.head_dim)).transpose(1,2)
-                v = layer.v_proj(key_source).view(sequences, prefix, layer.num_key_value_heads, layer.head_dim).transpose(1,2)
-                cos_q, sin_q = layer.rotary_emb(normed, query_position_ids)
-                cos_k, sin_k = layer.rotary_emb(key_source, positions)
-                q, _ = _apply_rotary_pos_emb(q, q, cos_q, sin_q)
-                k, _ = _apply_rotary_pos_emb(k, k, cos_k, sin_k)
-                if layer.num_key_value_groups != 1:
-                    k = k.repeat_interleave(layer.num_key_value_groups, dim=1)
-                    v = v.repeat_interleave(layer.num_key_value_groups, dim=1)
-                attended = F.scaled_dot_product_attention(q, k.index_select(0, owners),
-                    v.index_select(0, owners), attn_mask=mask, scale=layer.scaling)
-                attended = attended.transpose(1,2).reshape(rows, queries, layer.num_heads*layer.head_dim)
-                state = u + layer.o_proj(attended)
-                u = state + layer.mlp(layer.post_attention_norm(state))
-            outputs.append(u)
-        return torch.cat(outputs, dim=-1)
+
+class AdapterContextRefresh:
+    """Refresh adapter context and cached rows between refinement passes."""
 
     @torch.inference_mode()
     def refresh_window(self, *, tail_embeddings, block_embeddings, length, tail_counts,
@@ -4163,6 +3969,232 @@ class ServingCtxKVC1Head(CtxKVC1Head):
         return torch.cat(outputs, dim=-1)
 
 
+class ServingContextKVHead(
+    AdapterContextRefresh,
+    AdapterGraphReplay,
+    AdapterCachedQuery,
+    AdapterKVCache,
+    AdapterBatchCache,
+    CtxKVC1Head,
+):
+    """Coordinate serving projections, cached queries, and context refresh.
+
+    Components share this module instance and its tensor state; inherited methods
+    retain the original call order and graph capture boundaries.
+    """
+    def __init__(self, config, *, run_config=None):
+        super().__init__(config)
+        for child in self.modules():
+            if type(child) is CtxKVC1Stream:
+                child.__class__ = ServingCtxKVC1Stream
+        DraftLinear.bind(self)
+        self.run_config = run_config
+
+
+    def forward(self, *, shared_prefix_projection=False, prefix_row_indices=None, prefix_key=None,
+                prefix_keys=None, prefix_lengths=None,
+                batched_uncached=False, run_config=None, **kwargs):
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
+        rows = kwargs["token_embeddings"].shape[0]
+        cached = config_values(self.run_config).get('engine.engine_settings.c1_kvcache', "0") == "1"
+        graphed = config_values(self.run_config).get('engine.engine_settings.c1_graph', "0") == "1"
+        eval_mode = current_engine().execution in ("pipelined", "critical-path", "on")
+        if graphed and (config_values(self.run_config).get('engine.engine_settings.torchdynamo_disable') == "1"
+                        or (config_values(self.run_config).get('engine.engine_settings.host_fast', "0") == "0"
+                            and not eval_mode)):
+            raise ValueError("C1 GRAPH refuses E")
+        if graphed and not cached:
+            raise ValueError("C1 GRAPH requires KVCACHE")
+        if batched_uncached:
+            if (not cached or (graphed and config_values(self.run_config).get('engine.engine_settings.chain_admit_batch', "0") != "1")
+                    or rows < 2 or prefix_key is not None or prefix_row_indices is not None):
+                raise ValueError("batched C1 staging requires eager cached mode and independent rows")
+            return super().forward(**kwargs)
+        if prefix_keys is not None:
+            if (not cached or graphed or prefix_key is not None or prefix_row_indices is not None
+                    or rows < 2 or len(prefix_keys) != rows or prefix_lengths is None
+                    or len(prefix_lengths) != rows):
+                raise ValueError("multi-slot C1 requires eager cached N>1 and per-row identities/lengths")
+            return self._forward_multi_cached(prefix_keys, prefix_lengths, **kwargs)
+        if config_values(self.run_config).get('engine.engine_settings.c1_compile', "0") == "1" and not graphed:
+            # The compiled kernel set serves in the graphed regime only
+            raise ValueError("C1 COMPILE requires the graphed regime (JETSPEC_C1_GRAPH=1)")
+        if cached:
+            if config_values(self.run_config).get('engine.engine_settings.c1_shared_prefix', "0") == "1":
+                raise ValueError("C1 KVCACHE refuses SHARED_PREFIX")
+            if rows != 1 or prefix_row_indices is not None or prefix_key is None:
+                raise ValueError("C1 KVCACHE requires N1 and a sequence identity")
+            output = self._forward_cached(prefix_key=prefix_key, graphed=graphed, **kwargs, run_config=run_config)
+            if config_values(self.run_config).get('engine.engine_settings.w328_defer_adapter'):
+                from jetspec.engines.jetspec_plus_plus.serving.compile_pin import digest_defer
+                digest_defer("adapter", 'engine.engine_settings.w328_defer_adapter', run_config=self.run_config, embeddings=kwargs["token_embeddings"],
+                             taps=kwargs["prefix_h"], output=output)
+            if config_values(self.run_config).get('engine.engine_settings.w328_digest'):
+                from jetspec.engines.jetspec_plus_plus.serving.compile_pin import digest_log
+                digest_log("adapter", run_config=self.run_config, embeddings=kwargs["token_embeddings"],
+                           taps=kwargs["prefix_h"], positions=kwargs["query_position_ids"],
+                           mask=kwargs.get("attention_mask"), output=output)
+            return output
+        if prefix_row_indices is not None:
+            if not shared_prefix_projection:
+                raise ValueError("row mapping requires shared_prefix_projection")
+            if prefix_row_indices.shape != (rows,) or prefix_row_indices.dtype != torch.long:
+                raise ValueError("prefix_row_indices must be int64 [rows]")
+        if shared_prefix_projection and config_values(self.run_config).get('engine.engine_settings.c1_shared_prefix', "0") == "1":
+            if self.resolved_config.get("window_causal_over_tokens", False):
+                raise ValueError("C1 prefix sharing requires prefix-only attention")
+            owners = prefix_row_indices
+            if owners is None:
+                if kwargs["prefix_h"].shape[0] != rows:
+                    raise ValueError("shared sequences require a row mapping")
+                owners = torch.arange(rows, device=kwargs["prefix_h"].device)
+            return self._forward_shared(owners=owners, **kwargs)
+        if prefix_row_indices is not None:
+            kwargs["prefix_h"] = kwargs["prefix_h"].index_select(0, prefix_row_indices)
+        # C1 does not read h_prev. This baseline repeats each stream's K/V projections.
+        return super().forward(**kwargs)
+
+    def _forward_cached(self, *, prefix_key, graphed, token_embeddings, prefix_h,
+                        prefix_position_ids, query_position_ids, attention_mask=None,
+                        h_prev=None, c_prev=None, prefix_c=None, run_config=None):
+        if (c_prev is not None or prefix_c is not None or prefix_h.shape[0] != 1
+                or prefix_h.shape[-1] != self.hspace_dim
+                or tuple(token_embeddings.shape[:2]) not in ((1, 4), (1, 8),
+                                                              (1, 15), (1, 16), (1, 32))
+                or (graphed and token_embeddings.shape[1] != 15
+                    and config_values(self.run_config).get('engine.engine_settings.c1_graph_layout', "full") != "live")):
+            # serving: the graphed live layout takes the 16-row window (15 drafts) too
+            raise ValueError("C1 cache requires N1 and a supported query width with tapped hidden")
+        Q = int(token_embeddings.shape[1])
+        self._c1_window = Q  # serving: refresh_cached reads the staged window rows
+        if not hasattr(self, "_c1_kv"):
+            self._cache_init(prefix_h, run_config=run_config)
+        length = prefix_h.shape[1]
+        if length < 1 or length > self._c1_capacity:
+            raise ValueError("C1 prefix exceeds cache capacity or is empty")
+        old = self.c1_state["cache_length"]
+        rebuild = self._c1_prefix_key is not prefix_key or length < old or length-old > 16
+        start = 0 if rebuild else old
+        appended = None
+        if (not graphed and not rebuild and 1 <= length - start <= 16
+                and config_values(self.run_config).get('engine.engine_settings.c1_append', "0") == "1"):
+            appended = self._d1_append(token_embeddings, prefix_h, prefix_position_ids,
+                                       query_position_ids, attention_mask, start, length)
+        if appended is not None:
+            cos_q, sin_q = appended[:2]
+        else:
+            cos_q, sin_q = self._c1_rope(token_embeddings, query_position_ids)
+            if length > start:
+                positions = prefix_position_ids[:, start:length]
+                if graphed and not rebuild and self._c1_extension_enabled():
+                    self._graph_extend(prefix_h[:, start:length], positions, start, run_config=run_config)
+                else:
+                    self._eager_extend(prefix_h[:, start:length], positions, start, length)
+        self._c1_prefix_key = prefix_key
+        self.c1_state["cache_length"] = length
+        self.c1_state["cache_rebuilds" if rebuild else "cache_hits"] += 1
+        self.c1_state.update(last_update="rebuild" if rebuild else "hit", last_start=start,
+                             last_append=length-start)
+        mask = None if attention_mask is None else attention_mask[..., :length]
+        self._d1_preloop_mask = None
+        if appended is not None:
+            # JETSPEC_C1_APPEND wrote the PRELOOP mask too
+            mask = appended[2][..., :length + 15]
+            self._d1_preloop_mask = (mask, appended[2])
+        elif (not graphed and self.resolved_config.get("window_causal_over_tokens", False)
+                and config_values(self.run_config).get('engine.engine_settings.c1_preloop', "0") == "1"
+                and config_values(self.run_config).get('engine.engine_settings.c1_loop', "0") == "1"
+                and mask is not None and mask.dtype == torch.bfloat16 == token_embeddings.dtype
+                and mask.device.type == "cuda" and tuple(mask.shape[:3]) == (1, 1, 15)
+                and mask.stride(-1) == 1 and query_position_ids.dtype == torch.long
+                and tuple(query_position_ids.shape) == (1, 15)):
+            # JETSPEC_C1_PRELOOP: the torch.cat below, already in the lean loop's aligned
+            # layout (one kernel: the same values, the zero padding the lean path adds)
+            aligned = self._c1_fused_module()._loop_extension().d1_window_mask(
+                mask, query_position_ids.contiguous(), length)
+            mask = aligned[..., :length + 15]
+            self._d1_preloop_mask = (mask, aligned)
+        elif self.resolved_config.get("window_causal_over_tokens", False):
+            # Each served N1 staging call contains one block of 15 window slots.
+            window_allowed = query_position_ids[:, :, None] > query_position_ids[:, None, :]
+            window_mask = token_embeddings.new_zeros((1, 1, Q, Q)).masked_fill_(
+                ~window_allowed[:, None], torch.finfo(token_embeddings.dtype).min)
+            if mask is None:
+                mask = token_embeddings.new_zeros((1, 1, Q, length))
+            elif mask.dtype == torch.bool:
+                mask = token_embeddings.new_zeros(mask.shape).masked_fill_(
+                    ~mask, torch.finfo(token_embeddings.dtype).min)
+            mask = torch.cat((mask, window_mask), dim=-1)
+        if graphed:
+            return self._graph_query(token_embeddings, cos_q, sin_q, mask, length, run_config=run_config)
+        return self._cache_query(token_embeddings, cos_q, sin_q, mask, length)
+
+    def prime_admission_prefix(self, sequence, prefix_h, run_config=None):
+        """Retain the exact prefix K/V consumed by the first chain round."""
+        from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
+
+        if not hasattr(self, "_c1_kv"):
+            self._cache_init(prefix_h, run_config=run_config)
+        length = prefix_h.shape[1]
+        positions = torch.arange(length, device=prefix_h.device)[None]
+        self._eager_extend(prefix_h, positions, 0, length)
+        self._c1_prefix_key = sequence
+        self.c1_state["cache_length"] = length
+        self._c1_window = draft_width(run_config=run_config if run_config is not None else getattr(self, 'run_config', None)) + 1
+
+    def _forward_shared(self, *, owners, token_embeddings, prefix_h, prefix_position_ids,
+                        query_position_ids, attention_mask=None, h_prev=None,
+                        c_prev=None, prefix_c=None):
+        if c_prev is not None or prefix_c is not None:
+            raise ValueError("ctxkv c1 forbids c-space inputs")
+        if prefix_h.shape[-1] != self.hspace_dim:
+            raise ValueError("C1 requires tapped hidden prefix")
+        rows, queries = token_embeddings.shape[:2]
+        sequences, prefix = prefix_h.shape[:2]
+        first_rows = torch.full((sequences,), rows, dtype=torch.long, device=owners.device)
+        first_rows.scatter_reduce_(0, owners, torch.arange(rows, device=owners.device), reduce="amin")
+        positions = prefix_position_ids.index_select(0, first_rows)
+        mask = None if attention_mask is None else attention_mask[..., :prefix]
+        if not _adapter_dense_shape(self, any_dim=True):
+            cache = []
+            for index, stream in enumerate(self.streams):
+                for layer in (stream, *self.extra_stream_layers[index]):
+                    source = layer.kv_norm(prefix_h[..., index*self.hidden_size:(index+1)*self.hidden_size])
+                    key, value = layer.project_kv(source)
+                    key = layer.k_norm(key.view(sequences, prefix, layer.num_key_value_heads, layer.head_dim))
+                    cos, sin = layer.rotary_emb(source, positions)
+                    key = _c1_rotary(key.transpose(1, 2), cos, sin)
+                    value = value.view(sequences, prefix, layer.num_key_value_heads, layer.head_dim).transpose(1, 2)
+                    cache.append(tuple(part.repeat_interleave(layer.num_key_value_groups, dim=1)
+                                       .index_select(0, owners) for part in (key, value)))
+            cos, sin = self.streams[0].rotary_emb(token_embeddings, query_position_ids)
+            return self._adapter_cache_query(token_embeddings, cos, sin, mask, prefix, cache=cache)
+        u, outputs = token_embeddings, []
+        for index, stream in enumerate(self.streams):
+            prefix_tap = prefix_h[..., index*self.hidden_size:(index+1)*self.hidden_size]
+            for layer in (stream, *self.extra_stream_layers[index]):
+                normed = layer.input_norm(u)
+                key_source = layer.kv_norm(prefix_tap)
+                q = layer.q_norm(layer.q_proj(normed).view(rows, queries, layer.num_heads, layer.head_dim)).transpose(1,2)
+                k = layer.k_norm(layer.k_proj(key_source).view(sequences, prefix, layer.num_key_value_heads, layer.head_dim)).transpose(1,2)
+                v = layer.v_proj(key_source).view(sequences, prefix, layer.num_key_value_heads, layer.head_dim).transpose(1,2)
+                cos_q, sin_q = layer.rotary_emb(normed, query_position_ids)
+                cos_k, sin_k = layer.rotary_emb(key_source, positions)
+                q, _ = _apply_rotary_pos_emb(q, q, cos_q, sin_q)
+                k, _ = _apply_rotary_pos_emb(k, k, cos_k, sin_k)
+                if layer.num_key_value_groups != 1:
+                    k = k.repeat_interleave(layer.num_key_value_groups, dim=1)
+                    v = v.repeat_interleave(layer.num_key_value_groups, dim=1)
+                attended = F.scaled_dot_product_attention(q, k.index_select(0, owners),
+                    v.index_select(0, owners), attn_mask=mask, scale=layer.scaling)
+                attended = attended.transpose(1,2).reshape(rows, queries, layer.num_heads*layer.head_dim)
+                state = u + layer.o_proj(attended)
+                u = state + layer.mlp(layer.post_attention_norm(state))
+            outputs.append(u)
+        return torch.cat(outputs, dim=-1)
+
+
+
 def verify_pinned_files(paths, pins_path) -> None:
     """Check every consumed file against the dispatch-owned pin manifest."""
     if pins_path is None:
@@ -4281,7 +4313,7 @@ class FrozenC1H2HAdapter(FrozenH2HAdapter):
                 raise ValueError("head.safetensors PREFIX_KV_SOURCE requires target cache K/V, which serve cannot feed")
         config = load_qwen3_config(config_path)
         config._attn_implementation = "sdpa"
-        self.head = ServingCtxKVC1Head(config, run_config=self.run_config).to(device=device, dtype=dtype)
+        self.head = ServingContextKVHead(config, run_config=self.run_config).to(device=device, dtype=dtype)
         self.head.load_state_dict(load_file(Path(head_path), device="cpu"), strict=True)
         self.head.eval()
         self.target_embed_tokens = target_embed_tokens
@@ -5281,7 +5313,7 @@ def bind_front_inputs(drafter, decoder, capacity, run_config=None):
     from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
 
     head = drafter.adapter.head
-    if not isinstance(head, ServingCtxKVC1Head):
+    if not isinstance(head, ServingContextKVHead):
         raise ValueError("front chain requires the served C1 cache head")
     head._front_embed_tokens = drafter.embed_tokens
     width = draft_width(run_config=run_config)

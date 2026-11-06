@@ -92,7 +92,7 @@ class K1Plan:
         import cutlass
         import cutlass.cute as cute
         from cutlass.cute.runtime import make_fake_stream, make_ptr
-        from ._blockscaled_gemm_kernel import K1Kernel, reduce_workspace
+        from ._blockscaled_gemm_kernel import BlockScaledGemmKernel, reduce_workspace
 
         self._cuda = cuda
         cfg = self.config
@@ -100,7 +100,7 @@ class K1Plan:
         self.partials = (torch.empty((cfg.split, self.m, self.weight.shape[0]),
                                     dtype=torch.float32, device=self.out.device)
                          if use_workspace else None)
-        kernel = K1Kernel(mma_tiler_mnk=(128, cfg.tile_n, cfg.cta_k),
+        kernel = BlockScaledGemmKernel(mma_tiler_mnk=(128, cfg.tile_n, cfg.cta_k),
                           num_ab_stage=cfg.stages, num_sfb_tmem_stage=1,
                           split_k=1 if use_workspace else cfg.split,
                           workspace_split=cfg.split if use_workspace else 1,

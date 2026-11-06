@@ -154,7 +154,7 @@ def _smem_bytes(
     return cursor
 
 
-class K1Kernel:
+class BlockScaledGemmKernel:
     """Low-latency, warp-specialized Blackwell block-scaled GEMM.
 
     The 12 warps are assigned to two TMA load roles, one MMA role, four
