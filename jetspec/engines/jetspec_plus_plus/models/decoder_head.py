@@ -7,7 +7,7 @@ target-relative index/shard names to sha256 digests, or ``file`` with the pinned
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import json
 import copy
@@ -234,7 +234,7 @@ def decoder_layer_lean(layer, hidden, rope, mask, cache, cache_position, fused, 
     input add+norm kernel.  Returns the same ``(mlp_output, residual)`` pair
     for the caller to sum or to hand on.
     """
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     from transformers.integrations.sdpa_attention import sdpa_attention_forward
     attn = layer.self_attn
     cos, sin = rope
@@ -293,7 +293,7 @@ def decoder_layer_lean(layer, hidden, rope, mask, cache, cache_position, fused, 
 
 def _decoder_gate_up(mlp, source):
     """One opt-in gate/up GEMM, with independent singleton and batched knobs."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     singleton = (kernel_enabled('decoder_single_gateup_packed', '1')
                  and source.ndim == 3 and source.shape[0] == 1)
     if ((not singleton)):
@@ -318,7 +318,7 @@ def _prepare_decoder_gate_up(mlp):
 
 def decoder_prefix_kv_lean(layer, hidden, rope, fused, *, pending=None):
     """``decoder_prefix_kv`` with one norm launch and the fused k norm + rotary."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     attn = layer.self_attn
     cos, sin = rope
     head_dim = attn.head_dim
@@ -342,7 +342,7 @@ def decoder_graph_lean():
     """JETSPEC_DECODER_GRAPH_LEAN=1: the graphed regime's decoder parts on the
     certified kernels (``decoder_layer_lean`` with JETSPEC_C1_LEAN=1, split around
     its attention so each side is one shape-only graph)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return kernel_enabled('decoder_graph_lean', '1')
 
 
@@ -355,7 +355,7 @@ def decoder_graph_window(*, run_config=None):
 
 def batch_head_epilogue_enabled(count, dtype, cap, *, run_config=None):
     """The C>1 budget/BLEND graph consumes offers and two decoder scalars only."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return (kernel_enabled('w632_head_fuse', '1')
             and count > 1 and dtype == torch.bfloat16
             and setting(run_config, 'engine', 'engine_settings.batch_draft_graph', '0') == '1'
@@ -369,7 +369,7 @@ def batch_head_epilogue_enabled(count, dtype, cap, *, run_config=None):
 
 
 def check_decoder_graph_lean_regime(*, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if decoder_graph_window(run_config=run_config) and not decoder_graph_lean():
         raise ValueError('JETSPEC_DECODER_GRAPH_WINDOW=1 requires JETSPEC_DECODER_GRAPH_LEAN=1')
     if not decoder_graph_lean():
@@ -384,7 +384,7 @@ def check_decoder_graph_lean_regime(*, run_config=None):
 def decoder_lean_project(layer, fused, hidden, pending, rope):
     """``decoder_layer_lean`` up to its attention: the input (add+)norm, the q and
     k/v projections with their norm + rotary.  Returns (query, key, value, hidden)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     attn = layer.self_attn
     cos, sin = rope
     head_dim = attn.head_dim
@@ -410,7 +410,7 @@ def decoder_lean_project(layer, fused, hidden, pending, rope):
 
 def _decoder_packed_project(attn, fused, source, rope, *, prefix=False):
     """One packed GEMM; CUDA postprocessing reads the split's row stride."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     weight, bias, widths = (attn._decoder_prefix_kv if prefix else attn._decoder_qkv)
     projection = attn.k_proj if prefix else attn.q_proj
     precision = getattr(projection, 'precision', None)
@@ -470,7 +470,7 @@ def decoder_grouped_attention(fused, query, key, value, mask, scale):
 
 def decoder_lean_attention(layer, fused, query, key, value, mask, *, length=None, count=None):
     """``decoder_layer_lean``'s lean attention (repeat_kv, the memory-efficient kernel)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if (length is not None and query.is_cuda
             and (((kernel_enabled('decoder_attn_len', '1'))))):
         from jetspec.engines.jetspec_plus_plus.kernels.len_attention import attend as attend_len
@@ -614,7 +614,7 @@ class DeviceAnchorOffers:
 def _topk_offers(logits, rejected, q_hats, cap, *, run_config=None):
     """JETSPEC_ANCHOR_SELECT=topk: the exact top-k selection (heads/topk_select.py), eager, or
     one CUDA graph per shape under the graphed rows regime; offers come home in one copy."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     global _GRAPHED_SELECT
     from jetspec.engines.jetspec_plus_plus.draft.heads.topk_select import GraphedSelect
     from jetspec.engines.jetspec_plus_plus.draft.heads.topk_select import fast_offers_topk
@@ -1270,7 +1270,7 @@ class DecoderCheckpointLoading:
 
     @classmethod
     def load(cls, root, drafter, target_model_path=None, manifest=None, *, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.rows import check_rows_fused_regime
         check_rows_fused_regime(run_config=run_config)
         check_decoder_graph_lean_regime(run_config=run_config)
@@ -1550,7 +1550,7 @@ class ShippedDecoderState:
         There are no true-tap lanes: the window is [tail | rows x slots]. All
         projections and MLPs read this single token matrix once per refresh.
         """
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         del prefix_kv
         if setting(self.run_config, 'engine', 'engine_settings.refresh_swap_glue', '0') == '1' if glue is None else glue:
             raise ValueError('JETSPEC_REFRESH_SWAP_GLUE refuses the hybrid decoder (GDN, D256)')
@@ -1956,7 +1956,7 @@ class DecoderWindowExecution:
     def _merged_chain_layers(self, prefix_hidden, rope, mask, slots, state, front,
                              length, count, use_len_attention, fused):
         """Share the two layers' projection reads across prefix and window rows."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         self._check_prefix_merge(state, front)
         lanes = prefix_hidden.shape[1]
         if kernel_enabled('draft_fuse_t12', '1') and 'combined_hidden' in state:
@@ -2028,7 +2028,7 @@ class DecoderWindowExecution:
 
     def _window_state(self, like, bucket):
         """Keep each opted-in decoder key's static inputs and K/V distinct."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         bucketed = setting(self.run_config, 'engine', 'engine_settings.chain_decoder_key_bucket', '0') == '1'
         if bucketed:
             states = self._window_graph_states
@@ -2154,7 +2154,7 @@ class DecoderWindowExecution:
         """Append the fixed prefix lanes, decode the window, and select on device."""
         if getattr(self, '_uses_shipped_state', False):
             return self._stateful_decoder_chain_body(rp, tokens, front, bucket)
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
         if setting(self.run_config, 'engine', 'engine_settings.front_static', '0') != '1':
             raise ValueError('decoder chain body requires JETSPEC_FRONT_STATIC=1')
         use_len_attention = (rp.is_cuda and
@@ -2302,7 +2302,7 @@ class DecoderWindowExecution:
         Allocated before capture; the bucket's prefix K/V is copied in, never written."""
         if getattr(self, '_uses_shipped_state', False):
             return self._stateful_refresh_window_state(prefix_kv, bucket, rows=rows, lanes=lanes, like=like, glue=glue)
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         if self.prefix_layers is not self.layers:
             raise ValueError('JETSPEC_REFRESH_SWAP requires the target_slice decoder '
                              '(one set of shared prefix and window layers)')
@@ -2438,7 +2438,7 @@ class DecoderWindowExecution:
                         attn_mask=mask, scale=layer.self_attn.scaling).transpose(1, 2)
                     current = decoder_window_finish(layer, current, attended)
                 decoded = self.norm(current)
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         trimmed = state.get('glue') and kernel_enabled('draft_fuse_t12', '1')
         decoded = decoded[0] if trimmed else decoded[0, 4 + lanes:]
         if hidden.is_cuda and compact_cuda:

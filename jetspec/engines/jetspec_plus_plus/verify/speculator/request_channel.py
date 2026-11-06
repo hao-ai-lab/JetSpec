@@ -143,7 +143,7 @@ class RequestChannel:
                                chain_round=None, chain_length=None, chain_after_miss=None,
                                chain_eos=None, chain_sync_at=None, chain_true_k=None,
                                chain_recovery=None) -> None:
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         pair_outcome = chain_command == "outcome" and getattr(self, "_pair_outcome_push", False)
         pair_command_id = None
         if pair_outcome:

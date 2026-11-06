@@ -51,7 +51,7 @@ def embedding_norm(ids, embedding, gamma, eps, active=None, err=None, mask_token
     hidden = torch.empty((ids.numel(), width), device=ids.device, dtype=embedding.dtype)
     normalized = torch.empty_like(hidden)
     block = triton.next_power_of_2(width)
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
     if kernel_enabled('draft_fuse_w1', '1'):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, allocate_activation, _arguments
         if enabled(normalized):

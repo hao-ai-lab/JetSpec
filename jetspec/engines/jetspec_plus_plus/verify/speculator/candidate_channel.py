@@ -94,7 +94,7 @@ class CandidateChannel:
 
     def _post_jetspec_candidate_receive(self) -> None:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if self.jetspec_mailbox_store is None:
             raise RuntimeError("JetSpec mailbox requires its readiness store")

@@ -245,7 +245,7 @@ def generate(argv):
                                      description=generate.__doc__)
     result.add_argument('prompt')
     result.add_argument('--model', choices=MODELS, default='qwen3-8b', help='target model')
-    result.add_argument('--schedule', choices=('j1-r0', 'j1-r1', 'j3-r3'), help='defaults to the fastest measured one')
+    result.add_argument('--schedule', choices=tuple(schedule for schedule in SCHEDULES if schedule != 'ar'), help='defaults to the fastest measured one')
     result.add_argument('--max-tokens', type=int, default=2048)
     result.add_argument('--devices', default='0,1', help='two GPUs, as nvidia-smi numbers them')
     result.add_argument('--dataset', default='gsm8k', help='calibration entry of the heads')

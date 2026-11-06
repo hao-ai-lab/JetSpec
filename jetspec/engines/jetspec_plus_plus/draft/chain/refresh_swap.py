@@ -25,7 +25,7 @@ no swap object.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -45,7 +45,7 @@ R1_CONFIGS = ('J1-R1', 'J2-R1', 'J3-R1', 'J2-R2', 'J3-R3')
 
 
 def refresh_swap_lean_enabled(*, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     value = kernel_value('refresh_swap_lean', '0')
     if value not in ('0', '1'):
         raise ValueError('JETSPEC_REFRESH_SWAP_LEAN must be 0 or 1')
@@ -319,7 +319,7 @@ class RefreshSwap:
         they are injected: swap ``ids`` in place, pin the swaps, reopen swapped rows in
         ``finished``, and return the fixed-layout inject count (entries 0..khat_used; 0 on an
         inactive row)."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         hidden = self.decoder.hidden_size
         legacy_write = not self.dense_pins
         if getattr(self, 'true_taps', None) is not None:

@@ -2,7 +2,7 @@
 import torch
 
 from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
 
 try:
     import triton

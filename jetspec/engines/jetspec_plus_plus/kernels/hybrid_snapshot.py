@@ -1,8 +1,8 @@
 """Device kernels for models/hybrid_snapshot.py."""
 
 # Adaptation: defer optional accelerator imports for CPU package inspection.
-from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
-from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
+from jetspec.engines.jetspec_plus_plus.serving._optional import triton
+from jetspec.engines.jetspec_plus_plus.serving._optional import tl
 
 
 @triton.jit

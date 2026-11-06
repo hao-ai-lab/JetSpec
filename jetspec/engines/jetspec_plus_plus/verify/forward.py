@@ -1,5 +1,5 @@
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 import os
 import warnings
 import time
@@ -694,7 +694,7 @@ class Verifier(VerifierBase):
     }
 
     def __getattr__(self, name):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         if name == '_jetspec_verify_reference':
             from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
             return current_engine().kind == 'reference'
@@ -707,7 +707,7 @@ class Verifier(VerifierBase):
         else:
             value = kernel_enabled(env_name)
             if not value:
-                from jetspec.engines.jetspec_plus_plus.runtime.profiles import verify_cut_lean27b
+                from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import verify_cut_lean27b
                 value = verify_cut_lean27b(
                     env_name, self, getattr(self, 'target_model_runner', None))
         setattr(self, name, value)
@@ -1223,7 +1223,7 @@ class Verifier(VerifierBase):
     def _verify_jetspec_device(self, seq: Sequence, speculate_result: SpeculateResult) -> VerifyResult:
         """N=1 verify with one small host outcome read after device commit."""
         from jetspec.engines.jetspec_plus_plus.models.state import has_state
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         # Recovery is staged for the next suffix, not accepted in this one.
         # The scheduler finishes only after EOS enters the committed suffix.
         recovery_eos_terminal = False

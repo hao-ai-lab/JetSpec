@@ -1,14 +1,14 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 import os
 import sys
 
 import torch
 from torch import nn
 from torch.nn import functional as torch_functional
-from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
-from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
+from jetspec.engines.jetspec_plus_plus.serving._optional import triton
+from jetspec.engines.jetspec_plus_plus.serving._optional import tl
 
 # A spawned rank imports this module before it installs its engine. install_engine binds the
 # backend again, here and in every module that imports the name.

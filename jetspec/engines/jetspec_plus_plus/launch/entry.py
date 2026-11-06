@@ -24,7 +24,7 @@ COMPOSED_RECIPES = _COMPOSED['recipes']
 
 def profile_environment(config):
     """A named profile owns selectors; compatibility leaves own other values."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
     from jetspec.engines.jetspec_plus_plus.runtime.env import REQUIRED
     from jetspec.engines.jetspec_plus_plus.runtime.env import NO_DEFAULT
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
