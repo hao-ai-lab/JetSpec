@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 
-import argparse
 import collections
 import copy
 import hashlib
@@ -787,12 +786,8 @@ PROMPTS_SHA = {'8B': '5393ea5ee6ed26f795e508c6d2487d4ae07da28fb844402cd246c2b56e
 
 def stage_cal28(argv=None):
     """Build the pinned 27B cal28 bundle from copied, verified source files."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--root', type=Path, required=True)
-    parser.add_argument('--fit', type=Path, required=True)
-    parser.add_argument('--legacy', type=Path, required=True)
-    parser.add_argument('--host', type=Path, required=True)
-    parser.add_argument('--cache-source', type=Path, required=True)
+    from jetspec.engines.jetspec_plus_plus.launch.flags import stage_cal28_parser
+    parser = stage_cal28_parser()
     args = parser.parse_args(argv)
     root = args.root
     sources = root / 'sources'
@@ -1201,19 +1196,8 @@ def main(argv=None):
     if argv and argv[0] == 'stage-cal28':
         stage_cal28(argv[1:])
         return 0
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest='command', required=True)
-    fit_parser = commands.add_parser('fit')
-    fit_parser.add_argument('--capture', type=Path, required=True)
-    fit_parser.add_argument('--decoder-manifest', type=Path, required=True)
-    fit_parser.add_argument('--decoder-checkpoint', type=Path)
-    fit_parser.add_argument('--mode', choices=('generic-v1', 'historical'), default='generic-v1')
-    fit_parser.add_argument('--output', type=Path, required=True)
-    replay_parser = commands.add_parser('replay')
-    replay_parser.add_argument('--capture', type=Path, required=True)
-    replay_parser.add_argument('--fit', type=Path, required=True)
-    replay_parser.add_argument('--served-floor', type=int, default=0)
-    replay_parser.add_argument('--output', type=Path, required=True)
+    from jetspec.engines.jetspec_plus_plus.launch.flags import calibration_parser
+    parser = calibration_parser(description=__doc__)
     args = parser.parse_args(argv)
     if args.output.exists():
         raise ValueError(f'OUTPUT_EXISTS {args.output}')

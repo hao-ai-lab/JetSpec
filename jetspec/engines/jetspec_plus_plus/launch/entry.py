@@ -1,6 +1,5 @@
 # Adaptation: package relocation and deferred optional dependencies.
 """CPU resolution and the launch of a manifest-pinned read."""
-import argparse
 from copy import deepcopy
 import json
 import os
@@ -241,7 +240,7 @@ def write_eval_records(record, *, process_wall_seconds):
     # Adaptation: retain the public error for incomplete record requests.
     if 'environment' not in record:
         raise ValueError('eval records need the environment of the read')
-    from jetspec.engines.jetspec_plus_plus.analysis.eval_records import write_eval_records as writer
+    from bench.jetspec_plus_plus.analysis.eval_records import write_eval_records as writer
     environment = record['environment']
     method = record['config']['method']
     values = dict(
@@ -259,19 +258,8 @@ def write_eval_records(record, *, process_wall_seconds):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('settings', nargs='+', help='category=entry or category.key=JSON')
-    parser.add_argument('--resolve-only', action='store_true')
-    parser.add_argument('--output', default='read.json')
-    parser.add_argument('--host-values')
-    parser.add_argument('--artifacts-dir')
-    parser.add_argument('--sequential-prompts', action='store_true',
-                        help='serve C=1 prompts sequentially in one loaded process')
-    parser.add_argument('--cache-root', help='root for the serving child compiler caches')
-    parser.add_argument('--wire-records', choices=('on', 'off'),
-                        help='write proposal wire records (serving default: on)')
-    parser.add_argument('--child-wall-seconds', type=float,
-                        help='wall limit of the serve child, compile included (default: the launcher\'s)')
+    from jetspec.engines.jetspec_plus_plus.launch.flags import entry_parser
+    parser = entry_parser()
     args = parser.parse_args(argv)
     names, overrides = {}, []
     for setting in args.settings:

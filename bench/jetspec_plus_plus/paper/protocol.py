@@ -7,7 +7,7 @@ import sys
 
 from bench.jetspec_plus_plus.dataloader import PINNED_PROMPTS, PROMPTS
 from jetspec.engines.jetspec_plus_plus.launch import entry, runner
-from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
+from bench.jetspec_plus_plus.analysis.eos_stop import stop_lengths
 
 ROOT = Path(__file__).resolve().parents[3] / 'jetspec/engines/jetspec_plus_plus'
 INPUTS = Path(__file__).resolve().parents[1] / 'prompts'
