@@ -1,6 +1,6 @@
 # JetSpec++ torch reference
 
-This folder holds the JetSpec++ method in readable torch, with local artifact loaders and an acceptance-length reader. The shared torch core verifies each proposal against the target and emits the accepted tokens plus the target correction, which preserves greedy autoregressive output.
+This folder holds the eager one-GPU JetSpec++ round loop, local artifact loaders and acceptance-length reader. It uses the shared computations in [`../method/`](../method/): adapter, anchor decoder, passes, refresh decisions, calibration, schedule and row selection. The serving engine uses those computations with CUDA graphs and fused kernels. The shared torch core verifies each proposal against the target and emits the accepted tokens plus the target correction, which preserves greedy autoregressive output.
 
 ## One round
 
@@ -9,17 +9,17 @@ This folder holds the JetSpec++ method in readable torch, with local artifact lo
 An outcome is the number of accepted draft tokens and the anchor token, which is the target's next token. A hit means that the real outcome was pre-drafted.
 
 1. **Take the block.** On a hit, `_prepare` uses the block that was pre-drafted for this outcome. On a miss, or in the first round, `RoundDriver.run` in `round.py` drafts the block from the verified context.
-2. **Score the outcomes.** `refresh_decoder_logits` in `models/decoder.py` reads the adapter's predicted states. `anchor_offers` in `drafter.py` lists the likely anchors, and `blend` in `method/kmass.py` gives each accepted length its probability.
-3. **Select the rows.** A row is one pre-drafted block for one outcome. `joint_rule` and `select_rows` in `method/rows.py` keep the most likely outcomes.
-4. **Draft the rows.** For each outcome, `build_protocol_hypothesis_contexts` in `context.py` builds the predicted context, and `RoundDriver.run` drafts one row. The rows wait in a cache.
+2. **Score the outcomes.** `refresh_decoder_logits` in `models/decoder.py` reads the adapter's predicted states. `anchor_offers` in `drafter.py` lists the likely anchors, and `blend` in `scoring.py` gives each accepted length its probability.
+3. **Select the rows.** A row is one pre-drafted block for one outcome. `joint_rule` and `select_rows` in `../method/cache_rows.py` keep the most likely outcomes.
+4. **Draft the rows.** For each outcome, `build_protocol_hypothesis_contexts` in `../drafter.py` builds the predicted context, and `RoundDriver.run` drafts one row. The rows wait in a cache.
 5. **Verify.** `generate_tree` verifies the block and calls `observe` with the accepted length and the anchor. `observe` looks them up in the cache, and a match becomes the next block.
 
 ## One draft
 
-`RoundDriver.run` follows the schedule from `method/schedule.py`. `J1-R1` runs `J0`, `R1`, `J1`, and `J3-R3` runs `J0`, `R1`, `J1`, `R2`, `J2`, `R3`, `J3`.
+`RoundDriver.run` follows the schedule from `../method/schedule.py`. `J1-R1` runs `J0`, `R1`, `J1`, and `J3-R3` runs `J0`, `R1`, `J1`, `R2`, `J2`, `R3`, `J3`.
 
-- **`J`** is one pass of the draft model. `J0` is the first draft, and each later pass is a Jacobi pass that redrafts the block from its previous version. `draft_forward` runs the model, and `reference_pass` in `method/passes.py` takes the new tokens.
-- **`R`** is a context refresh with an anchor replacement. `RoundDriver.predict` runs the adapter on the current draft, and the decoder reads the result. `RefreshSwap` in `method/swap.py` then writes the first token that the decoder disagrees with, and `inject` in `method/refresh.py` gives the next pass the refreshed states.
+- **`J`** is one pass of the draft model. `J0` is the first draft, and each later pass is a Jacobi pass that redrafts the block from its previous version. `draft_forward` runs the model, and `reference_pass` in `../method/passes.py` takes the new tokens.
+- **`R`** is a context refresh with an anchor replacement. `RoundDriver.predict` runs the adapter on the current draft, and the decoder reads the result. `RefreshSwap` in `refresh.py` then writes the first token that the decoder disagrees with, and `inject` in `refresh.py` gives the next pass the refreshed states.
 - **Pins** are the slots that later passes keep. `RefreshSwap` tracks them.
 
 ## Code map
@@ -28,9 +28,10 @@ An outcome is the number of accepted draft tokens and the anchor token, which is
 | --- | --- |
 | `drafter.py` | `JetSpecPPDrafter`, which the torch core calls |
 | `round.py` | `RoundDriver`, one draft of a block |
-| `context.py` | Block token ids and the hypothesis contexts |
-| `method/` | Schedules, passes, refresh, swap, row selection |
-| `models/` | Adapter, anchor decoder and draft model |
+| `../drafter.py` | Block token ids and the hypothesis contexts |
+| `../method/` | Shared adapter, decoder, schedules, passes, refresh decisions, calibration and row selection |
+| `refresh.py`, `scoring.py` | Eager context injection, pin state and validated BLEND input preparation |
+| `models/` | Local checkpoint loaders and eager target/decoder execution; adapter and decoder math come from the shared method |
 | `artifacts.py` | Artifact loaders and hash checks |
 | `reader.py` | The acceptance-length reader |
 
@@ -99,4 +100,4 @@ python examples/jetspec_plus_plus/simple_generate.py \
 ```
 
 For serving and speedup measurements, see the
-[serving engine README](../../engines/jetspec_plus_plus/README.md).
+[serving engine README](../../README.md).

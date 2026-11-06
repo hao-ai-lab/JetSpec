@@ -1,7 +1,6 @@
 """Ported from the JetSpec++ reference implementation.
 
-Public API: blend_mass(logits) -> mass[..., n+1];
-blend(p_top1, logits, draft_ids, probabilities, sizes, *, coefficients)
+Public API: blend(p_top1, logits, draft_ids, probabilities, sizes, *, coefficients)
 -> float64 wire mass[n+2], with P(k) at index k+1 and a leading zero.
 The probabilities are post-exclusion anchor offers, padded to [n+1, pool].
 """
@@ -9,23 +8,9 @@ import math
 
 import torch
 
-__all__ = ['blend_mass', 'blend']
+from ..method.cache_rows import blend_mass, blend_features
 
-GRID = 2.0 ** 32
-EPS = 1e-6
-POSITION_SCALE = 14.0
-
-
-def blend_mass(logits):
-    """Convert BLEND hazard logits to the quantized per-offset mass."""
-    # Use the torch reference directly; serving op dispatch is outside this layer.
-    hazards = 1.0 / (1.0 + torch.exp(-logits))
-    survival = torch.cat((hazards.new_ones(hazards.shape[:-1] + (1,)),
-                          hazards.cumprod(-1)), dim=-1)
-    mass = torch.cat((survival[..., :-1] * (1.0 - hazards),
-                      survival[..., -1:]), dim=-1)
-    return torch.round(mass * GRID) / GRID
-
+__all__ = ['blend']
 
 def blend(p_top1, logits, draft_ids, probabilities, sizes, *, coefficients):
     """Score decoder features with the reference's clipping and operation order."""
@@ -53,16 +38,12 @@ def blend(p_top1, logits, draft_ids, probabilities, sizes, *, coefficients):
         raise ValueError('BLEND requires an anchor offer at every scored decoder row')
     rejected = torch.cat((drafts, drafts.new_full((1,), -1)))
     q = logits.softmax(-1).gather(1, rejected.clamp_min(0)[:, None])[:, 0].double()
-    drafter = p_top1[1:n + 1].clamp(EPS, 1.0 - EPS)
-    decoder = q[:n].clamp(EPS, 1.0 - EPS)
-    z = a * (drafter.log() - (-drafter).log1p()) + b * (decoder.log() - (-decoder).log1p()) + c
     argmax_eq = (logits.argmax(-1)[:n] == rejected[:n]).double()
     width = probabilities.shape[1]
     valid = torch.arange(width, device=probabilities.device)[None, :] < sizes[:n, None]
     top = torch.where(valid, probabilities[:n], float('-inf')).amax(-1).to(device=logits.device)
-    top = top.clamp(EPS, 1.0 - EPS)
-    position = torch.arange(1, n + 1, device=logits.device, dtype=torch.float64) / POSITION_SCALE
-    z = z + g * argmax_eq + t * (top.log() - (-top).log1p()) + p * position
+    z = blend_features(p_top1[1:n + 1], q[:n], (a, b, c, g, t, p),
+                       argmax_eq=argmax_eq, top=top)
     mass = blend_mass(z)
     if not bool(torch.isfinite(mass).all()):
         raise ValueError('BLEND produced a non-finite k score')

@@ -11,7 +11,7 @@ from bench.jetspec_plus_plus._common import inputs, prepare, timed, read_result,
 def main(argv=None, *, llm_factory=None, drafter_factory=None):
     args, rows = inputs(argv, description=__doc__, samples=4, max_tokens=256,
                         output='bench/outputs/jetspec_plus_plus_verify.json')
-    from jetspec.methods.jetspec_plus_plus.reader import read_ar, read_passes
+    from jetspec.engines.jetspec_plus_plus.draft.reference.reader import read_ar, read_passes
 
     llm, rows, config, drafter = prepare(args, rows, llm_factory=llm_factory,
                                         drafter_factory=drafter_factory)

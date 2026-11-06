@@ -28,9 +28,9 @@ def main(argv=None):
 
     import torch
     from jetspec.core.llm import LLM
-    from jetspec.methods.jetspec_plus_plus.drafter import build_drafter
-    from jetspec.methods.jetspec_plus_plus.reader import read_ar, read_passes, summarize
-    from jetspec.methods.jetspec_plus_plus.round import JetSpecPPConfig
+    from jetspec.engines.jetspec_plus_plus.draft.reference.drafter import build_drafter
+    from jetspec.engines.jetspec_plus_plus.draft.reference.reader import read_ar, read_passes, summarize
+    from jetspec.engines.jetspec_plus_plus.draft.reference.round import JetSpecPPConfig
 
     llm = LLM(args.model, device=args.device or ('cuda' if torch.cuda.is_available() else 'cpu'),
               dtype=torch.float32 if args.dtype == 'fp32' else torch.bfloat16,

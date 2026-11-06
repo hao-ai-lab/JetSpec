@@ -74,8 +74,7 @@ python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --
 
 ## Code
 
-- **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/) holds the method in readable form.
-- **Engine:** the [serving engine](jetspec/engines/jetspec_plus_plus/) runs the method on two GPUs.
+- **JetSpec++:** the [engine package](jetspec/engines/jetspec_plus_plus/) holds the shared method and two-GPU serving code. Its [torch reference](jetspec/engines/jetspec_plus_plus/draft/reference/) runs eager one-GPU rounds using that method.
 
 <details>
 <summary><h2>JetSpec</h2></summary>
@@ -248,7 +247,7 @@ Tree algorithms exposed by `bench/jetspec/reference/benchmark.py`:
 
 ## For Coding Agents
 
-[`AGENTS.md`](AGENTS.md) describes every command, option and component in this repository. The [method](jetspec/methods/jetspec_plus_plus/AGENTS.md) and [engine](jetspec/engines/jetspec_plus_plus/AGENTS.md) folders each have their own `AGENTS.md`.
+[`AGENTS.md`](AGENTS.md) describes every command, option and component in this repository. The [engine](jetspec/engines/jetspec_plus_plus/AGENTS.md) and its [eager reference route](jetspec/engines/jetspec_plus_plus/draft/reference/AGENTS.md) have local guides.
 
 ## Citation
 

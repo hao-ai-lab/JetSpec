@@ -47,8 +47,8 @@ def inputs(argv, *, description, samples, max_tokens, output):
 def prepare(args, rows, *, llm_factory=None, drafter_factory=None):
     import torch
     from jetspec.core.llm import LLM
-    from jetspec.methods.jetspec_plus_plus.drafter import build_drafter
-    from jetspec.methods.jetspec_plus_plus.round import JetSpecPPConfig
+    from jetspec.engines.jetspec_plus_plus.draft.reference.drafter import build_drafter
+    from jetspec.engines.jetspec_plus_plus.draft.reference.round import JetSpecPPConfig
 
     args.device = args.device or ('cuda' if torch.cuda.is_available() else 'cpu')
     dtype = torch.float32 if args.dtype == 'fp32' else torch.bfloat16
@@ -82,7 +82,7 @@ def timed(llm, fn):
 
 
 def read_result(args, config, llm, outputs, seconds):
-    from jetspec.methods.jetspec_plus_plus.reader import summarize, reduce_read
+    from jetspec.engines.jetspec_plus_plus.draft.reference.reader import summarize, reduce_read
 
     summary = dict(summarize(outputs), wall_seconds=seconds)
     summary['tokens_per_second'] = summary['tokens'] / seconds if seconds else 0.0
