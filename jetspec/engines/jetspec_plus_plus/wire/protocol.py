@@ -1,7 +1,7 @@
 """Pure bookkeeping for the JetSpec candidate-set protocol."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import math
 import os
@@ -330,7 +330,7 @@ class CandidateSet:
 
     def __post_init__(self, row_keys_host, run_config=None) -> None:
         width = draft_width(run_config=run_config) + 1
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         if self.blocks.ndim not in (2, 3) or self.blocks.shape[-1] != width:
             raise ValueError(f"candidate blocks must have shape [H, {width}] or [H, F, {width}]")
         if self.row_keys is not None:

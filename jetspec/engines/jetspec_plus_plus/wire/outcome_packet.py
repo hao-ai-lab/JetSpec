@@ -1,7 +1,7 @@
 """Verify-rank storage for the shared chain outcome message."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 from functools import lru_cache
 import os
@@ -28,7 +28,7 @@ def announce_chain_command(store, command: str, *, round_id=None, L=None,
                            redraft=None, prepost=None, attn3=None, local_counter=None, run_config=None) -> int:
     """Announce a chain payload shape on the host channel before its NCCL send."""
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if command not in {"prefill", "warmup", "pin_served", "outcome", "exit"}:
         raise ValueError("unknown chain command")
     if redraft is None:

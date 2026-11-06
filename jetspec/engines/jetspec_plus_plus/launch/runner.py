@@ -2020,7 +2020,7 @@ def apply_knob_overrides(environment, knobs):
         return
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import RETIRED_SELECTORS, refuse_retired
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import RETIRED_SELECTORS, refuse_retired
     retired = {'JETSPEC_' + name.upper() for name in RETIRED_SELECTORS}
     for item in knobs:
         name, sep, value = item.partition("=")
@@ -2072,7 +2072,7 @@ def _base_environment(recipe, placement_environment, runtime, *, eager_wrapper=F
     from jetspec.engines.jetspec_plus_plus.runtime.env import unregistered_names
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
     REGISTRY = _legacy_registry()
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import refuse_retired
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import refuse_retired
     refuse_retired(os.environ)
     inherited_unknown = sorted(unregistered_names(os.environ))
     if inherited_unknown:
@@ -2619,7 +2619,7 @@ def startup_summary(log):
 
 def record_target_autotune(target, *, run_config=None):
     """Record when a hybrid target's served outputs depend on unpinned Triton choices."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     config = json.loads((Path(target) / "config.json").read_text(encoding="utf-8"))
     config = config.get("text_config", config)
     if config.get("model_type") != "qwen3_5_text":
@@ -3172,7 +3172,7 @@ def _main(args, *, resident=None):
                        else selected.kind)
     if getattr(args, 'engine', None) is not None:
         if not args.resolve_only:
-            from jetspec.engines.jetspec_plus_plus.runtime.profiles import require_live_execution
+            from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import require_live_execution
             require_live_execution(args.engine)
         if args.engine != selected_engine:
             raise ValueError(f"recipe {recipe['name']} selects {selected_engine}, not {args.engine}")

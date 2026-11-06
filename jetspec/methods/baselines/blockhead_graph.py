@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import os
 import json
@@ -53,7 +53,7 @@ class StaticBlockheadGraph:
 
     def __init__(self, drafter, *, capacity: int = CACHE_CAPACITY, _force_stock: bool = False,
                  run_config=None):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         self.run_config = run_config if run_config is not None else RunConfig.from_environment({})
         self.drafter = drafter
         self.head = drafter.head

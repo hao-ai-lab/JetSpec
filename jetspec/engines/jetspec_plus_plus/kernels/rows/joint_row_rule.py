@@ -6,7 +6,7 @@ second launch forms the quantized mass, scores all 16 x 32 offers, ranks by
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import torch
 
@@ -273,7 +273,7 @@ def _cache_rows_k3(draft_ids, offers_ids, offers_p64, offers_pack, dec_logits,
                    tau_table, temperature, out, previous_mass16=None,
                    floor=0, fill_zero=False, control=None, decoder_frame='wire'):
     """K3 override of cache_rows_chain; unsupported inputs use the method oracle."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.draft.method.ops import reference
     import os
     if (triton is None or not dec_logits.is_cuda or control is None

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from jetspec.engines.jetspec_plus_plus.runtime.round_timing import enabled as anatomy_enabled
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import json
 import os
@@ -42,7 +42,7 @@ def chain_ctx_append_needs_full(*, previous_key, key, previous_length, length,
 
 def configure_host_lean_entry(buffers, bodies, run_config=None):
     """Bind one graph-owned control upload before the first segment is captured."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
     packet = buffers["packet"]
     host = torch.empty(5, dtype=torch.int64, pin_memory=packet.is_cuda)
@@ -154,7 +154,7 @@ class ChainRoundDriver:
                  tracker: ChainLengthTracker, seq_id: int, key_for, select, publish,
                  event_factory=None, inbox=None, fallback=None, publish_redraft=None,
                  start_round=1, pre_stage=None, recorder=None, rows=None, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         self.run_config = as_run_config(run_config)
         self._hostpath_setting = hostpath_setting(self.run_config)
@@ -241,7 +241,7 @@ class ChainRoundDriver:
 
     @torch.inference_mode()
     def next(self, run_config=None) -> str:
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if self._hostpath_setting is not None:

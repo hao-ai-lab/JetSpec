@@ -22,7 +22,7 @@ from random import randint, seed
 from jetspec.engines.jetspec_plus_plus import LLM, SamplingParams
 from jetspec.engines.jetspec_plus_plus.serving.llm_engine import METRICS
 from transformers import AutoTokenizer
-from jetspec.engines.jetspec_plus_plus.kernels._optional import wandb
+from jetspec.engines.jetspec_plus_plus.serving._optional import wandb
 from jetspec.engines.jetspec_plus_plus.launch import bench_helpers
 from jetspec.engines.jetspec_plus_plus.launch.bench_helpers import get_model_paths
 from jetspec.engines.jetspec_plus_plus.launch.bench_guards import exported_prompt_ids, generate_inputs_fail_closed

@@ -658,7 +658,7 @@ class LLMEngine:
                 self.config.jetspec_taps_dump,
             )
 
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import get_profile
         if get_profile(self.engine.profile).compile_pin:
             # Bench uses this boundary so the pre-seal rank checks do not move served tok/s.
             self._generate_served_end_time = time.time()

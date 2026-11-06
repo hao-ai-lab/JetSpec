@@ -20,7 +20,7 @@ class RMSNorm(nn.Module):
         # verify_cut_norm27b: the owning layer routes this after-weight norm to kernels/verify_norm27b.py.
         self.norm27b = False
         if norm_round == 'after_weight':
-            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+            from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
             self.fused = kernel_enabled('hybrid_fused_norm', '1')
             if self.fused:
                 from fla.modules.layernorm import rms_norm

@@ -396,7 +396,7 @@ def w4a8_draft_linear(x, weight, bias=None, *, out=None, site=None, draft=False)
     n, k = weight.shape
     m = x.numel() // k if k else 0
     site = site or _w4a8_site()
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     vhead = (site.startswith('lm_head:') and 48 <= m <= 256 and n % 8 == 0
              and bias is None and kernel_value('draft_fuse_vhead', '0') == '1')
     reason = _w4a8_fallback_reason(x, weight, bias, m)
@@ -425,7 +425,7 @@ def w4a8_draft_linear(x, weight, bias=None, *, out=None, site=None, draft=False)
             target = None
     if bias is not None and not bias.is_contiguous():
         bias = bias.contiguous()
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     # draft_fuse_w1h27: consume the hybrid producer's immutable storage side output.
     if kernel_enabled('draft_fuse_w1', '1') or kernel_enabled('draft_fuse_w1h27', '1'):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import activation_for

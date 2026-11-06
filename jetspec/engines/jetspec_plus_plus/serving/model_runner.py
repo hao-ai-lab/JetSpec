@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import io
 import pickle
@@ -12,7 +12,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from transformers import AutoTokenizer, AutoConfig
 import os
-from jetspec.engines.jetspec_plus_plus.kernels._optional import flashinfer
+from jetspec.engines.jetspec_plus_plus.serving._optional import flashinfer
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.models.registry import model_class as target_model_class, model_spec
@@ -83,7 +83,7 @@ class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event], is_draft: bool = False, num_tp_gpus: int = -1, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         self.run_config = (run_config if run_config is not None else
                            getattr(config, 'run_config', None))
         if self.run_config is None:
@@ -586,7 +586,7 @@ class ModelRunner:
 
     def setup_and_warmup_model_and_cudagraphs(self, config: Config, hf_config: AutoConfig, init_q=None, is_draft=False):
         # cudagraphs 
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         self.graph_vars = {}
         self.graph_pools = {}
@@ -788,7 +788,7 @@ class ModelRunner:
 
     def _check_compile_pin_served(self):
         """Check both serving ranks before bench seals the run manifest."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not setting(self, 'engine.engine_settings.c1_compile_pin', ''):
@@ -927,7 +927,7 @@ class ModelRunner:
         Best-effort: send cmd=2 to draft (async_pg) from TARGET rank 0.
         Safe to call multiple times.
         """
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not (self.draft_async and not self.is_draft and self.rank == 0):
