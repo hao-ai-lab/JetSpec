@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import torch
-from jetspec.engines.jetspec_plus_plus.serving._optional import triton
-from jetspec.engines.jetspec_plus_plus.serving._optional import tl
+from jetspec.engines.jetspec_plus_plus.runtime._optional import triton
+from jetspec.engines.jetspec_plus_plus.runtime._optional import tl
 
 
 @triton.jit

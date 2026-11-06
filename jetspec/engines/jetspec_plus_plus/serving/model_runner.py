@@ -12,7 +12,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from transformers import AutoTokenizer, AutoConfig
 import os
-from jetspec.engines.jetspec_plus_plus.serving._optional import flashinfer
+from jetspec.engines.jetspec_plus_plus.runtime._optional import flashinfer
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.models.registry import model_class as target_model_class, model_spec

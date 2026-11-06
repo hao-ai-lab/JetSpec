@@ -545,12 +545,6 @@ class ChainRoundDriver:
                 self.snapshot_published_keys(entry.buffers["wire_home"], run_config=run_config if run_config is not None else getattr(self, 'run_config', None))
             if (self._prepost or self._post_lean) and deferred_publish is not None:
                 self._deferred.append(deferred_publish)
-            if redraft and setting(run_config, 'engine.engine_settings.chain_miss_redraft_timing', "0") == "1":
-                parts = self.graph.last_ms.get(key, {})
-                self._defer_print("CHAIN_MISS_REDRAFT_TIMING ", dict(
-                    round=round_id, redraft_ms=(redraft_done - command_at) * 1000,
-                    redraft_device_ms=parts.get("A0", 0.0) + parts.get("A1_miss", 0.0),
-                    round_ms=(time.perf_counter() - command_at) * 1000))
             if stamps is not None:
                 stamps["published"] = time.perf_counter_ns()
                 us = lambda start, end: round((stamps[end] - stamps[start]) / 1000, 1)

@@ -2,8 +2,8 @@
 """Paged causal GQA attention for the hybrid target's 256-wide heads."""
 
 import torch
-from jetspec.engines.jetspec_plus_plus.serving._optional import triton
-from jetspec.engines.jetspec_plus_plus.serving._optional import tl
+from jetspec.engines.jetspec_plus_plus.runtime._optional import triton
+from jetspec.engines.jetspec_plus_plus.runtime._optional import tl
 
 
 from jetspec.engines.jetspec_plus_plus.kernels.paged_attention import _partial

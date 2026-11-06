@@ -10,7 +10,7 @@ import torch
 from .activation import ActivationWorkspace
 from .format import NVFP4Tensor, swizzle_scales
 from .gemm import _validate_weight
-from .swapab_gemm import K1Plan
+from .swapab_gemm import BlockScaledGemmPlan
 
 
 def interleave_gate_up(weight):
@@ -25,7 +25,7 @@ def interleave_gate_up(weight):
     return NVFP4Tensor(pair(weight.data), scales, swizzle_scales(scales), weight.global_scale)
 
 
-class K2Plan(K1Plan):
+class K2Plan(BlockScaledGemmPlan):
     """Own one fused gate/up plan and its packed down-input buffers.
 
     ``gemm_from`` accepts the real RMSNorm producer buffers, like K1. Set the
