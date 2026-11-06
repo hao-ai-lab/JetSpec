@@ -47,6 +47,12 @@ RECIPES = {
     ('qwen3.8-27b', 'j1-r1', 'fast', 'sm100-aarch64'): dict(
         method='jetspecpp-j1r1-b16-serve', model='qwen3.8-27b-p2-cal28', engine='fast-sm100',
         hardware='gb200-pair', benchmark='gsm8k-128'),
+    # The paper's Table 3 Qwen3.8-27B JetSpec++ configuration (bench/jetspec_plus_plus/paper/protocol.py).
+    ('qwen3.8-27b', 'j3-r3', 'fast', 'sm100-aarch64'): dict(
+        method='jetspecpp-j1r1-b16-floor4', model='qwen3.8-27b-p2-cal28', engine='fast-sm100',
+        hardware='gb200-pair', benchmark='gsm8k-128',
+        overrides=('method.schedule.j=3', 'method.schedule.r=3'),
+        knobs=('SSD_SHARED_GPU_KV_UTILIZATION=0.10',)),
 }
 # The fastest measured schedule when --schedule is not given.
 DEFAULT_SCHEDULE = {('qwen3-8b', 'sm80'): 'j1-r0', ('qwen3-8b', 'sm100'): 'j1-r1',
@@ -54,7 +60,7 @@ DEFAULT_SCHEDULE = {('qwen3-8b', 'sm80'): 'j1-r0', ('qwen3-8b', 'sm100'): 'j1-r1
                     ('qwen3.8-27b', 'sm80'): 'j1-r1', ('qwen3.8-27b', 'sm100'): 'j1-r1',
                     ('qwen3.8-27b', 'sm100-aarch64'): 'j1-r1'}
 MODELS = ('qwen3-8b', 'qwen3.8-27b')
-SCHEDULES = ('j1-r0', 'j1-r1', 'ar')
+SCHEDULES = ('j1-r0', 'j1-r1', 'j3-r3', 'ar')
 ENGINES = ('fast',)
 
 
@@ -121,7 +127,8 @@ def resolve(args):
     name = entry if isinstance(entry, str) else None
     # Adaptation: artifact paths and byte pins select local files; unread repository labels are neutral.
     if name is None:
-        row = dict(names=dict(entry), overrides=[], launch=None)
+        row = dict(names={k: v for k, v in entry.items() if k not in ('overrides', 'knobs')},
+                   overrides=list(entry.get('overrides', ())), launch=None)
     else:
         rows = json.loads((ROOT / 'launch/recipe-index.json').read_text())['rows']
         row = next(row for row in rows if row['launch']['name'] == name)
@@ -172,7 +179,7 @@ def resolve(args):
             '--stop-at-eos', args.stop_at_eos]
     if args.cache_root:
         argv += ['--cache-root', args.cache_root]
-    for knob in args.knob:
+    for knob in (*([] if isinstance(entry, str) else entry.get('knobs', ())), *args.knob):
         argv += ['--knob', knob]
     if args.resolve_only:
         argv += ['--resolve-only']
@@ -238,7 +245,7 @@ def generate(argv):
                                      description=generate.__doc__)
     result.add_argument('prompt')
     result.add_argument('--model', choices=MODELS, default='qwen3-8b', help='target model')
-    result.add_argument('--schedule', choices=('j1-r0', 'j1-r1'), help='defaults to the fastest measured one')
+    result.add_argument('--schedule', choices=('j1-r0', 'j1-r1', 'j3-r3'), help='defaults to the fastest measured one')
     result.add_argument('--max-tokens', type=int, default=2048)
     result.add_argument('--devices', default='0,1', help='two GPUs, as nvidia-smi numbers them')
     result.add_argument('--dataset', default='gsm8k', help='calibration entry of the heads')

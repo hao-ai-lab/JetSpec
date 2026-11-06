@@ -83,6 +83,7 @@ Choose the target with `--model` and the J/R schedule with `--schedule`. `fast` 
 | `qwen3-8b` | `j1-r0` (default on 8.x) | `fast` | 8.x |
 | `qwen3-8b` | `j1-r1` (default on 10.x) | `fast` | 8.x, 10.x, 10.x on Arm |
 | `qwen3.8-27b` | `j1-r1` (default) | `fast` | 8.x, 10.x, 10.x on Arm |
+| `qwen3.8-27b` | `j3-r3` (the paper's Table 3 configuration) | `fast` | 10.x on Arm |
 | either | `ar` (graphed autoregressive baseline, one GPU) | `fast` | 8.x, 10.x, 10.x on Arm |
 
 A combination outside this table stops with the list of supported ones.
