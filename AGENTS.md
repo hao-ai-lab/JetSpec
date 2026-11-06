@@ -29,7 +29,7 @@ The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three 
 
 ## Environments
 
-- Install the exact lock file for the platform with `pip install --no-deps`: `requirements-x86_64.lock` (A100, B200) or `requirements-gb200-aarch64.lock` (GB200). A resolved install can change the output tokens.
+- Install the exact lock file for the platform with `pip install --no-deps`: `jetspec/engines/jetspec_plus_plus/requirements/requirements-x86_64.lock` (A100, B200) or `jetspec/engines/jetspec_plus_plus/requirements/requirements-gb200-aarch64.lock` (GB200). A resolved install can change the output tokens.
 - The lock alone serves both Qwen3-8B and Qwen3.8-27B.
 
 ## JetSpec++ serving engine
