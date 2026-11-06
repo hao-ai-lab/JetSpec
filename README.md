@@ -74,8 +74,8 @@ python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --
 
 ## Code
 
-- **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/README.md) holds the method in readable form.
-- **Engine:** the [serving engine](jetspec/engines/jetspec_plus_plus/README.md) runs the method on two GPUs.
+- **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/) holds the method in readable form.
+- **Engine:** the [serving engine](jetspec/engines/jetspec_plus_plus/) runs the method on two GPUs.
 
 <details>
 <summary><h2>JetSpec</h2></summary>
