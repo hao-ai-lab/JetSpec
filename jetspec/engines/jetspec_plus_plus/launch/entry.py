@@ -240,7 +240,7 @@ def write_eval_records(record, *, process_wall_seconds):
     # Adaptation: retain the public error for incomplete record requests.
     if 'environment' not in record:
         raise ValueError('eval records need the environment of the read')
-    from bench.jetspec_plus_plus.analysis.eval_records import write_eval_records as writer
+    from jetspec.engines.jetspec_plus_plus.launch.records import write_eval_records as writer
     environment = record['environment']
     method = record['config']['method']
     values = dict(

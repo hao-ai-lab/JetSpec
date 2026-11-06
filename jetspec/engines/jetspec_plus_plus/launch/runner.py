@@ -180,7 +180,7 @@ def resolve_sync_passes(recipe, requested):
 def sync_stop_lengths(records, outputs, eos_token_ids, *, tokens):
     """Per sequence, the output length the offline reader would have stopped at: through the first
     end-of-sequence token, or ``tokens`` when there is none. Serving itself ignores it and runs on."""
-    from bench.jetspec_plus_plus.analysis.eos_stop import stop_lengths
+    from jetspec.engines.jetspec_plus_plus.launch.records import stop_lengths
     seq_ids = sorted({int(record["seq_id"]) for record in records})
     if len(seq_ids) != len(outputs):
         raise RuntimeError(f"{len(seq_ids)} recorded sequences for {len(outputs)} outputs")
@@ -1902,8 +1902,8 @@ def chain_round_summary(log, verify_metrics, *, require_t0=False, t0_scope="swee
     return summary
 
 
-def apply_chain_miss_redraft_override(environment, choice, max_ms, timing=None):
-    if choice is None and max_ms is None and timing is None:
+def apply_chain_miss_redraft_override(environment, choice, max_ms):
+    if choice is None and max_ms is None:
         return
     if environment.get(environment_name('engine', 'engine_settings.chain_graph')) != "seg":
         raise ValueError("--chain-miss-redraft requires a segmented chain recipe")
@@ -1913,8 +1913,6 @@ def apply_chain_miss_redraft_override(environment, choice, max_ms, timing=None):
         if not 0 < max_ms < float("inf"):
             raise ValueError("--chain-miss-redraft-max-ms must be finite and positive")
         environment[environment_name('engine', 'engine_settings.chain_miss_redraft_max_ms')] = str(max_ms)
-    if timing is not None:
-        environment[environment_name('engine', 'engine_settings.chain_miss_redraft_timing')] = "1" if timing == "on" else "0"
 
 
 def apply_chain_check_override(environment, choice):
@@ -1952,12 +1950,6 @@ def apply_chain_sega_glue_override(environment, choice):
     environment[environment_name('engine', 'engine_settings.chain_sega_glue')] = choice
 
 
-def apply_chain_glue2_profile_override(environment, choice):
-    if choice is None:
-        return
-    if environment.get(environment_name('engine', 'engine_settings.chain_graph')) != "seg":
-        raise ValueError("--chain-glue2-profile requires a segmented chain recipe")
-    environment[environment_name('engine', 'engine_settings.chain_glue2_profile')] = "1" if choice == "on" else "0"
 
 
 def apply_chain_refine_k3_override(environment, choice):
@@ -2430,6 +2422,27 @@ def sequential_single_request_reads(run, args, llm, prompts, sampling_params):
 
 def stock_parameters(recipe, dataset):
     return recipe["stock_parameters"].get(dataset, recipe["stock_parameters"]["default"])
+
+
+# Acceptance per decode round from the existing serving counters.
+def tau_to_cap(method, measured):
+    metrics = measured["metrics"]
+    block = metrics.get("blockhead_round_records") or []
+    jetspec = metrics.get("jetspec_round_records") or []
+    steps = metrics.get("target_step_times") or []
+    if block:
+        rounds = len(block)
+        accepted = [r["accepted"] for r in block]
+    elif jetspec:
+        rounds = (len(steps) - 1 if len(steps) == len(jetspec) + 1
+                  else len(metrics.get("jetspec_verify_round_ms") or []))
+        accepted = [r["accepted_len"] for r in jetspec]
+    else:
+        rounds = len(steps[1:])
+        accepted = []
+    if not rounds:
+        raise ValueError(f"no host round durations for {method}")
+    return statistics.mean(accepted) if accepted else measured["decode_tokens"] / rounds
 
 
 def _parser():
@@ -2952,7 +2965,7 @@ def _main_sync(args):
             measured = run["measured"]
             measured.pop("proposals", None)
             records = measured["metrics"]["blockhead_round_records"]
-            from bench.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped
+            from jetspec.engines.jetspec_plus_plus.launch.records import compute_eos_stopped
             eos_stopped = compute_eos_stopped(
                 SYNC_METHOD, raw["outputs"], measured["metrics"], tokens=args.tokens,
                 eos_token_ids=condition["eos_token_ids"], batch=args.batch)
@@ -3147,14 +3160,12 @@ def _main(args, *, resident=None):
             environment[environment_name('engine', 'engine_settings.eager_verify_causal_n1')] = "1"
         apply_miss_redraft_override(environment, args.miss_redraft)
         apply_chain_miss_redraft_override(
-            environment, args.chain_miss_redraft, args.chain_miss_redraft_max_ms,
-            args.chain_miss_redraft_timing)
+            environment, args.chain_miss_redraft, args.chain_miss_redraft_max_ms)
         apply_chain_check_override(environment, args.chain_check)
         apply_chain_warm_override(environment, args.chain_warm_reachable,
                                   args.chain_capture_stamps)
         apply_chain_decoder_key_bucket_override(environment, args.chain_decoder_key_bucket)
         apply_chain_sega_glue_override(environment, args.chain_sega_glue)
-        apply_chain_glue2_profile_override(environment, args.chain_glue2_profile)
         apply_chain_refine_k3_override(environment, args.chain_refine_k3)
         apply_chain_handoff_override(environment, args.chain_handoff,
                                      args.chain_handoff_timing)
@@ -3192,8 +3203,7 @@ def _main(args, *, resident=None):
                 environment[environment_name('engine', 'engine_settings.w280_record')] = str(run_outputs[0]) + ".rows"
         if ((method == "jetspecpp" and args.batch == 1)
                 or args.chain_miss_redraft is not None
-                or args.chain_miss_redraft_max_ms is not None
-                or args.chain_miss_redraft_timing is not None):
+                or args.chain_miss_redraft_max_ms is not None):
             from jetspec.engines.jetspec_plus_plus.runtime.env import validate_environment
             validate_environment(environment, jetspec=True, max_num_seqs=args.batch,
                                  recipe_name=recipe["name"], resolve_only=args.resolve_only)
@@ -3389,8 +3399,8 @@ def _main(args, *, resident=None):
                     method, measured["metrics"], proposals, deadlines,
                     deadline_required=(environment.get(environment_name('engine', 'engine_settings.draft_deadline')) == "1"
                                        and not chain))
-                from bench.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped
-                from bench.jetspec_plus_plus.analysis.eos_stop import ROUND_METHODS
+                from jetspec.engines.jetspec_plus_plus.launch.records import compute_eos_stopped
+                from jetspec.engines.jetspec_plus_plus.launch.records import ROUND_METHODS
                 eos_stopped = (compute_eos_stopped(
                     method, raw["outputs"], measured["metrics"], tokens=args.tokens,
                     eos_token_ids=condition["eos_token_ids"], populations=populations,
@@ -3410,7 +3420,6 @@ def _main(args, *, resident=None):
                     "output": str(run_output), "campaign_cold": index == 0,
                     "populations": populations,
                 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-                from bench.jetspec_plus_plus.acceptance import tau_to_cap
                 measured["tau_to_cap"] = tau_to_cap(method, measured)
                 child_roles = sorted({
                     entry["role"] for entry in manifest["files"]

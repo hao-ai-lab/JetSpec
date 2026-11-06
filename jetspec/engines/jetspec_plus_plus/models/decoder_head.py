@@ -3252,7 +3252,7 @@ class DecoderBatchGraphs:
             for row, (block, miss) in enumerate(zip(pending_blocks, after_misses))]
 
 
-class DecoderPrediction:
+class DecoderOfferAssembly:
     """Anchor offer assembly for single and batched predictions."""
 
     @torch.inference_mode()
@@ -3618,7 +3618,7 @@ class DecoderPrediction:
 
 
 class AnchorDecoder(
-    DecoderPrediction,
+    DecoderOfferAssembly,
     DecoderBatchGraphs,
     DecoderPrefixCache,
     DecoderWindowExecution,

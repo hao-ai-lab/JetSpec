@@ -155,8 +155,6 @@ def runner_parser():
                         help="enable the J0-only same-round chain miss redraft")
     parser.add_argument("--chain-miss-redraft-max-ms", type=float,
                         help="dedicated same-round redraft wait valve")
-    parser.add_argument("--chain-miss-redraft-timing", choices=("on", "off"),
-                        help="print each miss round's redraft and total wall time")
     parser.add_argument("--chain-check", choices=("on", "off"),
                         help="run same-round fused eager shadow and enforce the 300-round T0 gate")
     parser.add_argument("--chain-warm-reachable", choices=("on", "off"),
@@ -167,8 +165,6 @@ def runner_parser():
                         help="override decoder-window key bucketing for a chain T0 read")
     parser.add_argument("--chain-sega-glue", choices=("0", "1", "2"),
                         help="override segmented chain A glue for a T0 or timing read")
-    parser.add_argument("--chain-glue2-profile", choices=("on", "off"),
-                        help="print captured A/B1n device milliseconds after publish")
     parser.add_argument("--chain-refine-k3", choices=("on", "off"),
                         help="override K3 refinement bookkeeping for a chain timing pair")
     parser.add_argument("--chain-handoff", choices=("on", "off"),

@@ -125,7 +125,7 @@ class ProjectionPrecision:
         return F.linear(x, weight, bias)
 
     def _nvfp4_linear(self, x, weight, bias):
-        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4 import K1Plan
+        from jetspec.engines.jetspec_plus_plus.kernels.nvfp4 import BlockScaledGemmPlan
         source = x.reshape(-1, x.shape[-1]).to(torch.bfloat16).contiguous()
         key = (weight.data_ptr(), tuple(weight.shape), tuple(weight.stride()),
                weight.dtype, weight.device)
@@ -133,7 +133,7 @@ class ProjectionPrecision:
         if plan_key not in self._plans:
             if x.is_cuda and torch.cuda.is_current_stream_capturing():
                 raise RuntimeError('warm the NVFP4 projection M bucket before CUDA graph capture')
-            plan = K1Plan(self._packed_weight(weight, key), source.shape[0], per_row_scale=True)
+            plan = BlockScaledGemmPlan(self._packed_weight(weight, key), source.shape[0], per_row_scale=True)
             plan.warmup(source)
             self._plans[plan_key] = plan
             self.warmed_m_buckets.add(source.shape[0])

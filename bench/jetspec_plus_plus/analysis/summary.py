@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 import random
-from statistics import mean, median
+from jetspec.engines.jetspec_plus_plus.launch.records import quantile, stats, aligned_round_ms, anatomy
 import sys
 import tarfile
 
@@ -15,86 +15,12 @@ from bench.jetspec_plus_plus.analysis import paper_metrics
 from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 
-def quantile(values, q):
-    ordered = sorted(values)
-    at = (len(ordered) - 1) * q
-    lo = int(at)
-    return ordered[lo] + (ordered[min(lo + 1, len(ordered) - 1)] - ordered[lo]) * (at - lo)
 
 
-def stats(values):
-    values = list(values)
-    if not values:
-        raise ValueError('round anatomy requires timing samples')
-    return dict(count=len(values), mean=mean(values), median=median(values),
-                p90=quantile(values, .9))
 
 
-def aligned_round_ms(raw):
-    """Walk serial N=1 prompts, skipping each prompt's admission/prefill step."""
-    metrics = raw['metrics']
-    records = metrics['jetspec_round_records']
-    steps = metrics['target_step_times']
-    n = len(raw['outputs'])
-    indices = [int(row['prompt_index']) for row in records]
-    if (not records or len(steps) != len(records) + n or indices != sorted(indices)
-            or any(i < 0 or i >= n for i in indices)):
-        raise ValueError('round steps are not aligned to serial prompt records')
-    cursor = pos = 0
-    values = []
-    for prompt in range(n):
-        cursor += 1
-        while pos < len(records) and indices[pos] == prompt:
-            values.append(steps[cursor] * 1000)
-            cursor += 1
-            pos += 1
-    if cursor != len(steps) or pos != len(records):
-        raise ValueError('round steps were not exhausted')
-    return values
 
 
-def anatomy(raw, *, log=None):
-    metrics = raw['metrics']
-    rounds = aligned_round_ms(raw)
-    verify = metrics['jetspec_verify_round_ms']
-    draft = metrics['jetspec_draft_round_ms']
-    if len(verify) != len(rounds):
-        raise ValueError('verify timings are not aligned to verifier records')
-    result = dict(round_ms=stats(rounds), verify_ms=stats(verify), draft_ms=stats(draft),
-                inner_round_ms_mean=1000 * metrics['decode_total_time'] / len(rounds),
-                draft_work_ms_per_verified_round=sum(draft) / len(rounds),
-                draft_source='candidate wire draft_ms',
-                source='existing host counters; target_step_times excluding every prompt prefill',
-                population='all measured physical rounds, before EOS/rule-A credit reduction',
-                limitation='draft publications include unused proposals and redrafts; draft and verify overlap, so their durations do not add to round wall time')
-    if raw.get('run_manifest', {}).get('env', {}).get(environment_name('engine', 'engine_settings.chain_graph')) == 'seg':
-        result.update(draft_ms=None, draft_work_ms_per_verified_round=None,
-                      draft_source='unmeasured: graphed candidate wire timer is zero-filled')
-        records, active = [], None
-        log = log or ''
-        phased = 'SERVE_READ_PHASE_START ' in log
-        for line in log.splitlines():
-            if line.startswith('SERVE_READ_PHASE_START '):
-                active = line.split(' ', 1)[1]
-            elif line.startswith('SERVE_READ_PHASE_END '):
-                active = None
-            if phased and active != 'measured':
-                continue
-            if 'EVAL_DRAFT_TIMING ' in line:
-                row, _ = json.JSONDecoder().raw_decode(line.split('EVAL_DRAFT_TIMING ', 1)[1])
-                if row['seq_id'] >= 0:
-                    records.append(row)
-        if records:
-            total = [r['total_ms'] for r in records]
-            redraft = [r['redraft_ms'] for r in records if r['redraft_ms'] is not None]
-            proposal = [r['total_ms'] - (r['redraft_ms'] or 0) for r in records]
-            if any(v < 0 for v in proposal + redraft):
-                raise ValueError('draft timing spans are negative')
-            result.update(draft_ms=stats(proposal), redraft_ms=stats(redraft) if redraft else None,
-                          draft_graph_call_ms=stats(total),
-                          draft_work_ms_per_verified_round=sum(total) / len(rounds),
-                          draft_source='eval host spans from graph.run entry through synchronized publication, split at exact-redraft publication; admission excluded')
-    return result
 
 
 def paired_tau_delta(candidate, reference, *, replicates=20000, seed=9504):

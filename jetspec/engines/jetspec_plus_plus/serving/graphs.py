@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 import os
-from jetspec.engines.jetspec_plus_plus.serving._optional import version
+from jetspec.engines.jetspec_plus_plus.runtime._optional import version
 import torch
 import numpy as np
 from typing import List

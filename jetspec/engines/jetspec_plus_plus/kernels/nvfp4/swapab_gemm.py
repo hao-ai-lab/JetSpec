@@ -57,7 +57,7 @@ def k1_config(n, k, m, split=None, *, stages=8, tile_n=None, cta_k=None,
     return K1Config(tile_n, split, stages, cta_k, reduction)
 
 
-class K1Plan:
+class BlockScaledGemmPlan:
     """Compile once for one weight and token bucket, then launch without allocation."""
 
     def __init__(self, weight, m, split=None, *, stages=8, tile_n=None, cta_k=None,

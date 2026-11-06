@@ -540,12 +540,9 @@ class ChainGraph:
                     raise ValueError('draft_fuse_noev=1 requires draft_deadline=0 or '
                                      'a fixed chain schedule with chain_prepost=1: '
                                      'the served clock learns segment times to choose J/refresh')
-                timing = [name for name in ('chain_tail_trace', 'chain_glue2_profile',
-                                            'chain_miss_redraft_timing')
-                          if setting(run_config, 'engine.engine_settings.' + name, '0') == '1']
+                timing = setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1'
                 if anatomy_enabled(run_config) or timing:
-                    raise ValueError('draft_fuse_noev=1 requires anatomy_lite, chain_tail_trace, '
-                                     'chain_glue2_profile and chain_miss_redraft_timing '
+                    raise ValueError('draft_fuse_noev=1 requires anatomy_lite and chain_tail_trace '
                                      'off; they consume segment timings')
                 self._noev_checked = run_config, engine
             self.last_ms.clear()
@@ -665,10 +662,6 @@ class ChainGraph:
                     or anatomy_enabled(run_config)):
                 # First segment start to publish end, launch gaps included.
                 self.last_span_ms[key] = events[0][1].elapsed_time(events[-1][2])
-            if setting(run_config, 'engine.engine_settings.chain_glue2_profile', "0") == "1":
-                print("CHAIN_SEGMENT_MS " + json.dumps(dict(
-                    glue=kernel_value('chain_sega_glue', "0"),
-                    key=str(key), segments=self.last_ms[key])), flush=True)
             if names[:2] in (("A0", "A1"), ("A0", "A1_miss")):
                 self.last_a0_to_a1_gap_ms[key] = events[0][2].elapsed_time(events[1][1])
         host_error = (int(entry.buffers['err_host'][0])

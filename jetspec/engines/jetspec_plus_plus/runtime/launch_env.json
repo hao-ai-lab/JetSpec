@@ -230,7 +230,6 @@
       "JETSPEC_CHAIN_CMD_LOCAL_COUNTER": "engine_settings.chain_cmd_local_counter",
       "JETSPEC_CHAIN_DECODER_KEY_BUCKET": "engine_settings.chain_decoder_key_bucket",
       "JETSPEC_CHAIN_GATHER_VEC": "engine_settings.chain_gather_vec",
-      "JETSPEC_CHAIN_GLUE2_PROFILE": "engine_settings.chain_glue2_profile",
       "JETSPEC_CHAIN_GRAPH": "engine_settings.chain_graph",
       "JETSPEC_CHAIN_GRAPH_CHECK": "engine_settings.chain_graph_check",
       "JETSPEC_CHAIN_HANDOFF": "engine_settings.chain_handoff",
@@ -241,7 +240,6 @@
       "JETSPEC_CHAIN_SINGLE_KEY": "engine_settings.chain_single_key",
       "JETSPEC_CHAIN_MISS_REDRAFT": "engine_settings.chain_miss_redraft",
       "JETSPEC_CHAIN_MISS_REDRAFT_MAX_MS": "engine_settings.chain_miss_redraft_max_ms",
-      "JETSPEC_CHAIN_MISS_REDRAFT_TIMING": "engine_settings.chain_miss_redraft_timing",
       "JETSPEC_CHAIN_MR_GLUE_LEAN": "engine_settings.chain_mr_glue_lean",
       "JETSPEC_CHAIN_POST_LEAN": "engine_settings.chain_post_lean",
       "JETSPEC_CHAIN_PREPOST": "engine_settings.chain_prepost",
@@ -3727,17 +3725,6 @@
         "reader": "serve",
         "note": ""
       },
-      "JETSPEC_CHAIN_GLUE2_PROFILE": {
-        "name": "JETSPEC_CHAIN_GLUE2_PROFILE",
-        "kind": "flag",
-        "default": "0",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "serve",
-        "note": ""
-      },
       "JETSPEC_C1_ATTN_LEN": {
         "name": "JETSPEC_C1_ATTN_LEN",
         "kind": "flag",
@@ -3803,17 +3790,6 @@
       },
       "JETSPEC_CHAIN_MISS_REDRAFT": {
         "name": "JETSPEC_CHAIN_MISS_REDRAFT",
-        "kind": "flag",
-        "default": "0",
-        "allowed": [
-          "0",
-          "1"
-        ],
-        "reader": "serve",
-        "note": ""
-      },
-      "JETSPEC_CHAIN_MISS_REDRAFT_TIMING": {
-        "name": "JETSPEC_CHAIN_MISS_REDRAFT_TIMING",
         "kind": "flag",
         "default": "0",
         "allowed": [
@@ -8430,18 +8406,6 @@
           "1"
         ],
         "why": "the J0-only miss segment resumes the hypothesis passes",
-        "always": false
-      },
-      {
-        "name": "JETSPEC_CHAIN_MISS_REDRAFT_TIMING",
-        "flag": "JETSPEC_CHAIN_MISS_REDRAFT",
-        "values": [
-          "1"
-        ],
-        "when": [
-          "1"
-        ],
-        "why": "miss timing prints only when the redraft path is active",
         "always": false
       },
       {

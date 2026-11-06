@@ -1,7 +1,7 @@
 # Adaptation: package relocation and deferred optional dependencies.
 """CUDA-only NVFP4 activation kernels; imported lazily by the CPU-safe API."""
-from jetspec.engines.jetspec_plus_plus.serving._optional import triton
-from jetspec.engines.jetspec_plus_plus.serving._optional import tl
+from jetspec.engines.jetspec_plus_plus.runtime._optional import triton
+from jetspec.engines.jetspec_plus_plus.runtime._optional import tl
 
 
 @triton.jit
