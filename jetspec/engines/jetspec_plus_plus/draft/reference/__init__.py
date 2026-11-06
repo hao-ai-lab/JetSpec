@@ -2,8 +2,8 @@
 import importlib
 
 _LAZY = {
-    'JetSpecPPConfig': 'jetspec.methods.jetspec_plus_plus.round',
-    'JetSpecPPDrafter': 'jetspec.methods.jetspec_plus_plus.drafter',
+    'JetSpecPPConfig': 'jetspec.engines.jetspec_plus_plus.draft.reference.round',
+    'JetSpecPPDrafter': 'jetspec.engines.jetspec_plus_plus.draft.reference.drafter',
 }
 __all__ = list(_LAZY)
 

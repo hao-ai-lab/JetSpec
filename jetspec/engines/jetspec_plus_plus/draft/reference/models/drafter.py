@@ -22,8 +22,8 @@ from pathlib import Path
 import sys
 
 import torch
-import torch.nn.functional as F
-from torch import nn
+from ...drafter import (resolve_stock_drafter, resolve_causal_head,
+                        check_stock_drafter_keys, StockAdaptedMark)
 
 __all__ = ["CHECKPOINT", "REVISION", "load_drafter", "check_state_keys",
            "resolve_stock_drafter", "resolve_causal_head", "check_stock_drafter_keys",
@@ -32,66 +32,6 @@ __all__ = ["CHECKPOINT", "REVISION", "load_drafter", "check_state_keys",
 
 CHECKPOINT = 'JetSpec/jetspec-plus-plus-qwen3-8b'
 REVISION = '9bd8b157'
-ADAPTED_MARK_TENSOR = 'adapted_position_embedding.weight'
-RETIRED_DRAFTER = 'the 59-tensor drafter is retired'
-
-
-def resolve_stock_drafter(dflash_config, source) -> bool:
-    """Refuse retired Jacobi configs and noise unlike the served random context."""
-    dflash_config = dflash_config or {}
-    stock = dflash_config.get('stock_drafter', False)
-    if not isinstance(stock, bool):
-        raise ValueError(f'{source}: dflash_config.stock_drafter must be true or false, got {stock!r}')
-    jacobi = dflash_config.get('jacobi_forcing', False)
-    if not isinstance(jacobi, bool):
-        raise ValueError(f'{source}: dflash_config.jacobi_forcing must be true or false, got {jacobi!r}')
-    if jacobi and not stock:
-        raise ValueError(f'{source}: {RETIRED_DRAFTER}; a Jacobi-forcing drafter must declare '
-                         'dflash_config.stock_drafter true')
-    if stock and dflash_config.get('fresh_fraction', 1.0) != 1.0:
-        raise ValueError(f'{source}: a stock drafter is trained all-fresh; '
-                         f'fresh_fraction is {dflash_config.get("fresh_fraction")!r}')
-    noise_source = dflash_config.get('noise_source', 'context')
-    if noise_source != 'context':
-        raise ValueError(f'{source}: dflash_config.noise_source is {noise_source!r}; '
-                         'the drafter initialises from random context only')
-    return stock
-
-
-def resolve_causal_head(dflash_config, source) -> bool:
-    """Require the causal mask declared by the served checkpoint."""
-    value = (dflash_config or {}).get('causal_head')
-    if value is None:
-        raise ValueError(f'{source}: dflash_config.causal_head is absent; it must declare true')
-    if not isinstance(value, bool):
-        raise ValueError(f'{source}: dflash_config.causal_head must be true or false, got {value!r}')
-    if not value:
-        raise ValueError(f'{source}: dflash_config.causal_head is false; the drafter requires a causal head')
-    return value
-
-
-def check_stock_drafter_keys(head: nn.Module, state, source) -> None:
-    """Check the file's exact keys before attaching the non-persistent stock mark."""
-    if ADAPTED_MARK_TENSOR in state:
-        raise ValueError(f'{source}: {RETIRED_DRAFTER}; the file carries {ADAPTED_MARK_TENSOR}')
-    expected = set(head.state_dict())
-    if ADAPTED_MARK_TENSOR in expected:
-        raise ValueError(f'{source}: the bundled dflash.py builds the retired mark {ADAPTED_MARK_TENSOR}')
-    if set(state) != expected:
-        raise ValueError(f'{source}: stock drafter key set differs: missing={sorted(expected - set(state))} '
-                         f'unexpected={sorted(set(state) - expected)}')
-
-
-class StockAdaptedMark(nn.Module):
-    """Two non-persistent negative-zero rows preserve context bits, including -0.0."""
-
-    def __init__(self, width: int, *, dtype: torch.dtype, device: torch.device) -> None:
-        super().__init__()
-        self.register_buffer('weight', torch.full((2, int(width)), -0.0, dtype=dtype, device=device),
-                             persistent=False)
-
-    def forward(self, indicator: torch.Tensor) -> torch.Tensor:
-        return F.embedding(indicator, self.weight)
 
 
 def restore_rope_theta(config) -> None:

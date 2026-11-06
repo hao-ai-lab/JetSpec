@@ -28,7 +28,7 @@ License text: jetspec/licenses/Apache-2.0.txt
 
 JetSpec++ reference implementation — MIT
 ---------------------------------------
-jetspec/methods/jetspec_plus_plus/ and the JetSpec++ hooks in jetspec/core/llm.py
+jetspec/engines/jetspec_plus_plus/draft/reference/ and the JetSpec++ hooks in jetspec/core/llm.py
 are first-party code ported from the authors' JetSpec++ reference implementation,
 under the MIT license.
 Copyright (c) 2026 The Parallel Tree Decoding authors

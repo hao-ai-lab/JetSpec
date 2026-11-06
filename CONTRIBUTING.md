@@ -45,9 +45,10 @@ optimized inference engine, and target loaders, with a strict one-way dependency
   public API `jetspec.tree` — never `jetspec.methods.jetspec.tree._core`** (the `_core` package is
   internal and may change without notice).
 - **`jetspec/models/`** — target/draft-head model loading and model utilities.
-- **`jetspec/methods/jetspec_plus_plus/`** — the JetSpec++ torch reference: J/R
-  rounds, adapter, anchor decoder, refresh swap, pins, rows and reader.
-- **`jetspec/engines/jetspec_plus_plus/`** — the JetSpec++ serving engine. Its
+- **`jetspec/engines/jetspec_plus_plus/draft/reference/`** — the eager JetSpec++ round loop,
+  local checkpoint loaders and reader, using the shared engine method.
+- **`jetspec/engines/jetspec_plus_plus/`** — the shared JetSpec++ method
+  (`draft/method/`) and serving engine. Its
   [README](jetspec/engines/jetspec_plus_plus/README.md) maps the code and lists
   the steps to add a model.
 - **`jetspec/methods/baselines/`** — the shared baseline draft-path resolver and graph wrapper.

@@ -11,6 +11,8 @@ import math
 from pathlib import Path
 import re
 
+from ..method.decoder.calibration import dataset_entry
+
 __all__ = ['HeadsBundle', 'read_thresholds', 'dataset_entry', 'load_heads_bundle']
 
 
@@ -82,13 +84,6 @@ def read_thresholds(root):
             if not 0 <= _value(entry) <= 1:
                 raise ValueError('joint tau must be in [0, 1]')
     return thresholds
-
-
-def dataset_entry(entries, dataset):
-    """Resolve a per-dataset threshold, falling back to its pooled entry."""
-    if dataset in entries and 'pooled' in entries:
-        raise ValueError(f'ambiguous pooled and per-dataset thresholds for {dataset}')
-    return entries[dataset] if dataset in entries else entries['pooled']
 
 
 def load_heads_bundle(root):

@@ -9,8 +9,7 @@ from_checkpoint(target, *, tap_ids, device, dtype, file_pins) loads an independe
 forward(hidden, *, mask=None, positions=None, rope=None, prefix=None)
     -> (decoded, logits); _prefix(sequence, desired_length) -> IncrementalPrefix;
 drop_sequence(sequence) releases its prefix; sequence.taps is [L, 5, H].
-decode_layer(layer, hidden, mask, positions, rope, prefix) -> hidden.
-decode_hidden(layers, hidden, *, mask=None, positions=None, rope=None, prefix=None).
+Layer execution and the forward pass come from draft.method.decoder.anchor.
 decoder_prefix_kv(layer, hidden, rope) -> (key, value).
 IncrementalPrefix() has length, kv and update(key, value, layer_idx, cache_kwargs=None).
 refresh_window_layout(tail_tokens, tail_counts, slot_counts, *, length, device=None)
@@ -27,9 +26,10 @@ import json
 
 import torch
 from torch import nn
-from transformers.models.qwen3.modeling_qwen3 import rotate_half
+from ...method.decoder.anchor import AnchorDecoder as MethodAnchorDecoder
+from ....models.decoder_head import IncrementalPrefix, decoder_prefix_kv
 
-__all__ = ['AnchorDecoder', 'decode_layer', 'decode_hidden', 'decoder_prefix_kv',
+__all__ = ['AnchorDecoder', 'decoder_prefix_kv',
            'IncrementalPrefix', 'refresh_window_layout', 'refresh_decoder_logits', 'dense_rows',
            'load_target_tensors']
 
@@ -103,65 +103,15 @@ def refresh_window_layout(tail_tokens, tail_counts, slot_counts, *, length, devi
     return allowed, positions, row_of, slot_of
 
 
-def decode_layer(layer, hidden, mask, positions, rope, prefix):
-    return layer(hidden, attention_mask=mask, position_ids=positions,
-                 position_embeddings=rope, past_key_values=prefix, use_cache=False)
-
-
-def decode_hidden(layers, hidden, *, mask=None, positions=None, rope=None, prefix=None):
-    for layer in layers:
-        hidden = decode_layer(layer, hidden, mask, positions, rope, prefix)
-    return hidden
-
-
-class IncrementalPrefix:
-    """Append-only layer-34/35 K/V owned by one served sequence."""
-    def __init__(self):
-        self.length = 0
-        self.kv = {}
-
-    def update(self, key, value, layer_idx, cache_kwargs=None):
-        if layer_idx in self.kv:
-            key = torch.cat((self.kv[layer_idx][0], key), dim=-2)
-            value = torch.cat((self.kv[layer_idx][1], value), dim=-2)
-        self.kv[layer_idx] = (key.detach(), value.detach())
-        return key, value
-
-
-def decoder_prefix_kv(layer, hidden, rope):
-    source = layer.input_layernorm(hidden)
-    attn = layer.self_attn
-    shape = (*source.shape[:-1], -1, attn.head_dim)
-    key_states = attn.k_norm(attn.k_proj(source).view(shape)).transpose(1, 2)
-    value_states = attn.v_proj(source).view(shape).transpose(1, 2)
-    cos, sin = rope
-    key_states = (key_states * cos.unsqueeze(1) +
-                  rotate_half(key_states) * sin.unsqueeze(1))
-    return key_states, value_states
-
-
-class AnchorDecoder(nn.Module):
+class AnchorDecoder(MethodAnchorDecoder):
     """One decoder definition; engines supply optimized ops and model loading."""
     def __init__(self, *, layers, norm, lm_head, hidden_size, prefix_layers=None,
                  rotary=None, root=None):
-        super().__init__()
-        self.layers = layers
-        self.prefix_layers = layers if prefix_layers is None else prefix_layers
-        self.norm = norm
-        self.lm_head = lm_head
-        self.rotary = rotary
-        self.root = Path(root) if root is not None else None
-        self.hidden_size = int(hidden_size)
+        super().__init__(layers=layers, norm=norm, lm_head=lm_head,
+                         hidden_size=hidden_size,
+                         prefix_layers=layers if prefix_layers is None else prefix_layers,
+                         rotary=rotary, root=root)
         self._prefixes = {}
-
-    def forward(self, hidden, *, mask=None, positions=None, rope=None, prefix=None):
-        if positions is None:
-            positions = torch.arange(hidden.shape[1], device=hidden.device)[None]
-        if rope is None and self.rotary is not None:
-            rope = self.rotary(hidden, positions)
-        decoded = self.norm(decode_hidden(self.layers, hidden, mask=mask, positions=positions,
-                                         rope=rope, prefix=prefix))
-        return decoded, self.lm_head(decoded)
 
     @classmethod
     def from_target(cls, target, *, tap_ids=(1, 9, 17, 25, 33)):

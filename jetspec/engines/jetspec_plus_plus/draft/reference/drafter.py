@@ -9,10 +9,10 @@ import math
 import torch
 
 from jetspec.methods.jetspec.draft import Drafter
-from .context import OneRoundAdaptedContext, build_protocol_hypothesis_contexts
-from .method.kmass import blend
-from .method.rows import joint_rule, select_rows, DeviceOffers
-from .method.decoder.lac import lac_candidates
+from ..drafter import OneRoundAdaptedContext, build_protocol_hypothesis_contexts
+from .scoring import blend
+from ..method.cache_rows import joint_rule, select_rows, DeviceOffers
+from ..method.decoder.offers import lac_candidates
 from .models.decoder import refresh_decoder_logits
 from .round import JetSpecPPConfig, RoundDriver, resolve_tau
 

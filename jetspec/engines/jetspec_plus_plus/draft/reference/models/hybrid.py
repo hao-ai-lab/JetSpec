@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .adapter import HybridC1RMSNorm
+from ...method.adapter import HybridC1RMSNorm
 from .decoder import load_target_tensors
 
 

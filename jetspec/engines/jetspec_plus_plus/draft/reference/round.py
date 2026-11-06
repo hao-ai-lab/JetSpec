@@ -2,38 +2,34 @@
 from dataclasses import dataclass
 from collections import Counter
 from types import SimpleNamespace
-import re
 
 import torch
 
-from .method.schedule import Schedule
-from .method.passes import reference_pass, draft_forward
-from .method.refresh import refresh_cutoff, inject
-from .method.swap import RefreshSwap
-from .context import build_random_context_block_token_ids
-from .models.adapter import build_head_attention_mask
+from ..method.schedule import Schedule, completed_label, resolve_tau
+from ..method.passes import reference_pass
+from ..method.refresh import refresh_cutoff
+from .refresh import inject, RefreshSwap
+from ..drafter import build_random_context_block_token_ids, DraftForwardPass
+from ..method.adapter import build_head_attention_mask
 from .models.decoder import refresh_decoder_logits
-from .models.drafter import (
+from ..drafter import (
     resolve_stock_drafter, resolve_causal_head, check_stock_drafter_keys, StockAdaptedMark,
 )
 
 
-def completed_label(passes_run):
-    """Normalize the computed pass count using the reference's calibration labels."""
-    if passes_run < 1:
-        raise ValueError('a served block must have at least one computed pass')
-    return 'J0d0' if passes_run == 1 else f'J{passes_run - 1}'
-
-
-def resolve_tau(table, label):
-    """Resolve the explicit pass label, then the reference's pooled fallback."""
-    if re.fullmatch(r'J0d0|J[1-9][0-9]*', label) is None:
-        raise ValueError(f'invalid normalized pass label {label!r}')
-    key = label if label in table else 'pooled'
-    if key not in table:
-        raise ValueError(f'missing tau for {label}; no explicit label or pooled key')
-    value = table[key]
-    return float(value['value'] if isinstance(value, dict) else value)
+def draft_forward(head, embed_tokens, lm_head, ids, target_hidden, *,
+                  position_ids=None, attention_mask=None, start=0):
+    """Run one uncached causal head pass; the caller applies pins and convergence."""
+    if position_ids is None:
+        position_ids = torch.arange(target_hidden.shape[1] + ids.shape[1],
+                                    dtype=torch.long, device=ids.device)[None]
+        position_ids = position_ids.repeat(ids.shape[0], 1)
+    # Lift the reference's forward closure into a callable, with slot selection explicit.
+    hidden = head(target_hidden=target_hidden, noise_embedding=embed_tokens(ids),
+                  position_ids=position_ids, past_key_values=None, use_cache=False,
+                  is_causal=True, attention_backend='sdpa',
+                  **({} if attention_mask is None else {'attention_mask': attention_mask}))
+    return DraftForwardPass(lm_head(hidden[:, start:, :]), ids[:, start:], hidden)
 
 
 @dataclass(frozen=True)
