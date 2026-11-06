@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
 
 SCHEMA = "jetspec.run_manifest/1"
@@ -217,7 +217,7 @@ def observe(key, value, *, run_config=None):
 def snapshot_env(environ, prefixes=ENV_PREFIXES, pattern=ENV_PATTERN, *, run_config=None):
     global _env
     if run_config is not None:
-        from jetspec.engines.jetspec_plus_plus.run_config import config_environment
+        from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
         supplied = config_environment(run_config)
         if supplied.get('CUBLAS_WORKSPACE_CONFIG') == '' and 'CUBLAS_WORKSPACE_CONFIG' not in (environ or {}):
             supplied.pop('CUBLAS_WORKSPACE_CONFIG')

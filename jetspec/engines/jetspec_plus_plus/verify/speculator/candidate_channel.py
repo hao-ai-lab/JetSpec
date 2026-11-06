@@ -96,8 +96,8 @@ class CandidateChannel:
 
     def _post_jetspec_candidate_receive(self) -> None:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if self.jetspec_mailbox_store is None:
             raise RuntimeError("JetSpec mailbox requires its readiness store")
         if self._jetspec_wire_capacity is None:
@@ -185,7 +185,7 @@ class CandidateChannel:
         from jetspec.engines.jetspec_plus_plus.runtime.profile import enabled as profile_enabled
         if len(seqs) > 1 and getattr(self, "_verify_prestage_runner", None) is not None:
             self._verify_prestage_runner.stage_jetspec_verify(seqs)
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         wait_ms = current_engine().budget.wait_ms(self.jetspec_wait_ms)
         if wait_ms == float("inf"):
             while not all(self.jetspec_mailbox.has(
@@ -237,7 +237,7 @@ class CandidateChannel:
     def warm_jetspec_session(self):
         """Measurement-only barrier and real T-module warm-up before prefill."""
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if self._jetspec_next_receive_id or setting(self, 'benchmark.benchmark_settings.w240_warmup', '0')!='1':
             raise RuntimeError('warm-up must precede all mailbox receives')
         verify_device = getattr(self, "_verify_device_enabled", None)

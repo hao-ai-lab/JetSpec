@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
 
 
 @dataclass

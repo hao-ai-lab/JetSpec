@@ -30,7 +30,7 @@ full-vocab top-k over 15 rows is latency-bound at ~0.12 ms either way.)
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 import torch
@@ -71,7 +71,7 @@ def _select_body(logits, rejected, q_a, q_b, cap, width, side=None, *, exact_mer
                  bf16_logits=None, out=None):
     """Device-only body: no host syncs. q_a applies to rows whose top-1 is d_rej, q_b otherwise.
     With a side stream on the default path, argmax runs beside softmax."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     rows, vocab = logits.shape
     fused = (kernel_enabled('anchor_select_fused', '1')
              and logits.device.type == 'cuda' and logits.dtype == torch.float32
@@ -371,7 +371,7 @@ class GraphedSelect:
     @staticmethod
     def chain_body(logits, rejected, q_hats, cap, *, slack=SLACK):
         """Capture-safe selection with tie correction and no trip to the host."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         cap = int(cap)
         width = min(logits.shape[1], cap + 1 + int(slack))
         if isinstance(q_hats, torch.Tensor):

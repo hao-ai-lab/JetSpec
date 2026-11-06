@@ -2,7 +2,7 @@ from importlib import import_module
 
 
 _EXPORTS = {
-    "LLM": ("jetspec.engines.jetspec_plus_plus.llm", "LLM"),
+    "LLM": ("jetspec.engines.jetspec_plus_plus.serving.llm", "LLM"),
     "SamplingParams": ('jetspec.engines.jetspec_plus_plus.serving.sampling_params', 'SamplingParams'),
     "Sequence": ('jetspec.engines.jetspec_plus_plus.serving.sequence', 'Sequence'),
     "SequenceStatus": ('jetspec.engines.jetspec_plus_plus.serving.sequence', 'SequenceStatus'),
@@ -49,7 +49,7 @@ def __getattr__(name):
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     module_name, attribute = _EXPORTS[name]
     if module_name.startswith('bench.'):
-        from ._source_checkout import baseline_module
+        from .serving._source_checkout import baseline_module
         module = baseline_module(module_name.rsplit('.', 1)[1])
     else:
         module = import_module(module_name)

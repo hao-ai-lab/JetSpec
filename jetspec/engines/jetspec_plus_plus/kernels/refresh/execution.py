@@ -1,6 +1,6 @@
 """Refresh decoder prelude and GQA over separate cached-prefix and local K/V."""
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 import os
 
 import torch
@@ -17,7 +17,7 @@ def enabled(*, run_config=None):
 
 
 def allocate(model, prefix_kv, bucket, rows, lanes, like):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     slots = lanes - 1
     tokens = 4 + lanes + rows * slots
     dim = model.layers[0].self_attn.head_dim

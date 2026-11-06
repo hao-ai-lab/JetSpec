@@ -294,8 +294,8 @@ def process_install(*, run_config=None):
     compile and snapshot the miss counters.  No-op when the pin is unset."""
     global _RUN_CONFIG
     _RUN_CONFIG = run_config
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
-    from jetspec.engines.jetspec_plus_plus.profiles import get_profile
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile
     engine = current_engine()
     profile = get_profile(engine.profile)
     if engine.deterministic and profile.compile_pin:

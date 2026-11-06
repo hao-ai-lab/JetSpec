@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import sys
 
-from jetspec.engines.jetspec_plus_plus import entry
+from jetspec.engines.jetspec_plus_plus.launch import cli
 from jetspec.engines.jetspec_plus_plus.launch import runner
 from jetspec.engines.jetspec_plus_plus.launch.entry import granted_devices
 
@@ -25,7 +25,7 @@ def main(path):
     if alias and alias.is_symlink() and key in host['artifacts']:
         if alias.resolve() == Path(host['artifacts'][key]).resolve():
             host['artifacts'][key] = str(alias)
-    entry.alias_heads_bundle(host, args.resolved_recipe, Path(path).parent)
+    cli.alias_heads_bundle(host, args.resolved_recipe, Path(path).parent)
     local_host = Path(path).parent / 'resolved-host.json'
     local_host.write_text(json.dumps(host) + '\n')
     args.host_values = local_host

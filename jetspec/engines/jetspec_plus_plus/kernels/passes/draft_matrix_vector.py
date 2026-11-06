@@ -1,8 +1,8 @@
 """Default-off hybrid draft producers using the existing W4A8 activation ownership."""
 import torch
 
-from jetspec.engines.jetspec_plus_plus.engine import current_engine
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
 
 try:
     import triton

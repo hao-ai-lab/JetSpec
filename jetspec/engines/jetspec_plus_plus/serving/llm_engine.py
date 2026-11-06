@@ -8,7 +8,7 @@ from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
 from jetspec.engines.jetspec_plus_plus.models.target import JETSPEC_TARGET_LAYER_IDS
 from jetspec.engines.jetspec_plus_plus.draft.rank import DraftRunner
-from jetspec.engines.jetspec_plus_plus._source_checkout import baseline_module
+from jetspec.engines.jetspec_plus_plus.serving._source_checkout import baseline_module
 from jetspec.engines.jetspec_plus_plus.verify.speculator import SpeculatorAsync
 from jetspec.engines.jetspec_plus_plus.verify.step import InferenceStep
 from jetspec.engines.jetspec_plus_plus.verify.step import AutoRegressiveStep
@@ -89,8 +89,8 @@ METRICS = {
 class LLMEngine:
 
     def __init__(self, model, *, model_entry=None, **kwargs):
-        from jetspec.engines.jetspec_plus_plus.engine import Engine, install_engine
-        from jetspec.engines.jetspec_plus_plus.run_config import RunConfig, launch_environment
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine, install_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig, launch_environment
         config_read = kwargs.pop('config_read', None)
         self.run_config = kwargs.pop('run_config', None)
         if self.run_config is None:
@@ -662,7 +662,7 @@ class LLMEngine:
                 self.config.jetspec_taps_dump,
             )
 
-        from jetspec.engines.jetspec_plus_plus.profiles import get_profile
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile
         if get_profile(self.engine.profile).compile_pin:
             # Bench uses this boundary so the pre-seal rank checks do not move served tok/s.
             self._generate_served_end_time = time.time()

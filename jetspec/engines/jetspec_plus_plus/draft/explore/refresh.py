@@ -21,7 +21,7 @@ class RefreshSwap(ServingRefreshSwap):
 
     def __init__(self, decoder, front, tap_store, *, rows, lanes, run_config=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if decoder is None:
             raise ValueError(f'{NAME}=1 needs the anchor decoder')
         self.decoder = decoder
@@ -169,7 +169,7 @@ class RefreshSwap(ServingRefreshSwap):
         they are injected: swap ``ids`` in place, pin the swaps, reopen swapped rows in
         ``finished``, and return the fixed-layout inject count (entries 0..khat_used; 0 on an
         inactive row)."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         hidden = self.decoder.hidden_size
         legacy_write = self.rule is None and not self.dense_pins
         positions = (length + self.true_lane).clamp_min(0)

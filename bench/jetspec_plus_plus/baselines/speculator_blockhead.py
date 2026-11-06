@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
 
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.speculate_types import SpeculateResult

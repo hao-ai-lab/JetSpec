@@ -5,9 +5,9 @@ import re
 
 from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, config_hash, flatten, validate, validate_fields
 from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import METHOD_SCHEMA, MODEL_SCHEMA
-from jetspec.engines.jetspec_plus_plus.config_schemas import (ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA,
+from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import (ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA,
                                           RANK_CONFIG_FIELDS, BATCH_DEFAULTS, check_batch_capacity)
-from jetspec.engines.jetspec_plus_plus.launch_env import ENV_FIELDS, serving_environment, environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import ENV_FIELDS, serving_environment, environment_name
 
 
 _SCHEMAS = dict(zip(CATEGORIES, (METHOD_SCHEMA, MODEL_SCHEMA, ENGINE_SCHEMA,

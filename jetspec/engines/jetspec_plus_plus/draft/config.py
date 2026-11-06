@@ -2,8 +2,8 @@
 from collections.abc import Mapping
 
 from dataclasses import replace
-from jetspec.engines.jetspec_plus_plus.launch_env import ENV_FIELDS, environment_name
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig, FrozenMapping
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import ENV_FIELDS, environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig, FrozenMapping
 
 
 def as_run_config(config=None):

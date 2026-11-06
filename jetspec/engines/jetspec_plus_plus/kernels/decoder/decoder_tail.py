@@ -62,7 +62,7 @@ def gate_mul(value, gate, *, activation='sigmoid'):
     _, gt, gh = _geometry(gate)
     output = torch.empty_like(value, memory_format=torch.contiguous_format)
     extra = ()
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     if kernel_value('draft_fuse_g27f', '0') == '1':
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, allocate_activation, _arguments
         flat = output.reshape(-1, heads * value.shape[-1])

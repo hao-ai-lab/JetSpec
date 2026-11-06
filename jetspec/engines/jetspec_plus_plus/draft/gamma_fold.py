@@ -27,7 +27,7 @@ def prepare(head):
     """
     if hasattr(head, '_draft_w5'):
         return head._draft_w5
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if current_engine().precision_draft not in ('bf16', 'mxfp4_w4a8'):
         raise ValueError('draft_fuse_w5 supports bf16 and mxfp4_w4a8 projections')
     plan = head._d1_lean_plan()
@@ -68,11 +68,11 @@ def prepare(head):
 
 def project(span, fused, u, pending, append=None, *, qk_fused=False):
     """One common unit-gamma norm and one concatenated GEMM at a stream start."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_w1', '1'):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, norm
         if enabled(u) and u.shape[0] + (0 if append is None else append.shape[0]) <= 256:
-            from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
             strided = kernel_value('draft_fuse_w5c', '0') == '1'
             normalized, state = norm(u if pending is None else pending[0], span.unit, span.eps,
                                      residual=None if pending is None else pending[1],

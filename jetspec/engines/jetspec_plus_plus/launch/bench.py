@@ -22,22 +22,22 @@ from random import randint, seed
 from jetspec.engines.jetspec_plus_plus import LLM, SamplingParams
 from jetspec.engines.jetspec_plus_plus.serving.llm_engine import METRICS
 from transformers import AutoTokenizer
-from jetspec.engines.jetspec_plus_plus._optional import wandb
+from jetspec.engines.jetspec_plus_plus.kernels._optional import wandb
 from jetspec.engines.jetspec_plus_plus.launch import bench_helpers
 from jetspec.engines.jetspec_plus_plus.launch.bench_helpers import get_model_paths
 from jetspec.engines.jetspec_plus_plus.launch.bench_guards import exported_prompt_ids, generate_inputs_fail_closed
 from jetspec.methods.baselines import eagle3
 import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
 from jetspec.engines.jetspec_plus_plus.runtime.env import validate_environment
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
-from jetspec.engines.jetspec_plus_plus.run_config import config_environment
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
 from jetspec.engines.jetspec_plus_plus.serving.settings import setting
 
 
 def parse_arguments(*, run_config=None):
     """Parse command line arguments for benchmarking."""
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
-    from jetspec.engines.jetspec_plus_plus.run_config import config_environment
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     values = config_environment(run_config) if run_config is not None else {}
     parser = argparse.ArgumentParser(description="Serving benchmark")
@@ -525,7 +525,7 @@ def main(*, run_config=None):
         run_config = with_settings(run_config, {'engine.engine_settings.run_manifest_dir':
             tempfile.mkdtemp(prefix='jetspec-run-manifest-')})
     args = parse_arguments(run_config=run_config)
-    from jetspec.engines.jetspec_plus_plus.config_schemas import require_single_request
+    from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import require_single_request
     require_single_request(args.b)
     validate_environment(config_environment(run_config),
                          jetspec=args.jetspec, max_num_seqs=args.b,

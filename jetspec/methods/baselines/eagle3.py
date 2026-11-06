@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import os
 
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
 
 DRAFT_PATH_ENV = environment_name('model', 'model_settings.eagle_draft_path')
 

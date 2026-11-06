@@ -17,8 +17,8 @@ from time import perf_counter
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
 
 SYNC_DRAFTER_ENV = environment_name('model', 'model_settings.sync_drafter')
 SYNC_PASSES_ENV = environment_name('method', 'method_settings.sync_passes')

@@ -1,7 +1,7 @@
 """Compose the real U1, U2, and U3 bodies for one N=1 chain key."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 import time
@@ -422,7 +422,7 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
     returned buffers before ChainGraph.run. A key carries its own pass bucket
     and wire; token/tap mirrors and the published-row ring belong to the sequence.
     """
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
     from jetspec.engines.jetspec_plus_plus.draft.drafter import bind_front_inputs
     from jetspec.engines.jetspec_plus_plus.draft.live_rows import BucketPass
@@ -609,7 +609,7 @@ def build_served_entry(key: ChainKey, *, rows, tokens, tap_store, row_ring,
                                                     pin_memory=drafter.device.type == "cuda"))
 
     context_stream = None
-    from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
     if (transport_enabled('draft_streams')
             and front.staged_hidden.dtype == torch.bfloat16):
         if not front.staged_hidden.is_cuda:

@@ -49,5 +49,5 @@ include = ["jetspec*"]
 "jetspec" = ["THIRD_PARTY_NOTICES", "licenses/*.txt"]
 "jetspec.engines.jetspec_plus_plus" = [
     "README.md", "config/*.json", "artifacts/*.json",
-    "launch/*.json", "draft/method/*.json", "draft/policies/*.json", "launch_env.json",
+    "launch/*.json", "draft/method/*.json", "draft/policies/*.json", "runtime/launch_env.json",
 ]

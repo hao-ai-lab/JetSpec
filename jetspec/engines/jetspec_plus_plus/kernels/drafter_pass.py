@@ -162,7 +162,7 @@ def allocate_partials(rows, lanes, vocab, device, *, block=2048):
     partials = (torch.empty(shape, device=device, dtype=torch.float32),
                 torch.empty(shape, device=device, dtype=torch.float32),
                 torch.empty(shape, device=device, dtype=torch.int32))
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
         from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import PassPartials
         return PassPartials(partials, torch.zeros(rows, device=device, dtype=torch.int32))
@@ -177,7 +177,7 @@ def chain_pass(logits, ids, keys, active, outputs, previous_top1, tokens, rp,
     as in ``reference_pass``; default None."""
     if triton is None:
         raise RuntimeError('JETSPEC_REFINE_K3 on CUDA requires Triton')
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
         from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import chain_pass_into
         return chain_pass_into(logits, ids, keys, active, outputs, previous_top1,

@@ -1,6 +1,6 @@
 """Default-off packed N=1 fixed-refresh injection."""
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 from types import SimpleNamespace
 import os
 
@@ -154,7 +154,7 @@ def project(bucket, hidden, khat, run_config=None):
 
 def commit(bucket, projected, khat, reset, guard=None):
     """Write only the final cutoff's rows and expose them to the next pass."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     head = bucket.head
     _, _, norms, width = head._refresh_inject_kv
     nh, hd = head.layers[0].self_attn.config.num_key_value_heads, head.layers[0].self_attn.head_dim

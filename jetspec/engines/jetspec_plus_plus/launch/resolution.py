@@ -5,7 +5,7 @@ from pathlib import Path
 from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, Schema, compose, flatten, validate, validate_fields
 from jetspec.engines.jetspec_plus_plus.draft.method.config_schemas import METHOD_SCHEMA, MODEL_SCHEMA, method_concurrency_settings
 from jetspec.engines.jetspec_plus_plus.draft.method.schema_extensions import training_schemas, require_training_schemas
-from jetspec.engines.jetspec_plus_plus.config_schemas import (ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA,
+from jetspec.engines.jetspec_plus_plus.runtime.config_schemas import (ENGINE_SCHEMA, HARDWARE_SCHEMA, BENCHMARK_SCHEMA,
                                           BATCH_DEFAULTS, concurrency_settings)
 
 ROOT = next((parent for parent in Path(__file__).resolve().parents
@@ -66,7 +66,7 @@ def resolve(names, overrides=(), *, root=ROOT / 'config'):
         if key in settings:
             raise ValueError(f'method.method_settings.{key} is supported by the offline reader only')
     validate(config, schemas())
-    from jetspec.engines.jetspec_plus_plus.launch_env import execution_settings, release_recipe
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import execution_settings, release_recipe
     recipe = release_recipe(config)
     if recipe is not None:
         config['engine']['recipe'] = recipe

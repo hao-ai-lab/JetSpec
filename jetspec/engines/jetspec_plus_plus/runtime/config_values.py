@@ -45,8 +45,8 @@ def config_values(run_config):
     if isinstance(run_config, ConfigValues):
         return run_config
     if isinstance(run_config, Mapping):
-        from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
-        from jetspec.engines.jetspec_plus_plus.launch_env import ENV_FIELDS
+        from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
+        from jetspec.engines.jetspec_plus_plus.runtime.launch_env import ENV_FIELDS
         bound = {name for fields in ENV_FIELDS.values() for name in fields}
         run_config = RunConfig.from_environment(
             {key: value for key, value in run_config.items() if key in bound})
@@ -71,10 +71,10 @@ def config_flag01(key, run_config):
 def launch_config(environment, resolved=None, *, model_entry=None):
     """Project a materialized legacy child plan and retain its resolved launch identity."""
     from dataclasses import replace
-    from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
     materialized = dict(environment)
     materialized.setdefault('CUBLAS_WORKSPACE_CONFIG', '')
-    from jetspec.engines.jetspec_plus_plus.run_config import launch_environment
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import launch_environment
     if model_entry is None and resolved is not None:
         model_entry = resolved['model']
     config = RunConfig.from_environment(launch_environment({

@@ -60,7 +60,7 @@ def attend(q, k, v, scale, length, tail, block, starts, *, tune=False):
     output = attention_output(q)
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import attention_activation, _arguments
     produced = attention_activation(output)
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     extra = ({'BATCHED': True} if produced is not None and
              kernel_value('draft_fuse_am', '0') == '2' else {})
     row_tile = 16

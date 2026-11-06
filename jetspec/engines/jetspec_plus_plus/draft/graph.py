@@ -6,7 +6,7 @@ may omit B2 or C without violating CUDA graph pool replay order.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -42,7 +42,7 @@ OUTPUTS = ("keys", "final_tokens", "final_p_top1", "passes_run", "finished", "er
 def hostpath_setting(run_config):
     """Bind constant-time reads only for an opted-in immutable round configuration."""
     from jetspec.engines.jetspec_plus_plus.draft.config import setting
-    from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
     if (not isinstance(run_config, RunConfig)
             or setting(run_config, 'engine.engine_settings.draft_fuse_hostpath', '0') != '1'):
         return None
@@ -104,7 +104,7 @@ def reachable_chain_capture(fixed_config, row_cap, tau_enabled, tau_cap, run_con
 
 def chain_fixed_choice(fixed_config, length_bucket, switch_L):
     """Choose the fixed replay depth from the already selected chain key bucket."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     switch_L = current_engine().budget.switch_length(switch_L)
     if switch_L is not None and length_bucket >= switch_L:
         return 1, False
@@ -212,7 +212,7 @@ class ChainGraph:
 
     @staticmethod
     def _wrap_intake(buffers, bodies, *, max_length=None, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if not {"packet", "tokens", "row_ring", "intake_err"} <= set(buffers):
             return bodies
@@ -290,7 +290,7 @@ class ChainGraph:
                     wrong_miss.to(torch.int64) * (CHAIN_ERR_AFTER_MISS | CHAIN_ERR_DRIFT))
 
         def intake_common():
-            from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
             if 'prior_draft_top16_ids' in buffers:
                 values = buffers['row_ring'].select_pending_candidates(buffers['packet'])
                 buffers['prior_draft_top16_ids'].copy_(values[0])
@@ -376,7 +376,7 @@ class ChainGraph:
             buffers["err"].bitwise_or_(buffers["intake_err"])
 
         def with_error_home():
-            from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
             if '_t14_publication' in buffers:
                 buffers['publisher'].home.copy_(buffers['publisher'].wire, non_blocking=True)
                 buffers['err_host'].copy_(buffers['err'], non_blocking=True)
@@ -440,7 +440,7 @@ class ChainGraph:
         return wrapped
 
     def prepare(self, key: ChainKey, run_config=None) -> _Entry:
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if key in self.entries:
@@ -509,7 +509,7 @@ class ChainGraph:
 
     @staticmethod
     def chosen(J_round: int, refresh: bool, *, ctx_append=False, run_config=None) -> tuple[str, ...]:
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         schedule = Schedule(J_round, int(refresh))
         names = (("A_inc" if ctx_append else "A",))
         return names + schedule_segments(schedule)[1:] + tail_segments(refresh, run_config=run_config) + ("P",)
@@ -520,7 +520,7 @@ class ChainGraph:
             ctx_append=False, run_config=None) -> dict:
         # prepare is deliberately outside the timed region, including its warm-up.
         from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import enabled as anatomy_enabled
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if self._hostpath_setting is not None:
@@ -528,7 +528,7 @@ class ChainGraph:
         fuse_hostpath = setting(run_config, 'engine.engine_settings.draft_fuse_hostpath', '0') == '1'
         noev = setting(run_config, 'engine.engine_settings.draft_fuse_noev', '0') == '1'
         if noev:
-            from jetspec.engines.jetspec_plus_plus.engine import current_engine
+            from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
             engine = current_engine()
             checked = getattr(self, '_noev_checked', (None, None))
             if (run_config is not self.run_config

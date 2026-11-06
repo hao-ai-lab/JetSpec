@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 import json
@@ -15,7 +15,7 @@ from torch.nn import functional as F
 
 from jetspec.engines.jetspec_plus_plus.runtime.linear_head import BlockheadProposal
 from jetspec.engines.jetspec_plus_plus.serving.cache_capacity import CACHE_BUCKETS
-from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
 
 
 CACHE_CAPACITY = 768
@@ -53,7 +53,7 @@ class StaticBlockheadGraph:
 
     def __init__(self, drafter, *, capacity: int = CACHE_CAPACITY, _force_stock: bool = False,
                  run_config=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         self.run_config = run_config if run_config is not None else RunConfig.from_environment({})
         self.drafter = drafter
         self.head = drafter.head

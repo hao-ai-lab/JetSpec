@@ -87,10 +87,10 @@ def decode_tok_s(path):
 
 def candidates(args):
     """The kernel family of the visible GPU and its validated JetSpec++ schedules."""
-    from jetspec.engines.jetspec_plus_plus import entry
+    from jetspec.engines.jetspec_plus_plus.launch import cli
     host = json.loads(Path(args.host_values).read_text()) if args.host_values else {}
-    family = entry.kernel_family(host.get('cuda_arch') or entry._device_arch(args.devices), host.get('machine'))
-    return family, sorted({s for m, s, e, f in entry.RECIPES
+    family = cli.kernel_family(host.get('cuda_arch') or cli._device_arch(args.devices), host.get('machine'))
+    return family, sorted({s for m, s, e, f in cli.RECIPES
                            if m == args.model and e == args.engine and f == family and s != 'ar'})
 
 
@@ -118,8 +118,8 @@ def choose_schedule(args, output, environment, run):
 def main(argv=None, *, run=subprocess.run):
     args = parser().parse_args(argv)
     if not any(getattr(args, role) for role in ('target', 'drafter', 'adapter', 'heads_bundle', 'host_values')):
-        from jetspec.engines.jetspec_plus_plus import entry
-        target, checkpoint = entry.release_paths(args.model)
+        from jetspec.engines.jetspec_plus_plus.launch import cli
+        target, checkpoint = cli.release_paths(args.model)
         args.target, args.drafter = str(target), str(checkpoint)
         args.adapter, args.heads_bundle = str(checkpoint / 'adapter'), str(checkpoint / 'calibration')
     output = Path(args.output_dir)

@@ -43,7 +43,7 @@ def configure_draft_vocab(head, run_config):
     head.weight._draft_vocab = (ids, weight)
     from jetspec.engines.jetspec_plus_plus.models.target_linear import bind_weight_role
     bind_weight_role(weight, 'lm_head')
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if weight.is_cuda and current_engine().precision_lm_head == 'mxfp4_w4a8':
         from jetspec.engines.jetspec_plus_plus.models.target_linear import _w4a8_registry
         _w4a8_registry.pack(weight)

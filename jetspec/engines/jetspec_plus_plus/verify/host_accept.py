@@ -1,5 +1,5 @@
 """Reference host-accept publication, preserving the baseline chain wire."""
-from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
 import os
 import torch
 

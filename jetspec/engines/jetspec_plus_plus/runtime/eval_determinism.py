@@ -5,11 +5,11 @@ before consulting an autotune cache. The guard checks that every compiled kernel
 actually receives one configuration and records it in the read manifest.
 """
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 import json
 import os
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 COMPILER_FLAGS = ('max_autotune', 'max_autotune_gemm', 'max_autotune_pointwise',
                   'coordinate_descent_tuning')
@@ -17,8 +17,8 @@ WORKSPACE = ':4096:8'
 
 
 def install(rank, *, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if not current_engine().deterministic:
         return None
     for knob in ('refresh_gemm_tune', 'adapter_gemm_tune'):

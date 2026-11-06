@@ -7,7 +7,7 @@ roundings of eager RoPE and sigmoid/multiply; cache writes broadcast KV heads
 directly into the existing expanded cache without a repeated temporary.
 """
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 import os
 
 import torch
@@ -109,7 +109,7 @@ def norm(x, module):
 
 
 def norm_rotary(x, module, cos, sin):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.draft.drafter import _c1_rotary
     if (not _cuda(x) or x.shape[0] != 1 or module.norm_offset != 1
             or module.norm_round != "after_weight"):
@@ -130,7 +130,7 @@ def norm_rotary(x, module, cos, sin):
 
 
 def write_kv(key, value, module, cos, sin, cache, slots, groups):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.draft.drafter import _c1_rotary
     k, v = cache
     batch, tokens, heads, dim = key.shape

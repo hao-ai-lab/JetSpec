@@ -323,7 +323,7 @@ def recurrent_output(gdn, q, k, v, g, beta, initial):
         return gdn._delta(q, k, v, g, beta, initial, chunk=False)[0]
     if gdn._recurrent is None:
         raise RuntimeError('hybrid GDN on CUDA requires fla gated delta rule kernels')
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     if kernel_value('draft_fuse_gdn27', '0') == '1':
         from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.draft_gdn27 import recurrent
         tuned = recurrent(q, k, v, g, beta, initial)

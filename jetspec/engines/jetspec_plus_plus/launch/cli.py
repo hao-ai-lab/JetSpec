@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 # The engine's generic draft slot reads this pinned snapshot from SSD_HF_CACHE for every method
 # without a draft model of its own (launch/runner.py _generic_draft_path).
 GENERIC_DRAFT = ('Qwen/Qwen3-0.6B', 'c1899de289a04d12100db370d81485cdf75e47ca')
@@ -110,7 +110,7 @@ def kernel_family(arch, machine=None):
 
 
 def resolve(args):
-    from .launch.entry import resolve_read
+    from .entry import resolve_read
     host = json.loads(Path(args.host_values).read_text()) if args.host_values else None
     arch = host.get('cuda_arch') if host else None
     arch = arch or _device_arch(args.devices)
@@ -285,7 +285,7 @@ def main(argv=None):
         return generate(argv[1:])
     args = parser().parse_args(argv)
     recipe, reader_argv, host = resolve(args)
-    from .launch import runner
+    from . import runner
     with tempfile.TemporaryDirectory(prefix='jetspec-pp-host-') as directory:
         alias_heads_bundle(host, recipe, directory)
         if not args.resolve_only:

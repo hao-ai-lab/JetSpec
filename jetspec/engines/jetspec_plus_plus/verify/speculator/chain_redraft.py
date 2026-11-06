@@ -52,7 +52,7 @@ class ChainRedraft:
             valve = float(setting(self, 'engine.engine_settings.chain_miss_redraft_max_ms', '10.0'))
         if not valve > 0:
             raise ValueError("miss redraft valve must be positive (inf disables the cutoff)")
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         budget = current_engine().budget
         if not budget.uncut:
             budget.redraft_deadline(0, valve)

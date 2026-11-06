@@ -27,7 +27,7 @@ The other paths support these three:
 | `models/` | Target and anchor decoder models |
 | `wire/` | Packets and transport between the two GPUs |
 | `kernels/` | Compiled tensor operations grouped by adapter, decoder, chain, passes, rows, refresh and verification, with target-specific helpers |
-| `entry.py`, `launch/` | The public command, recipe resolution, artifact checks, the child process |
+| `launch/` | The public command, recipe resolution, artifact checks, the child process |
 | `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
 | `runtime/` | Run settings and DSpark serving integration |
 | `launch/anatomy.py`, `launch/eos_stop.py`, `launch/run_manifest.py`, `trace/` | Read analysis, run records and tracing |
@@ -35,8 +35,8 @@ The other paths support these three:
 
 ## From the command to the first forward pass
 
-1. `__main__.py` calls `entry.main`.
-2. `entry.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
+1. `__main__.py` calls `main` in `launch/cli.py`.
+2. `launch/cli.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
 3. `launch/runner.py` checks the artifact hashes, builds the launch plan and starts a child process.
 4. The child runs `launch/bench.py`, which constructs `LLMEngine` from `serving/llm_engine.py`.
 5. `LLMEngine` constructs `TargetRunner` from `verify/forward.py` in the current process and spawns `DraftRunner` from `draft/rank.py`. Both inherit `ModelRunner` from `serving/model_runner.py`.
@@ -105,6 +105,6 @@ The public name Qwen3.8-27B uses the checkpoint type `qwen3_5_text`, the hybrid 
 2. Add checkpoint parsing to `models/registry.py` and weight mapping to `models/target_loader.py`.
 3. Add new layer or state arithmetic to `models/target_layers.py` and `models/state.py` only if the target needs it.
 4. Train a drafter, an adapter and a calibration, then pin their hashes in `config/model.json` and `artifacts/manifest.json`.
-5. Add the model, its recipes and its defaults to `entry.py`. List each kernel family that you tested.
+5. Add the model, its recipes and its defaults to `launch/cli.py`. List each kernel family that you tested.
 6. Extend the torch reference loader in `jetspec/methods/jetspec_plus_plus/drafter.py`.
 7. Validate on GPUs: the eager target, reference rounds, graph replay, draft hits and misses, and EOS and token-cap stops.
