@@ -48,7 +48,7 @@ optimized inference engine, and target loaders, with a strict one-way dependency
 - **`jetspec/engines/jetspec_plus_plus/draft/reference/`** — the eager JetSpec++ round loop,
   local checkpoint loaders and reader, using the shared engine method.
 - **`jetspec/engines/jetspec_plus_plus/`** — the shared JetSpec++ method
-  (`draft/method/`) and serving engine. Its
+  (`jetspec/engines/jetspec_plus_plus/draft/method/`) and serving engine. Its
   [README](jetspec/engines/jetspec_plus_plus/README.md) maps the code and lists
   the steps to add a model.
 - **`jetspec/methods/baselines/`** — the shared baseline draft-path resolver and graph wrapper.

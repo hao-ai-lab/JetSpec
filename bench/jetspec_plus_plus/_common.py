@@ -82,7 +82,7 @@ def timed(llm, fn):
 
 
 def read_result(args, config, llm, outputs, seconds):
-    from jetspec.engines.jetspec_plus_plus.draft.reference.reader import summarize, reduce_read
+    from bench.jetspec_plus_plus.reader import summarize, reduce_read
 
     summary = dict(summarize(outputs), wall_seconds=seconds)
     summary['tokens_per_second'] = summary['tokens'] / seconds if seconds else 0.0

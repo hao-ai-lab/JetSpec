@@ -1,6 +1,6 @@
 """Reduce Table 3 reads with the original EOS-stopped yardstick."""
 from statistics import mean
-from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped, stop_lengths, round_is_miss
+from bench.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped, stop_lengths, round_is_miss
 import base64
 import json
 import zlib

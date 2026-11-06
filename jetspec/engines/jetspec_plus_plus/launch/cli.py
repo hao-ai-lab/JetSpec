@@ -2,7 +2,6 @@
 
 `generate PROMPT` answers one prompt with the pinned release checkpoint, downloading what is missing.
 """
-import argparse
 import json
 import os
 from pathlib import Path
@@ -65,26 +64,8 @@ ENGINES = ('fast',)
 
 
 def parser():
-    result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument('--model', choices=MODELS, default='qwen3-8b', help='target model')
-    result.add_argument('--schedule', choices=SCHEDULES,
-                        help='J/R schedule, or ar for the autoregressive baseline; defaults to the fastest measured one')
-    result.add_argument('--engine', choices=ENGINES, default='fast', help='fast (CUDA graphs)')
-    for role in ('target', 'drafter', 'adapter', 'heads-bundle', 'target-release', 'host-values'):
-        result.add_argument('--' + role, default=os.environ.get('JSPP_' + role.upper().replace('-', '_')))
-    result.add_argument('--prompts-json', required=True)
-    result.add_argument('--tokens', type=int, default=64)
-    result.add_argument('--placement', choices=('pair', 'one_gpu'))
-    result.add_argument('--devices', default='0,1')
-    result.add_argument('--output-json', required=True)
-    result.add_argument('--dataset', default='gsm8k')
-    result.add_argument('--count', type=int, default=2)
-    result.add_argument('--cache-root', default=os.environ.get('JSPP_CACHE_ROOT'))
-    result.add_argument('--cpu-pin', default='auto')
-    result.add_argument('--knob', action='append', default=[], metavar='NAME=VALUE')
-    result.add_argument('--stop-at-eos', choices=('on', 'off'), default='off')
-    result.add_argument('--resolve-only', action='store_true')
-    return result
+    from .flags import serve_parser
+    return serve_parser()
 
 
 def _device_arch(devices):
@@ -241,19 +222,8 @@ def prompt_rows(target, text):
 
 def generate(argv):
     """Answer one prompt with the pinned JetSpec++ release, then print the answer and its throughput."""
-    result = argparse.ArgumentParser(prog='python -m jetspec.engines.jetspec_plus_plus generate',
-                                     description=generate.__doc__)
-    result.add_argument('prompt')
-    result.add_argument('--model', choices=MODELS, default='qwen3-8b', help='target model')
-    result.add_argument('--schedule', choices=tuple(schedule for schedule in SCHEDULES if schedule != 'ar'), help='defaults to the fastest measured one')
-    result.add_argument('--max-tokens', type=int, default=2048)
-    result.add_argument('--devices', default='0,1', help='two GPUs, as nvidia-smi numbers them')
-    result.add_argument('--dataset', default='gsm8k', help='calibration entry of the heads')
-    result.add_argument('--cache-root', default=os.environ.get('JSPP_CACHE_ROOT') or str(
-        Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'jetspec-plus-plus'),
-        help='persistent compiler cache; the first run compiles for several minutes')
-    result.add_argument('--target', help='local target directory (default: the pinned Hugging Face snapshot)')
-    result.add_argument('--checkpoint', help='local JetSpec++ checkpoint (default: the pinned release)')
+    from jetspec.engines.jetspec_plus_plus.launch.flags import generate_parser
+    result = generate_parser()
     args = result.parse_args(argv)
     target, checkpoint = release_paths(args.model, args.target, args.checkpoint)
     with tempfile.TemporaryDirectory(prefix='jetspec-pp-generate-') as directory:

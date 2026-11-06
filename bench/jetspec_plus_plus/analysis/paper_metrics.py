@@ -1,7 +1,7 @@
 """Paper rule-A credit and timing, using the bank's native per-request reducer."""
 import random
 from statistics import mean
-from jetspec.engines.jetspec_plus_plus.analysis import subset_recompute as sr
+from bench.jetspec_plus_plus.analysis import subset_recompute as sr
 
 EOS = [248044, 248046]
 

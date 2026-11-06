@@ -180,7 +180,7 @@ def resolve_sync_passes(recipe, requested):
 def sync_stop_lengths(records, outputs, eos_token_ids, *, tokens):
     """Per sequence, the output length the offline reader would have stopped at: through the first
     end-of-sequence token, or ``tokens`` when there is none. Serving itself ignores it and runs on."""
-    from jetspec.engines.jetspec_plus_plus.launch.eos_stop import stop_lengths
+    from bench.jetspec_plus_plus.analysis.eos_stop import stop_lengths
     seq_ids = sorted({int(record["seq_id"]) for record in records})
     if len(seq_ids) != len(outputs):
         raise RuntimeError(f"{len(seq_ids)} recorded sequences for {len(outputs)} outputs")
@@ -2433,123 +2433,9 @@ def stock_parameters(recipe, dataset):
 
 
 def _parser():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--method", choices=METHODS, required=True)
-    parser.add_argument("--regime", choices=REGIMES, required=True)
-    parser.add_argument("--engine", choices=("eager", "reference", "eval", "fast"))
-    parser.add_argument("--placement", choices=PLACEMENTS, required=True)
-    parser.add_argument("--mps-root", help="private per-GPU MPS control and log directory; "
-                        "required with one_gpu_mps")
-    parser.add_argument("--mps-draft-priority", choices=("0", "1"),
-                        help="opt-in MPS priority for the spawned draft client (0 normal, 1 low)")
-    parser.add_argument("--mps-draft-active-thread-percentage", type=int,
-                        help="opt-in MPS thread cap for the spawned draft client (1..100)")
-    parser.add_argument("--devices", required=True)
-    parser.add_argument("--dataset", required=True)
-    parser.add_argument("--prompts-json", required=True)
-    parser.add_argument("--count", type=int, default=32)
-    parser.add_argument("--batch", type=int, default=1,
-                        help="maximum concurrent requests (default: 1)")
-    parser.add_argument("--sequential-prompts", action="store_true",
-                        help="serve C=1 prompts one at a time in one loaded process")
-    parser.add_argument("--tokens", type=int, default=256)
-    parser.add_argument("--temperature", type=float, default=0.0,
-                        help="target sampling temperature (draft remains greedy)")
-    parser.add_argument("--seed", type=int, default=0, help="sampling seed")
-    parser.add_argument("--repeats", type=int, default=1)
-    parser.add_argument("--child-wall-seconds", type=float, default=18 * 60,
-                        help="wall-clock cap on one serve child before SIGTERM (default 18 min)")
-    parser.add_argument("--passes", type=int,
-                        help="drafter passes; when supplied, must match the named recipe")
-    parser.add_argument("--sweep-rows-cap", type=int, choices=(2, 4, 8, 16),
-                        help="override JetSpec++ eager pair row cap for draft-work sweep")
-    parser.add_argument("--sweep-refresh", choices=("after_j0", "off"),
-                        help="override JetSpec++ eager pair refresh for draft-work sweep")
-    parser.add_argument("--sweep-j", type=int, choices=(1, 2),
-                        help="override JetSpec++ eager pair J for draft-work sweep")
-    parser.add_argument("--policy", help="C-indexed draft-budget policy JSON")
-    parser.add_argument("--draft-split", choices=("verify_gpu",),
-                        help="place a second draft executor beside the verify under MPS")
-    parser.add_argument("--draft-split-frac", type=float,
-                        help="fraction of requests assigned to the co-resident executor")
-    parser.add_argument("--draft-deadline", choices=("on", "off"),
-                 help="explicitly override the recipe draft deadline")
-    parser.add_argument("--miss-redraft", choices=("on", "off"),
-                 help="override miss redrafting for a paired after-miss read")
-    parser.add_argument("--chain-miss-redraft", choices=("on", "off"),
-                        help="enable the J0-only same-round chain miss redraft")
-    parser.add_argument("--chain-miss-redraft-max-ms", type=float,
-                        help="dedicated same-round redraft wait valve")
-    parser.add_argument("--chain-miss-redraft-timing", choices=("on", "off"),
-                        help="print each miss round's redraft and total wall time")
-    parser.add_argument("--chain-check", choices=("on", "off"),
-                        help="run same-round fused eager shadow and enforce the 300-round T0 gate")
-    parser.add_argument("--chain-warm-reachable", choices=("on", "off"),
-                        help="capture only chain keys reachable by this read")
-    parser.add_argument("--chain-capture-stamps", choices=("on", "off"),
-                        help="print wall seconds for every chain key and segment capture")
-    parser.add_argument("--chain-decoder-key-bucket", choices=("on", "off"),
-                        help="override decoder-window key bucketing for a chain T0 read")
-    parser.add_argument("--chain-sega-glue", choices=("0", "1", "2"),
-                        help="override segmented chain A glue for a T0 or timing read")
-    parser.add_argument("--chain-glue2-profile", choices=("on", "off"),
-                        help="print captured A/B1n device milliseconds after publish")
-    parser.add_argument("--chain-refine-k3", choices=("on", "off"),
-                        help="override K3 refinement bookkeeping for a chain timing pair")
-    parser.add_argument("--chain-handoff", choices=("on", "off"),
-                        help="pre-stage the next supported fixed R0 chain key")
-    parser.add_argument("--chain-handoff-timing", action="store_true",
-                        help="print per-round draft and verify handoff timestamps")
-    parser.add_argument("--knob", action="append", default=[], metavar="NAME=VALUE",
-                        help="set one registered JETSPEC_* knob for this read (repeatable)")
-    parser.add_argument("--verify-lean", choices=("on", "off"),
-                        help="set the six N=1 verifier host cuts (JETSPEC_VERIFY_STAGE_HOST ... STAGE_EARLY)")
-    parser.add_argument("--verify-lean-stage-early", choices=("on", "off"),
-                        help="override JETSPEC_VERIFY_STAGE_EARLY alone (after --verify-lean)")
-    parser.add_argument("--chain-prepost", choices=("on", "off"),
-                        help="post the next chain outcome receive before Seg P sync")
-    parser.add_argument("--chain-prepost-timing", action="store_true",
-                        help="print P-sync to next Seg A and verifier ready-key wait")
-    parser.add_argument("--chain-tail-trace", action="store_true",
-                        help="print absolute host stamps for every draft chain round")
-    parser.add_argument("--chain-k3", choices=("on", "off"),
-                        help="override both segmented-chain K3 kernels")
-    parser.add_argument("--chain-attn3", choices=("on", "off"),
-                        help="override split Seg A FlashInfer planning for a chain read")
-    parser.add_argument("--recipe", required=True)
-    parser.add_argument("--max-model-len", type=int,
-                        help="serve this max_model_len instead of the one derived from the prompts "
-                             "(still refused if a prompt + --tokens + lookahead does not fit)")
-    parser.add_argument("--output-json", required=True)
-    parser.add_argument("--artifacts-dir", default=str(DEFAULT_ARTIFACTS_DIR),
-                        help="root that holds the manifest destination directories")
-    parser.add_argument("--cache-root", help="persistent compiler cache root shared by serial reads")
-    parser.add_argument("--compile-pin", type=Path, help="sealed machine-local compile pin directory")
-    parser.add_argument("--compile-pin-sha", help="SHA256 of --compile-pin (both flags required)")
-    parser.add_argument("--bundle-override", type=Path,
-                        help="pinned task-local reused decoder bundle")
-    parser.add_argument("--bundle-pin", type=Path,
-                        help="hash receipt for --bundle-override")
-    parser.add_argument("--host-values",
-                        help="per-host JSON (schema %s): artifact directories, CUDA arch, "
-                             "compile pin SHA, rendezvous mode, and %s"
-                             % (HOST_VALUES_SCHEMA, ", ".join(HOST_VARIABLES)))
-    parser.add_argument("--host-artifact", action="append", metavar="KEY=ABS_DIR",
-                        help="override one manifest artifact directory on this host")
-    parser.add_argument("--cpu-pin", default="auto", metavar="auto|off|A-B[;C-D]",
-                        help="NUMA-local CPU pinning (default: auto); off or explicit ranges")
-    parser.add_argument("--rank-cpus", metavar="VERIFY_RANGE;DRAFT_RANGE[;SPLIT_RANGE]",
-                        help="alias for --cpu-pin with explicit ranges")
-    parser.add_argument("--stop-at-eos", choices=("on", "off"), default="off",
-                        help="end each sequence at end-of-sequence instead of running to --tokens (default: off)")
-    parser.add_argument("--wire-records", choices=("on", "off"), default="on",
-                        help="write JetSpec proposal wire records (default: on)")
-    parser.add_argument("--causal-n1", action="store_true",
-                         help="use the FlashInfer causal kernel for a single verify chain")
-    parser.add_argument("--resolve-only", action="store_true",
-                        help="print RESOLVED_CONDITION and exit 0 before any model load")
-    parser.add_argument("--internal-plan", help=argparse.SUPPRESS)
-    return parser
+    # Absolute, because the Table 3 child runs this file as a script.
+    from jetspec.engines.jetspec_plus_plus.launch.flags import runner_parser
+    return runner_parser()
 
 
 def _read_proposals(directory, offsets):
@@ -3066,7 +2952,7 @@ def _main_sync(args):
             measured = run["measured"]
             measured.pop("proposals", None)
             records = measured["metrics"]["blockhead_round_records"]
-            from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped
+            from bench.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped
             eos_stopped = compute_eos_stopped(
                 SYNC_METHOD, raw["outputs"], measured["metrics"], tokens=args.tokens,
                 eos_token_ids=condition["eos_token_ids"], batch=args.batch)
@@ -3503,8 +3389,8 @@ def _main(args, *, resident=None):
                     method, measured["metrics"], proposals, deadlines,
                     deadline_required=(environment.get(environment_name('engine', 'engine_settings.draft_deadline')) == "1"
                                        and not chain))
-                from jetspec.engines.jetspec_plus_plus.launch.eos_stop import compute_eos_stopped
-                from jetspec.engines.jetspec_plus_plus.launch.eos_stop import ROUND_METHODS
+                from bench.jetspec_plus_plus.analysis.eos_stop import compute_eos_stopped
+                from bench.jetspec_plus_plus.analysis.eos_stop import ROUND_METHODS
                 eos_stopped = (compute_eos_stopped(
                     method, raw["outputs"], measured["metrics"], tokens=args.tokens,
                     eos_token_ids=condition["eos_token_ids"], populations=populations,

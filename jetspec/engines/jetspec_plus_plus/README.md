@@ -30,13 +30,13 @@ The other paths support these three:
 | `launch/` | The public command, recipe resolution, artifact checks, the child process |
 | `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
 | `runtime/` | Run settings and DSpark serving integration |
-| `launch/eos_stop.py`, `launch/run_manifest.py`, `runtime/round_timing.py` | EOS reduction, run records and round timing |
+| `bench/jetspec_plus_plus/analysis/`, `launch/run_manifest.py`, `runtime/round_timing.py` | Offline reductions, run records and round timing |
 | `bench/jetspec_plus_plus/third_party/`, `bench/jetspec_plus_plus/baselines/` | Pinned DSpark code and comparison routes, loaded only when selected from a source checkout |
 
 ## From the command to the first forward pass
 
 1. `__main__.py` calls `main` in `launch/cli.py`.
-2. `launch/cli.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
+2. `launch/flags.py` defines the command-line parsers. `launch/cli.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
 3. `launch/runner.py` checks the artifact hashes, builds the launch plan and starts a child process.
 4. The child runs `launch/bench.py`, which constructs `LLMEngine` from `serving/llm_engine.py`.
 5. `LLMEngine` constructs `TargetRunner` from `verify/forward.py` in the current process and spawns `DraftRunner` from `draft/rank.py`. Both inherit `ModelRunner` from `serving/model_runner.py`.

@@ -5,8 +5,8 @@ from pathlib import Path
 
 def write_eval_records(config, *, recipe_method, output, eval_values, process_wall_seconds):
     """Use the existing wrapper's reducers and the launcher's recorded evidence."""
-    from jetspec.engines.jetspec_plus_plus.analysis.summary import anatomy
-    from jetspec.engines.jetspec_plus_plus.analysis.summary import reduce_paper
+    from bench.jetspec_plus_plus.analysis.summary import anatomy
+    from bench.jetspec_plus_plus.analysis.summary import reduce_paper
     from jetspec.engines.jetspec_plus_plus.runtime.profile import read_counters
     method, model = config['method'], config['model']
     output = Path(output)
@@ -38,13 +38,13 @@ def write_eval_records(config, *, recipe_method, output, eval_values, process_wa
                 raw['eval']['refresh_mode'] = refresh
             capture = eval_values['capture_round_candidates']
             if capture != '0':
-                from jetspec.engines.jetspec_plus_plus.analysis.eval_read import export_candidates
-                from jetspec.engines.jetspec_plus_plus.analysis.eval_read import export_decoder_inputs
+                from bench.jetspec_plus_plus.analysis.eval_read import export_candidates
+                from bench.jetspec_plus_plus.analysis.eval_read import export_decoder_inputs
                 raw['eval']['round_candidates'] = export_candidates(path, raw['metrics'])
                 if capture == 'decoder':
                     raw['eval']['decoder_inputs'] = export_decoder_inputs(path, raw['metrics'])
         else:
-            from jetspec.engines.jetspec_plus_plus.analysis.summary import paper_metrics
+            from bench.jetspec_plus_plus.analysis.summary import paper_metrics
             paper_metrics.EOS = condition['eos_token_ids']
             raw['eval']['paper_metrics'] = paper_metrics.reduce_read(raw, recipe_method)
         path.write_text(json.dumps(raw, indent=2) + '\n')

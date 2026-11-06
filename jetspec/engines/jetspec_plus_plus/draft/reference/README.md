@@ -33,7 +33,7 @@ An outcome is the number of accepted draft tokens and the anchor token, which is
 | `refresh.py`, `scoring.py` | Eager context injection, pin state and validated BLEND input preparation |
 | `models/` | Local checkpoint loaders and eager target/decoder execution; adapter and decoder math come from the shared method |
 | `artifacts.py` | Artifact loaders and hash checks |
-| `reader.py` | The acceptance-length reader |
+| `bench/jetspec_plus_plus/reader.py` | The acceptance-length reader |
 
 ## Run it
 

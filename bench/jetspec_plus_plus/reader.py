@@ -126,7 +126,7 @@ def read_passes(llm, rows, *, drafter_factory, config=None, tokens=2048,
     """Read a fixed J/R schedule through width-one LLM tree verification."""
     import torch
     from jetspec.core.llm import SamplingParams
-    from .round import JetSpecPPConfig
+    from jetspec.engines.jetspec_plus_plus.draft.reference.round import JetSpecPPConfig
 
     if type(tokens) is not int or tokens < 1:
         raise ValueError('tokens must be a positive integer')
@@ -171,7 +171,7 @@ def read_passes(llm, rows, *, drafter_factory, config=None, tokens=2048,
         record['token_ids'] = token_ids
         found.append(record)
         if capture_path is not None:
-            from .capture import verified_records
+            from jetspec.engines.jetspec_plus_plus.draft.reference.capture import verified_records
             with capture_path.open('a', encoding='utf-8') as sink:
                 for candidate in verified_records(drafter, accept_lengths, prompt_index=prompt_index):
                     sink.write(json.dumps(candidate, allow_nan=False) + '\n')
@@ -241,14 +241,14 @@ def main(argv=None, *, drafter_factory=None, llm_factory=None):
                 drafter_factory = getattr(importlib.import_module(module), name)
             else:
                 from functools import partial
-                from .drafter import build_drafter
+                from jetspec.engines.jetspec_plus_plus.draft.reference.drafter import build_drafter
                 drafter_factory = partial(build_drafter, dataset=args.dataset)
 
     import torch
     import transformers
     from jetspec.core.llm import LLM
-    from .models.drafter import REVISION
-    from .round import JetSpecPPConfig, completed_label
+    from jetspec.engines.jetspec_plus_plus.draft.reference.models.drafter import REVISION
+    from jetspec.engines.jetspec_plus_plus.draft.reference.round import JetSpecPPConfig, completed_label
 
     family = args.model_family
     if family == 'auto':
@@ -280,7 +280,7 @@ def main(argv=None, *, drafter_factory=None, llm_factory=None):
     # The round's fp32 probability math remains in its existing tensor steps.
     dtype = torch.float32 if args.dtype == 'fp32' else torch.bfloat16
     if llm_factory is None and family == '27b':
-        from .models.hybrid import load_hybrid_llm
+        from jetspec.engines.jetspec_plus_plus.draft.reference.models.hybrid import load_hybrid_llm
         llm_factory = load_hybrid_llm
     llm = (llm_factory or LLM)(model_name_or_path=args.target, device=args.device,
                                dtype=dtype, attn_implementation='sdpa')
