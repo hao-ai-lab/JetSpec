@@ -942,7 +942,7 @@ class KthRowsDrafter:
     @torch.inference_mode()
     def _stage_packed(self, sequences, blocks, *, batched_uncached=False, multi_cached=False,
                       admission=False, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
+        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingContextKVHead
         d = self.drafter
         if admission:
             exact = sequences[0].exact_hidden(device=d.device, dtype=d.dtype)
@@ -959,7 +959,7 @@ class KthRowsDrafter:
         width = draft_width(run_config=run_config if run_config is not None else getattr(self, 'run_config', None))  # serving: the window is [c, d1..d_width]
         query = torch.arange(width + 1, device=d.device)
         allowed_prefix = (positions[None] < length_tensor[:, None])[:, None, :].expand(-1, width + 1, -1)
-        if (batched_uncached or multi_cached) and isinstance(d.adapter.head, ServingCtxKVC1Head) and \
+        if (batched_uncached or multi_cached) and isinstance(d.adapter.head, ServingContextKVHead) and \
                 d.adapter.head.resolved_config.get('window_causal_over_tokens', False):
             # The cached D1 path constructs this strictly earlier window itself.
             # The batched reference call reads the supplied query mask directly.
@@ -979,13 +979,13 @@ class KthRowsDrafter:
             shared_prefix_projection=True,
             **({'batched_uncached': True} if batched_uncached else {}),
             **({'prefix_keys': sequences, 'prefix_lengths': lengths} if multi_cached else {}),
-            **({"prefix_key": sequences[0] if len(sequences) == 1 else None, "run_config": run_config if run_config is not None else getattr(self, 'run_config', None)} if isinstance(d.adapter.head, ServingCtxKVC1Head) else {}))
+            **({"prefix_key": sequences[0] if len(sequences) == 1 else None, "run_config": run_config if run_config is not None else getattr(self, 'run_config', None)} if isinstance(d.adapter.head, ServingContextKVHead) else {}))
         # These are per-sequence protocol state transitions; tensor work is batched.
         if admission:
             sequences[-1].staged.stage(start_position=lengths[-1], token_ids=ids[-1:],
                                        predicted_hidden=predicted[-1:])
             sequences[-1].pending_block = blocks[-1]
-            if isinstance(d.adapter.head, ServingCtxKVC1Head):
+            if isinstance(d.adapter.head, ServingContextKVHead):
                 d.adapter.head.prime_admission_prefix(sequences[-1], prefix[:1], run_config=(run_config if run_config is not None else getattr(self, 'run_config', None)))
             return predicted
         for row, (s, b, length) in enumerate(zip(sequences, blocks, lengths)):
@@ -1000,8 +1000,8 @@ class KthRowsDrafter:
                                   batched_uncached=True, admission=True, run_config=(run_config if run_config is not None else getattr(self, 'run_config', None)))
 
     def _admission_fast_ok(self, blocks):
-        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
-        return (len(blocks) > 1 and isinstance(self.drafter.adapter.head, ServingCtxKVC1Head))
+        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingContextKVHead
+        return (len(blocks) > 1 and isinstance(self.drafter.adapter.head, ServingContextKVHead))
 
     def _admission_forward(self, exact, ids, run_config=None):
         """_stage_packed(admission=True)'s adapter call on one shared prefix, as a pure function.
@@ -1082,7 +1082,7 @@ class KthRowsDrafter:
     @torch.inference_mode()
     def _stage_admission_fast(self, sequence, blocks, run_config=None):
         """stage_admission_batch with the prewarmed graph of this prompt length, else eager."""
-        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
+        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingContextKVHead
         from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
         d = self.drafter
         if any(b.draft_ids.numel() != draft_width(run_config=run_config if run_config is not None else getattr(self, 'run_config', None)) for b in blocks):
@@ -1117,7 +1117,7 @@ class KthRowsDrafter:
         sequence.staged.stage(start_position=exact.shape[1], token_ids=ids[-1:],
                               predicted_hidden=predicted[-1:])
         sequence.pending_block = blocks[-1]
-        if isinstance(d.adapter.head, ServingCtxKVC1Head):
+        if isinstance(d.adapter.head, ServingContextKVHead):
             d.adapter.head.prime_admission_prefix(sequence, exact, run_config=(run_config if run_config is not None else getattr(self, 'run_config', None)))
         return predicted
 
@@ -1125,11 +1125,11 @@ class KthRowsDrafter:
     def _stage_batch_graph(self, sequences, blocks, *, run_config=None):
         """JETSPEC_BATCH_DRAFT_GRAPH_FRONT=1, N>1: the adapter's window query for all N requests
         in one captured call over per-sequence prefix K/V slots (padded to the batch bucket)."""
-        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
+        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingContextKVHead
         from jetspec.engines.jetspec_plus_plus.wire.protocol import draft_width
         d = self.drafter
         head = d.adapter.head
-        if not isinstance(head, ServingCtxKVC1Head):
+        if not isinstance(head, ServingContextKVHead):
             raise ValueError('JETSPEC_BATCH_DRAFT_GRAPH requires the serving C1 adapter')
         width = draft_width(run_config=run_config if run_config is not None else getattr(self, 'run_config', None))
         if any(b.draft_ids.numel() != width for b in blocks):
@@ -1146,7 +1146,7 @@ class KthRowsDrafter:
 
     @torch.inference_mode()
     def _stage_host_fast(self, sequences, blocks, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
+        from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingContextKVHead
         d = self.drafter
         seq, block = sequences[0], blocks[0]
         # serving: the window is [c, d1..d_width] (16 rows with JETSPEC_DRAFTS=15), as _stage_packed
@@ -1169,7 +1169,7 @@ class KthRowsDrafter:
         predicted = d.adapter.head(token_embeddings=d.embed_tokens(ids), h_prev=prefix[:, -1:],
             prefix_h=prefix, prefix_position_ids=positions[:length][None],
             query_position_ids=positions[length:][None], attention_mask=mask, shared_prefix_projection=True,
-            **({"prefix_key": seq} if isinstance(d.adapter.head, ServingCtxKVC1Head) else {}))
+            **({"prefix_key": seq} if isinstance(d.adapter.head, ServingContextKVHead) else {}))
         host_mark('adapter_ret', run_config=self.run_config)
         seq.staged.stage(start_position=length, token_ids=ids, predicted_hidden=predicted)
         seq.pending_block = block
@@ -2684,7 +2684,7 @@ def exact_adapter_rows(drafter, sequence, ids, run_config=None):
     the next staging call rebuilds from position 0 as it does without the lab (the rule of
     the historical admission seed).  Returns [R, B, H].
     """
-    from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingCtxKVC1Head
+    from jetspec.engines.jetspec_plus_plus.draft.drafter import ServingContextKVHead
     head = drafter.adapter.head
     device = drafter.device
     prefix = sequence.exact_hidden(device=device, dtype=drafter.dtype)
@@ -2695,7 +2695,7 @@ def exact_adapter_rows(drafter, sequence, ids, run_config=None):
     allowed = torch.cat((torch.ones(width, length, dtype=torch.bool, device=device), window), dim=1)
     mask = prefix.new_zeros((1, 1) + tuple(allowed.shape)).masked_fill_(
         ~allowed, torch.finfo(prefix.dtype).min)
-    cached = isinstance(head, ServingCtxKVC1Head)
+    cached = isinstance(head, ServingContextKVHead)
     held = cached and getattr(head, '_c1_prefix_key', None) is sequence
     unique, inverse = torch.unique(ids, dim=0, return_inverse=True)
     rows = [head(token_embeddings=drafter.embed_tokens(row[None].to(device)), h_prev=prefix[:, -1:],
