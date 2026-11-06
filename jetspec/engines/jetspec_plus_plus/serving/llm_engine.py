@@ -8,7 +8,7 @@ from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.scheduler import Scheduler
 from jetspec.engines.jetspec_plus_plus.models.target import JETSPEC_TARGET_LAYER_IDS
 from jetspec.engines.jetspec_plus_plus.draft.rank import DraftRunner
-from jetspec.engines.jetspec_plus_plus._source_checkout import baseline_module
+from jetspec.engines.jetspec_plus_plus.serving._source_checkout import baseline_module
 from jetspec.engines.jetspec_plus_plus.verify.speculator import SpeculatorAsync
 from jetspec.engines.jetspec_plus_plus.verify.step import InferenceStep
 from jetspec.engines.jetspec_plus_plus.verify.step import AutoRegressiveStep

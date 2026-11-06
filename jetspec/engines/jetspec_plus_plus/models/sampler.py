@@ -1,13 +1,13 @@
 # Adaptation: package relocation and deferred optional dependencies.
 import torch
 from torch import nn
-from jetspec.engines.jetspec_plus_plus._optional import flashinfer
+from jetspec.engines.jetspec_plus_plus.kernels._optional import flashinfer
 
 from jetspec.engines.jetspec_plus_plus.models.sampling import apply_sampler_x_rescaling
 
 # Monkey-patch flashinfer 0.5.2 bug: get_seed_and_offset builds state on CPU
 # but generator is on CUDA, causing TypeError: RNG state must be a torch.ByteTensor.
-from jetspec.engines.jetspec_plus_plus._optional import sampling as _fi_samp
+from jetspec.engines.jetspec_plus_plus.kernels._optional import sampling as _fi_samp
 _orig_get_seed_and_offset = _fi_samp.get_seed_and_offset
 def _fixed_get_seed_and_offset(increment, generator=None, device=None):
     if generator is None:

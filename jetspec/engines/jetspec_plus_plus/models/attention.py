@@ -7,8 +7,8 @@ import sys
 import torch
 from torch import nn
 from torch.nn import functional as torch_functional
-from jetspec.engines.jetspec_plus_plus._optional import triton
-from jetspec.engines.jetspec_plus_plus._optional import tl
+from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
+from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
 
 # A spawned rank imports this module before it installs its engine. install_engine binds the
 # backend again, here and in every module that imports the name.

@@ -12,7 +12,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from transformers import AutoTokenizer, AutoConfig
 import os
-from jetspec.engines.jetspec_plus_plus._optional import flashinfer
+from jetspec.engines.jetspec_plus_plus.kernels._optional import flashinfer
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.models.registry import model_class as target_model_class, model_spec
@@ -39,7 +39,7 @@ from jetspec.engines.jetspec_plus_plus.serving.same_gpu_dist import install_cpu_
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import append_committed_taps
 from jetspec.engines.jetspec_plus_plus.serving.graphs import run_verify_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import run_decode_cudagraph
-from jetspec.engines.jetspec_plus_plus._source_checkout import baseline_module
+from jetspec.engines.jetspec_plus_plus.serving._source_checkout import baseline_module
 from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_verify_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import get_custom_mask
