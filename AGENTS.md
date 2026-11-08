@@ -4,7 +4,7 @@ This file tells coding agents how this repository is organized and how to run ea
 
 ## Repository map
 
-- `jetspec/engines/jetspec_plus_plus/draft/reference/`: JetSpec++ eager round loop and reader, using the shared engine method. It has its own `AGENTS.md`.
+- `jetspec/engines/jetspec_plus_plus/draft/reference/`: JetSpec++ eager round loop and local loaders, using the shared engine method. The acceptance-length reader is `bench/jetspec_plus_plus/reader.py`. It has its own `AGENTS.md`.
 - `jetspec/engines/jetspec_plus_plus/`: JetSpec++ shared method and serving engine (pipelined draft and verify on two GPUs). It has its own `AGENTS.md`.
 - `jetspec/methods/jetspec/`, `jetspec/engines/jetspec/`: JetSpec tree drafting and its engine.
 - `bench/jetspec_plus_plus/`: `verify.py`, `tau.py`, `speedup.py`.
@@ -13,7 +13,7 @@ This file tells coding agents how this repository is organized and how to run ea
 
 The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three parts. The shared method is in `jetspec/engines/jetspec_plus_plus/draft/method/`. The eager route in `draft/reference/` and the serving engine use it; serving adds CUDA graphs and fused kernels. Paths below are relative to the engine package.
 
-- **Pipelined drafting and verification.** The target model runs on one GPU and the draft model on a second GPU. While the target verifies block t, the draft model drafts block t+1, so the draft time hides under the verify time. `draft/reference/round.py` (`RoundDriver`) runs one round.
+- **Pipelined drafting and verification.** The target model runs on one GPU and the draft model on a second GPU. While the target verifies block t, the draft model drafts block t+1, so the draft time hides under the verify time. In the serving engine, `ChainRoundDriver` in `draft/driver.py` runs the draft side of each round. The eager `RoundDriver` in `draft/reference/round.py` runs one round on one GPU.
 - **Foresight drafting.** While block t is in verification, two facts are unknown: how many draft tokens the target accepts, and the anchor token (the target's own token after the accepted prefix, which starts block t+1).
   - A hidden-to-hidden adapter (`draft/method/adapter.py`) predicts the target hidden states of block t.
   - The anchor decoder (`draft/method/decoder/anchor.py`) is the target's last layers, final norm and LM head, untrained. It reads the predicted states and scores the possible anchor tokens.

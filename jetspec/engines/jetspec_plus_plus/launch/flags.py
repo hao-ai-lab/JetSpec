@@ -235,7 +235,6 @@ def bench_parser():
     parser.add_argument("--k", type=int, default=6, help="Speculative decoding k value")
     parser.add_argument("--async", action="store_true", help="Enable async speculative decoding")
     parser.add_argument("--f", type=int, default=3, help="Async fan out value")
-    parser.add_argument("--fl", type=int, nargs='+', default=None, help="Fan out list (e.g., --fl 1 3 4 becomes [1, 3, 4])")
     parser.add_argument("--flh", type=int, nargs='+', default=None, help="Fan out list (e.g., --flh 1 3 4 becomes [1, 3, 4])")
     parser.add_argument("--flm", type=int, nargs='+', default=None, help="Fan out list miss (e.g., --flm 1 3 4 becomes [1, 3, 4])")
     parser.add_argument("--backup", type=str, choices=["jit", "fast"], default="jit", help="Backup strategy (jit or fast)")
@@ -310,8 +309,6 @@ def bench_parser():
         default=float("inf"),
         help="Candidate wait budget in ms (0=never wait, inf=unbounded)",
     )
-    parser.add_argument("--jetspec-exclude-rejected", action="store_true",
-                        help="Exclude the preceding rejected token at correction slot 1")
     _argument(parser, 'prompts-json', type=str, default=None, help='Use exact prompt token ids from an exported JSON file')
 
     # Sweep mode: load engine once, run multiple configs
