@@ -352,10 +352,7 @@ class DraftPrefill:
 
         # 6) run the draft model in prefill mode
         positions = prefill_ctxt["positions"]
-        if self.config.use_eagle:
-            self.run_model(input_ids, positions, is_prefill=True, last_only=True, hidden_states=eagle_acts)
-        else:
-            self.run_model(input_ids, positions, is_prefill=True, last_only=True, hidden_states=eagle_acts)
+        self.run_model(input_ids, positions, is_prefill=True, last_only=True, hidden_states=eagle_acts)
 
         # 7) clean up
         reset_context()
@@ -1551,7 +1548,8 @@ class DraftRunner(
                 print(f"W234_ROWS=enabled F={branch_count(run_config=run_config)} live-kth adapter=shared-prefix", flush=True)
                 # serving: the miss fallback row and the round-ahead draft deadline (both default off)
                 self._w320_redraft = miss_redraft(run_config=run_config)
-                self._w320_force = self._w320_redraft and miss_redraft_force(run_config=run_config)
+                # Validate the force setting here; the target reads it, not this rank.
+                self._w320_redraft and miss_redraft_force(run_config=run_config)
                 self._w320_clock = DeadlineClock(run_config=self.run_config) if draft_deadline() else None
                 self.jetspec_rows.deadline = self._w320_clock
                 if (self._w320_redraft or self._w320_clock is not None) and (

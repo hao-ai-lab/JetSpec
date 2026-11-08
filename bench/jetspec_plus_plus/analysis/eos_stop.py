@@ -1,13 +1,16 @@
 """Recompute EOS-stopped serving metrics from saved read files, without a model."""
 
-from jetspec.engines.jetspec_plus_plus.launch.records import (
-    ROUND_METHODS, round_is_miss, stop_lengths, compute_eos_stopped,
-)
-
 import argparse
 import csv
 import json
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path[:0] = [str(ROOT)]
+from jetspec.engines.jetspec_plus_plus.launch.records import (
+    ROUND_METHODS, round_is_miss, stop_lengths, compute_eos_stopped,
+)
 
 
 FIELDS = ("read", "method", "tau_to_cap", "tau_eos_stopped", "tps_to_cap",
@@ -54,6 +57,8 @@ def rows_from_path(path, *, eos_token_ids=None):
             if method is None:
                 manifest = _sidecar(read_path, ".manifest.json") or raw.get("run_manifest", {})
                 method = manifest.get("values", {}).get("method_mode")
+                # The runner records the engine's mode name; map it back to the read method.
+                method = {"spec": "spec_sync", "spec_async": "ssd"}.get(method, method)
             if method is None:
                 raise ValueError(f"{read_path}: missing method in populations or run manifest")
             reads.append((read_path, method, raw["max_new"]))

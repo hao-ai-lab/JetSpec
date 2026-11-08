@@ -15,4 +15,4 @@ This folder holds the JetSpec++ method, serving engine and eager reference route
 
 ## Eager reference route
 
-`draft/reference/` contains the one-GPU round loop, local artifact loaders and reader. It uses `draft/method/` for adapter, decoder, pass, schedule, refresh and row-selection computations. See its [guide](draft/reference/README.md) for token verification and acceptance-length commands.
+`draft/reference/` contains the one-GPU round loop and local artifact loaders. The acceptance-length reader is `bench/jetspec_plus_plus/reader.py`. It uses `draft/method/` for adapter, decoder, pass, schedule, refresh and row-selection computations. See its [guide](draft/reference/README.md) for token verification and acceptance-length commands.

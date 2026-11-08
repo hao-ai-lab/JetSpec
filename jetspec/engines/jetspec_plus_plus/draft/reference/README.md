@@ -1,6 +1,6 @@
 # JetSpec++ torch reference
 
-This folder holds the eager one-GPU JetSpec++ round loop, local artifact loaders and acceptance-length reader. It uses the shared computations in [`../method/`](../method/): adapter, anchor decoder, passes, refresh decisions, calibration, schedule and row selection. The serving engine uses those computations with CUDA graphs and fused kernels. The shared torch core verifies each proposal against the target and emits the accepted tokens plus the target correction, which preserves greedy autoregressive output.
+This folder holds the eager one-GPU JetSpec++ round loop and local artifact loaders. The acceptance-length reader is [`bench/jetspec_plus_plus/reader.py`](../../../../../bench/jetspec_plus_plus/reader.py). It uses the shared computations in [`../method/`](../method/): adapter, anchor decoder, passes, refresh decisions, calibration, schedule and row selection. The serving engine uses those computations with CUDA graphs and fused kernels. The shared torch core verifies each proposal against the target and emits the accepted tokens plus the target correction, which preserves greedy autoregressive output.
 
 ## One round
 

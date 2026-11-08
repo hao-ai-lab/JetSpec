@@ -45,8 +45,9 @@ optimized inference engine, and target loaders, with a strict one-way dependency
   public API `jetspec.tree` — never `jetspec.methods.jetspec.tree._core`** (the `_core` package is
   internal and may change without notice).
 - **`jetspec/models/`** — target/draft-head model loading and model utilities.
-- **`jetspec/engines/jetspec_plus_plus/draft/reference/`** — the eager JetSpec++ round loop,
-  local checkpoint loaders and reader, using the shared engine method.
+- **`jetspec/engines/jetspec_plus_plus/draft/reference/`** — the eager JetSpec++ round loop
+  and local checkpoint loaders, using the shared engine method. The acceptance-length reader is
+  `bench/jetspec_plus_plus/reader.py`.
 - **`jetspec/engines/jetspec_plus_plus/`** — the shared JetSpec++ method
   (`jetspec/engines/jetspec_plus_plus/draft/method/`) and serving engine. Its
   [README](jetspec/engines/jetspec_plus_plus/README.md) maps the code and lists

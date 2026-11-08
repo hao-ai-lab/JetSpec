@@ -5,12 +5,12 @@ import argparse
 import json
 from pathlib import Path
 import random
-from jetspec.engines.jetspec_plus_plus.launch.records import quantile, stats, aligned_round_ms, anatomy
 import sys
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT)]
+from jetspec.engines.jetspec_plus_plus.launch.records import quantile, stats, aligned_round_ms, anatomy
 from bench.jetspec_plus_plus.analysis import paper_metrics
 from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 

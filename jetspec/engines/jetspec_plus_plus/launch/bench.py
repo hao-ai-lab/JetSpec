@@ -44,8 +44,6 @@ def parse_arguments(*, run_config=None):
     from jetspec.engines.jetspec_plus_plus.launch.flags import bench_parser
     parser = bench_parser()
     args = parser.parse_args()
-    if args.jetspec_exclude_rejected:
-        raise ValueError("--jetspec-exclude-rejected is unsupported: the engine has no reader")
     for name, flag in ((environment_name('model', 'model_settings.blockhead'), args.blockhead),
                        (environment_name('model', 'model_settings.sync_drafter'), args.jetspec_sync_drafter)):
         if name in values and values[name] != flag:

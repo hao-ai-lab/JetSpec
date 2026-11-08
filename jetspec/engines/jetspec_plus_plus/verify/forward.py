@@ -743,6 +743,8 @@ class Verifier(VerifierBase):
     def prefill(self, seqs: list[Sequence], eagle: bool = False) -> VerifyResult:
         if self.hybrid_verify_audit and any(seq.temperature > 0 for seq in seqs):
             raise ValueError("JETSPEC_HYBRID_VERIFY_AUDIT only supports T=0 argmax auditing")
+        if self.hybrid_verify_audit and eagle:
+            raise ValueError("JETSPEC_HYBRID_VERIFY_AUDIT does not support the EAGLE prefill")
         from jetspec.engines.jetspec_plus_plus.wire.hybrid import eager_pair
         if (self._jetspec_verify_device or eager_pair(self.target_model_runner)) and self._hash16_weights is None:
             self._hash16_weights = make_hash16_weights(self.device)
