@@ -3,7 +3,8 @@
 import sys as _tool_sys
 if __name__ == "__main__" and any(a in ("-h", "--help") for a in _tool_sys.argv[1:]):
     from jetspec.engines.jetspec_plus_plus.serving.entrypoints import cpu_help as _cpu_help
-    _cpu_help(__file__)
+    _cpu_help(__file__, arguments_source=__file__.replace("bench.py", "flags.py"),
+              function="bench_parser")
 
 import os
 
@@ -22,7 +23,7 @@ from random import randint, seed
 from jetspec.engines.jetspec_plus_plus import LLM, SamplingParams
 from jetspec.engines.jetspec_plus_plus.serving.llm_engine import METRICS
 from transformers import AutoTokenizer
-from jetspec.engines.jetspec_plus_plus.kernels._optional import wandb
+from jetspec.engines.jetspec_plus_plus.runtime._optional import wandb
 from jetspec.engines.jetspec_plus_plus.launch import bench_helpers
 from jetspec.engines.jetspec_plus_plus.launch.bench_helpers import get_model_paths
 from jetspec.engines.jetspec_plus_plus.launch.bench_guards import exported_prompt_ids, generate_inputs_fail_closed
@@ -40,115 +41,9 @@ def parse_arguments(*, run_config=None):
     from jetspec.engines.jetspec_plus_plus.runtime.run_config import config_environment
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     values = config_environment(run_config) if run_config is not None else {}
-    parser = argparse.ArgumentParser(description="Serving benchmark")
-
-    # Model configuration
-    parser.add_argument("--size", type=str, choices=["0.6", "1.7", "4", "8", "14", "32", "1", "3", "70"], default="70",
-                        help="Model size in billions of parameters (0.6, 1.7, 4, 8, 14, 32, 1, 3, 70)")
-    parser.add_argument("--llama", action="store_true", default=True, help="Use Llama models (default)")
-    parser.add_argument("--qwen", action="store_true", help="Use Qwen models instead of Llama")
-    parser.add_argument("--draft", type=str, default=None,
-                        help="Draft model size (0.6 for Qwen-0.6B, 1 for Llama-1B) or path to draft model")
-
-    # Execution configuration
-    parser.add_argument("--eager", action="store_true", help="Use eager execution (disable CUDA graphs)")
-    parser.add_argument("--gpus", type=int, default=1, help="Total number of gpus")
-
-    # Speculative decoding configuration
-    parser.add_argument("--spec", action="store_true", help="Enable speculative decoding")
-    parser.add_argument("--eagle", action="store_true", help="Enable eagle speculative decoding (implies --spec, uses default eagle draft for model)")
-    parser.add_argument("--k", type=int, default=6, help="Speculative decoding k value")
-    parser.add_argument("--async", action="store_true", help="Enable async speculative decoding")
-    parser.add_argument("--f", type=int, default=3, help="Async fan out value")
-    parser.add_argument("--fl", type=int, nargs='+', default=None, help="Fan out list (e.g., --fl 1 3 4 becomes [1, 3, 4])")
-    parser.add_argument("--flh", type=int, nargs='+', default=None, help="Fan out list (e.g., --flh 1 3 4 becomes [1, 3, 4])")
-    parser.add_argument("--flm", type=int, nargs='+', default=None, help="Fan out list miss (e.g., --flm 1 3 4 becomes [1, 3, 4])")
-    parser.add_argument("--backup", type=str, choices=["jit", "fast"], default="jit", help="Backup strategy (jit or fast)")
-
-    # Memory and batching configuration
-    parser.add_argument("--block_sz", type=int, default=256, help="KV cache block size (see config.py: kvcache_block_size)")
-    parser.add_argument("--b", type=int, default=1, help="Maximum number of sequences in batch")
-    parser.add_argument("--max_model_len", type=int, default=8192, help="Maximum model length")
-
-    # Generation configuration
-    parser.add_argument("--input_len", type=int, default=128, help="Maximum input length")
-    parser.add_argument("--output_len", type=int, default=512, help="Maximum output length")
-    parser.add_argument("--stop_at_eos", action="store_true", help="Stop each sequence at end-of-sequence (default: ignore EOS and run to --output_len)")
-    parser.add_argument("--numseqs", type=int, default=128, help="Number of sequences to generate")
-    parser.add_argument("--temp", type=float, default=0.0, help="Temperature for generation")
-    parser.add_argument("--dtemp", type=float, default=None, help="Draft async temperature (overrides --temp)")
-    parser.add_argument("--seed", type=int, default=0, help="Sampling seed")
-    parser.add_argument("--x", type=float, default=None, help="Sampler x for generation (Saguaro sampling coefficient)")
-
-    # Example mode
-    parser.add_argument("--example", action="store_true", help="Use real prompts like in example.py and print generations (supports up to batch size 8)")
-    parser.add_argument("--humaneval", action="store_true", help="Use HumanEval prompts")
-    parser.add_argument("--alpaca", action="store_true", help="Use Alpaca prompts")
-    parser.add_argument("--c4", action="store_true", help="Use C4 prompts")
-    parser.add_argument("--ultrafeedback", action="store_true", help="Use UltraFeedback prompts")
-    parser.add_argument("--random", action="store_true", help="Use random tokens instead of dataset prompts")
-    parser.add_argument("--prompt_offset", type=int, default=0, help="Skip first N prompts per dataset (for variance testing)")
-    parser.add_argument("--all", action="store_true", help="Use numseqs from each dataset (union dataset with numseqs*4 total)")
-    parser.add_argument("--chat_template", action="store_true", help="Wrap dataset prompts in chat template before tokenizing")
-
-    # Debugging and logging
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode (saves draft inputs during prefill)")
-    parser.add_argument("--max-steps", type=int, default=None, help="Maximum number of steps to run")
-    parser.add_argument("--wandb", action="store_true", help="Log metrics to wandb")
-    parser.add_argument("--group", type=str, default=None, help="Wandb group name")
-    parser.add_argument("--name", type=str, default=None, help="Wandb run name")
-    parser.add_argument("--output-json", type=str, default=None,
-                        help="Write outputs, token ids, timing, and metrics as JSON; supports {run_name}, {b}, {temp}")
-    parser.add_argument("--jetspec-taps", action="store_true",
-                        help="Capture and ship target layers 1, 9, 17, 25, and 33")
-    parser.add_argument("--blockhead", type=str, default=None,
-                        help="Serve a linear block-head checkpoint in the serial slot")
-    parser.add_argument("--jetspec-sync-drafter", type=str, default=None,
-                        help="Serve a DFlash-class drafter checkpoint in the serial slot, fresh context")
-    parser.add_argument("--taps-dump", type=str, default=None,
-                        help="Write completed per-sequence JetSpec taps as a torch file")
-    parser.add_argument("--jetspec", action="store_true",
-                        help="Use the JetSpec try-all-k protocol")
-    parser.add_argument("--jetspec-sync", action="store_true",
-                        help="Test-only sequential proof: draft after each actual (k, f)")
-    parser.add_argument("--jetspec-hyp", type=int, default=16,
-                        help="Number of k hypotheses, starting at k=0")
-    parser.add_argument("--jetspec-passes", type=int, default=3,
-                        help="Jacobi refinement passes per candidate set")
-    parser.add_argument("--jetspec-miss", choices=["ar", "verify"], default="ar",
-                        help="AR fallback or verify drafts after a correction miss")
-    parser.add_argument(
-        "--jetspec-verify-backend",
-        choices=["flashinfer_paged", "sdpa"],
-        default="flashinfer_paged",
-        help="Target block-verification attention backend",
-    )
-    parser.add_argument(
-        "--jetspec-draft-graphs",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Capture the JetSpec block head by (H, context bucket)",
-    )
-    parser.add_argument(
-        "--jetspec-wait-ms",
-        type=float,
-        default=float("inf"),
-        help="Candidate wait budget in ms (0=never wait, inf=unbounded)",
-    )
-    parser.add_argument("--jetspec-exclude-rejected", action="store_true",
-                        help="Exclude the preceding rejected token at correction slot 1")
-    parser.add_argument("--prompts-json", type=str, default=None,
-                        help="Use exact prompt token ids from an exported JSON file")
-
-    # Sweep mode: load engine once, run multiple configs
-    parser.add_argument("--sweep", type=str, default=None,
-                        help="JSON list of override dicts. Sweepable keys: temp, b. "
-                             "Each dict also supports 'name' for wandb run name.")
-
+    from jetspec.engines.jetspec_plus_plus.launch.flags import bench_parser
+    parser = bench_parser()
     args = parser.parse_args()
-    if args.jetspec_exclude_rejected:
-        raise ValueError("--jetspec-exclude-rejected is unsupported: the engine has no reader")
     for name, flag in ((environment_name('model', 'model_settings.blockhead'), args.blockhead),
                        (environment_name('model', 'model_settings.sync_drafter'), args.jetspec_sync_drafter)):
         if name in values and values[name] != flag:

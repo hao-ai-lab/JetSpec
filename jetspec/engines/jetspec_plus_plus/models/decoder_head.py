@@ -7,7 +7,7 @@ target-relative index/shard names to sha256 digests, or ``file`` with the pinned
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import json
 import copy
@@ -234,7 +234,7 @@ def decoder_layer_lean(layer, hidden, rope, mask, cache, cache_position, fused, 
     input add+norm kernel.  Returns the same ``(mlp_output, residual)`` pair
     for the caller to sum or to hand on.
     """
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     from transformers.integrations.sdpa_attention import sdpa_attention_forward
     attn = layer.self_attn
     cos, sin = rope
@@ -293,7 +293,7 @@ def decoder_layer_lean(layer, hidden, rope, mask, cache, cache_position, fused, 
 
 def _decoder_gate_up(mlp, source):
     """One opt-in gate/up GEMM, with independent singleton and batched knobs."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     singleton = (kernel_enabled('decoder_single_gateup_packed', '1')
                  and source.ndim == 3 and source.shape[0] == 1)
     if ((not singleton)):
@@ -318,7 +318,7 @@ def _prepare_decoder_gate_up(mlp):
 
 def decoder_prefix_kv_lean(layer, hidden, rope, fused, *, pending=None):
     """``decoder_prefix_kv`` with one norm launch and the fused k norm + rotary."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     attn = layer.self_attn
     cos, sin = rope
     head_dim = attn.head_dim
@@ -342,7 +342,7 @@ def decoder_graph_lean():
     """JETSPEC_DECODER_GRAPH_LEAN=1: the graphed regime's decoder parts on the
     certified kernels (``decoder_layer_lean`` with JETSPEC_C1_LEAN=1, split around
     its attention so each side is one shape-only graph)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return kernel_enabled('decoder_graph_lean', '1')
 
 
@@ -355,7 +355,7 @@ def decoder_graph_window(*, run_config=None):
 
 def batch_head_epilogue_enabled(count, dtype, cap, *, run_config=None):
     """The C>1 budget/BLEND graph consumes offers and two decoder scalars only."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return (kernel_enabled('w632_head_fuse', '1')
             and count > 1 and dtype == torch.bfloat16
             and setting(run_config, 'engine', 'engine_settings.batch_draft_graph', '0') == '1'
@@ -369,7 +369,7 @@ def batch_head_epilogue_enabled(count, dtype, cap, *, run_config=None):
 
 
 def check_decoder_graph_lean_regime(*, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if decoder_graph_window(run_config=run_config) and not decoder_graph_lean():
         raise ValueError('JETSPEC_DECODER_GRAPH_WINDOW=1 requires JETSPEC_DECODER_GRAPH_LEAN=1')
     if not decoder_graph_lean():
@@ -384,7 +384,7 @@ def check_decoder_graph_lean_regime(*, run_config=None):
 def decoder_lean_project(layer, fused, hidden, pending, rope):
     """``decoder_layer_lean`` up to its attention: the input (add+)norm, the q and
     k/v projections with their norm + rotary.  Returns (query, key, value, hidden)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     attn = layer.self_attn
     cos, sin = rope
     head_dim = attn.head_dim
@@ -410,7 +410,7 @@ def decoder_lean_project(layer, fused, hidden, pending, rope):
 
 def _decoder_packed_project(attn, fused, source, rope, *, prefix=False):
     """One packed GEMM; CUDA postprocessing reads the split's row stride."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     weight, bias, widths = (attn._decoder_prefix_kv if prefix else attn._decoder_qkv)
     projection = attn.k_proj if prefix else attn.q_proj
     precision = getattr(projection, 'precision', None)
@@ -470,7 +470,7 @@ def decoder_grouped_attention(fused, query, key, value, mask, scale):
 
 def decoder_lean_attention(layer, fused, query, key, value, mask, *, length=None, count=None):
     """``decoder_layer_lean``'s lean attention (repeat_kv, the memory-efficient kernel)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if (length is not None and query.is_cuda
             and (((kernel_enabled('decoder_attn_len', '1'))))):
         from jetspec.engines.jetspec_plus_plus.kernels.len_attention import attend as attend_len
@@ -614,7 +614,7 @@ class DeviceAnchorOffers:
 def _topk_offers(logits, rejected, q_hats, cap, *, run_config=None):
     """JETSPEC_ANCHOR_SELECT=topk: the exact top-k selection (heads/topk_select.py), eager, or
     one CUDA graph per shape under the graphed rows regime; offers come home in one copy."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     global _GRAPHED_SELECT
     from jetspec.engines.jetspec_plus_plus.draft.heads.topk_select import GraphedSelect
     from jetspec.engines.jetspec_plus_plus.draft.heads.topk_select import fast_offers_topk
@@ -1265,166 +1265,12 @@ def hybrid_anchor_window(gdn_layer, attention_layer, norm, lm_head, hidden,
 
 
 
-class AnchorDecoder(MethodAnchorDecoder):
-    """Two trained target layers over one private adapter window per round."""
-    def __init__(self, layers, norm, lm_head, *, prefix_layers=None, rotary=None, root=None,
-                 hidden_size=None, rope_theta=None, capacity=None, spec=None,
-                 state_policy=None, run_config=None):
-        self.run_config = run_config
-        super().__init__(layers=layers, prefix_layers=prefix_layers, norm=norm,
-                         lm_head=lm_head, rotary=rotary, root=root, hidden_size=hidden_size or norm.weight.numel())
-        self.spec = spec
-        self.tap_position = spec.taps.index(max(spec.taps)) if spec is not None and spec.taps else -1
-        self._uses_shipped_state = rope_theta is not None
-        self.state_policy = dict(
-            {'full_attention': 'ship', 'linear_attention': 'ship'} if self._uses_shipped_state
-            else {'full_attention': 'rebuild', 'linear_attention': 'recompute'})
-        self.state_policy.update(state_policy or {})
-        allowed_sources = {'full_attention': {'ship', 'rebuild'},
-                           'linear_attention': {'ship', 'recompute'}}
-        if any(kind not in allowed_sources or source not in allowed_sources[kind]
-               for kind, source in self.state_policy.items()):
-            raise ValueError('unsupported decoder state source')
-        if self._uses_shipped_state:
-            self.tail = hybrid_tail(layers)
-            self.rope_theta = float(rope_theta)
-            self.hidden_size = norm.weight.numel()
-            self.capacity = capacity
-            self._state = None
-        self._lm_head_kn = None
-        self._prefixes = {}
-        self._prefix_finalizers = {}
-        self._static_prefix_pool = None
-        self._batch_frozen = {}
-        self._recorded_inputs = 0
-        self._window_graphs = {}
-        self._window_graph_states = {}
-        self._graphs_warmed = False
-        self._window_mask_cache = None
-        self._rope_table = None
-        self._loop_plans = {}
-        self._loop_entries = {}
-        self._causal_table = None
-
-    def _tap_hidden(self, hidden):
-        """Select the spec's deepest tap from packed adapter predictions."""
-        if self.spec is None or hidden.shape[-1] == self.hidden_size:
-            return hidden[..., -self.hidden_size:]
-        start = self.tap_position * self.hidden_size
-        return hidden[..., start:start + self.hidden_size]
-
-    def forward(self, hidden, **state):
-        if not self._uses_shipped_state:
-            return super().forward(hidden, **state)
-        if hidden.ndim == 3:
-            count = hidden.shape[0]
-            names = ('recurrent', 'conv', 'prefix_key', 'prefix_value')
-            if any(state[name].shape[0] != count for name in names if name in state):
-                raise ValueError('one private decoder state is required per sequence')
-            outputs = []
-            for row in range(count):
-                private = {name: value[row] if name in names else value
-                           for name, value in state.items()}
-                if 'layer_states' in private:
-                    private['layer_states'] = {index: {name: tensor[row] for name, tensor in values.items()}
-                                               for index, values in private['layer_states'].items()}
-                if isinstance(private.get('start'), torch.Tensor) and private['start'].ndim:
-                    private['start'] = private['start'][row]
-                outputs.append(super().forward(hidden[row], **private))
-            return tuple(torch.stack([output[i] for output in outputs]) for i in range(2))
-        return super().forward(hidden, **state)
-
-    def _sequence_state(self, sequence, length):
-        """Resolve each kind's prefix source without writing committed target state."""
-        indices = self.spec.tail if self.spec is not None else tuple(range(len(self.layers)))
-        supplied = getattr(sequence, 'decoder_state', None)
-        if supplied is None and 'ship' in self.state_policy.values():
-            self._ensure_warmup_state(sequence)
-            supplied = {}
-            for index, layer in zip(indices, self.layers):
-                if hasattr(layer, 'linear_attn'):
-                    supplied[index] = dict(recurrent=sequence.hybrid_recurrent, conv=sequence.hybrid_conv)
-                else:
-                    supplied[index] = dict(prefix_key=sequence.hybrid_prefix_key[:length],
-                                           prefix_value=sequence.hybrid_prefix_value[:length])
-        if all(source == 'ship' for source in self.state_policy.values()):
-            return {'layer_states': supplied}
-        parameter = next(self.layers.parameters())
-        hidden = sequence.taps[:length, self.tap_position, :].to(parameter)
-        states = {}
-        for index, layer in zip(indices, self.layers):
-            kind = 'linear_attention' if hasattr(layer, 'linear_attn') else 'full_attention'
-            if kind == 'linear_attention':
-                gdn = layer.linear_attn
-                recurrent = torch.zeros_like(gdn.committed_recurrent)
-                conv = torch.zeros_like(gdn.committed_conv)
-                if length:
-                    mixed, recurrent, conv = scan_gdn_window(gdn,
-                        layer.input_layernorm(hidden), recurrent, conv, return_state=True)
-                    hidden = tail_mlp(layer, hidden + mixed)
-                rebuilt = dict(recurrent=recurrent, conv=conv)
-            else:
-                attn = layer.self_attn
-                empty = hidden.new_empty(0, attn.kv_heads, attn.dim)
-                window = {}
-                if length:
-                    hidden = hybrid_attention_tail(layer, hidden, prefix_key=empty,
-                        prefix_value=empty, start=0, rope_theta=self.rope_theta, window_kv=window)
-                    key, value = window['kv']
-                else:
-                    key = value = empty
-                rebuilt = dict(prefix_key=key, prefix_value=value)
-            states[index] = supplied[index] if self.state_policy[kind] == 'ship' else rebuilt
-        return {'layer_states': states}
-
-    def _rope(self, hidden, position_ids, *, run_config=None):
-        """Rotary rows gathered from one table on the fused path; each position's
-        cos/sin is a single product, so the gather is bitwise the rotary call.
-        The graphed lean decoder (JETSPEC_DECODER_GRAPH_LEAN) gathers too."""
-        if not (rows_fused(hidden, run_config=self.run_config) or (decoder_graph_lean() and hidden.device.type == 'cuda')):
-            return self.rotary(hidden, position_ids)
-        capacity = int(setting(self.run_config, 'engine', 'engine_settings.decoder_cache_capacity', '800')) + 32
-        table = self._rope_table
-        if table is None or table[0].shape[0] < capacity or table[0].device != hidden.device:
-            positions = torch.arange(capacity, device=hidden.device)[None]
-            cos, sin = self.rotary(hidden, positions)
-            table = self._rope_table = (cos[0], sin[0])
-        flat = position_ids.reshape(-1)
-        return table[0].index_select(0, flat)[None], table[1].index_select(0, flat)[None]
-
-    def _rope_range(self, hidden, start, stop):
-        """``_rope`` for the contiguous positions start..stop (JETSPEC_DECODER_TABLES=1,
-        serving): the same table rows as a slice instead of a gather.  A row slice of the
-        contiguous table is contiguous and 16-byte aligned (a row is 128 values)."""
-        table = self._rope_table
-        if table is None or table[0].device != hidden.device:
-            self._rope(hidden, torch.zeros((1, 1), dtype=torch.long, device=hidden.device))
-            table = self._rope_table
-        if stop > table[0].shape[0]:
-            positions = torch.arange(start, stop, device=hidden.device, dtype=torch.long)[None]
-            return self._rope(hidden, positions)
-        return table[0][start:stop][None], table[1][start:stop][None]
-
-    def _causal_rows(self, hidden, start, stop):
-        """The prefix append's mask (key j visible to position i iff j <= i) for rows
-        start..stop over keys 0..stop, as a slice of one cached table whose rows are
-        16-aligned (JETSPEC_DECODER_TABLES=1, serving): the same values as the mask ``_prefix``
-        builds, already in the layout ``efficient_attention`` pads a mask into."""
-        table = self._causal_table
-        if (table is None or table.shape[0] < stop or table.device != hidden.device
-                or table.dtype != hidden.dtype):
-            rows = max(stop, int(setting(self.run_config, 'engine', 'engine_settings.decoder_cache_capacity', '800')))
-            width = (rows + 15) // 16 * 16
-            keys = torch.arange(width, device=hidden.device)
-            positions = torch.arange(rows, device=hidden.device)
-            allowed = keys[None, :] <= positions[:, None]
-            table = self._causal_table = hidden.new_zeros((rows, width)).masked_fill_(
-                ~allowed, torch.finfo(hidden.dtype).min)
-        return table[start:stop, :stop][None, None]
+class DecoderCheckpointLoading:
+    """Checkpoint loading for AnchorDecoder; shares its state without copying tensors."""
 
     @classmethod
     def load(cls, root, drafter, target_model_path=None, manifest=None, *, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.rows import check_rows_fused_regime
         check_rows_fused_regime(run_config=run_config)
         check_decoder_graph_lean_regime(run_config=run_config)
@@ -1620,6 +1466,52 @@ class AnchorDecoder(MethodAnchorDecoder):
         return module
 
 
+class ShippedDecoderState:
+    """Target-shipped decoder state binding and execution."""
+
+    def _sequence_state(self, sequence, length):
+        """Resolve each kind's prefix source without writing committed target state."""
+        indices = self.spec.tail if self.spec is not None else tuple(range(len(self.layers)))
+        supplied = getattr(sequence, 'decoder_state', None)
+        if supplied is None and 'ship' in self.state_policy.values():
+            self._ensure_warmup_state(sequence)
+            supplied = {}
+            for index, layer in zip(indices, self.layers):
+                if hasattr(layer, 'linear_attn'):
+                    supplied[index] = dict(recurrent=sequence.hybrid_recurrent, conv=sequence.hybrid_conv)
+                else:
+                    supplied[index] = dict(prefix_key=sequence.hybrid_prefix_key[:length],
+                                           prefix_value=sequence.hybrid_prefix_value[:length])
+        if all(source == 'ship' for source in self.state_policy.values()):
+            return {'layer_states': supplied}
+        parameter = next(self.layers.parameters())
+        hidden = sequence.taps[:length, self.tap_position, :].to(parameter)
+        states = {}
+        for index, layer in zip(indices, self.layers):
+            kind = 'linear_attention' if hasattr(layer, 'linear_attn') else 'full_attention'
+            if kind == 'linear_attention':
+                gdn = layer.linear_attn
+                recurrent = torch.zeros_like(gdn.committed_recurrent)
+                conv = torch.zeros_like(gdn.committed_conv)
+                if length:
+                    mixed, recurrent, conv = scan_gdn_window(gdn,
+                        layer.input_layernorm(hidden), recurrent, conv, return_state=True)
+                    hidden = tail_mlp(layer, hidden + mixed)
+                rebuilt = dict(recurrent=recurrent, conv=conv)
+            else:
+                attn = layer.self_attn
+                empty = hidden.new_empty(0, attn.kv_heads, attn.dim)
+                window = {}
+                if length:
+                    hidden = hybrid_attention_tail(layer, hidden, prefix_key=empty,
+                        prefix_value=empty, start=0, rope_theta=self.rope_theta, window_kv=window)
+                    key, value = window['kv']
+                else:
+                    key = value = empty
+                rebuilt = dict(prefix_key=key, prefix_value=value)
+            states[index] = supplied[index] if self.state_policy[kind] == 'ship' else rebuilt
+        return {'layer_states': states}
+
     @property
     def bind_front_state(self):
         # Admission still probes this capability until F3/F6 migrate its callers.
@@ -1658,7 +1550,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         There are no true-tap lanes: the window is [tail | rows x slots]. All
         projections and MLPs read this single token matrix once per refresh.
         """
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         del prefix_kv
         if setting(self.run_config, 'engine', 'engine_settings.refresh_swap_glue', '0') == '1' if glue is None else glue:
             raise ValueError('JETSPEC_REFRESH_SWAP_GLUE refuses the hybrid decoder (GDN, D256)')
@@ -1948,6 +1840,9 @@ class AnchorDecoder(MethodAnchorDecoder):
         return logits, ids, p64, pack
 
 
+class DecoderWindowExecution:
+    """Private decoder window execution, refresh, and graph capture."""
+
     @torch.inference_mode()
     def warm_kernels(self, *, run_config=None):
         """Compile every fused-kernel shape the eager decoder serves before any
@@ -2061,7 +1956,7 @@ class AnchorDecoder(MethodAnchorDecoder):
     def _merged_chain_layers(self, prefix_hidden, rope, mask, slots, state, front,
                              length, count, use_len_attention, fused):
         """Share the two layers' projection reads across prefix and window rows."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         self._check_prefix_merge(state, front)
         lanes = prefix_hidden.shape[1]
         if kernel_enabled('draft_fuse_t12', '1') and 'combined_hidden' in state:
@@ -2133,7 +2028,7 @@ class AnchorDecoder(MethodAnchorDecoder):
 
     def _window_state(self, like, bucket):
         """Keep each opted-in decoder key's static inputs and K/V distinct."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         bucketed = setting(self.run_config, 'engine', 'engine_settings.chain_decoder_key_bucket', '0') == '1'
         if bucketed:
             states = self._window_graph_states
@@ -2259,7 +2154,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         """Append the fixed prefix lanes, decode the window, and select on device."""
         if getattr(self, '_uses_shipped_state', False):
             return self._stateful_decoder_chain_body(rp, tokens, front, bucket)
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
         if setting(self.run_config, 'engine', 'engine_settings.front_static', '0') != '1':
             raise ValueError('decoder chain body requires JETSPEC_FRONT_STATIC=1')
         use_len_attention = (rp.is_cuda and
@@ -2407,7 +2302,7 @@ class AnchorDecoder(MethodAnchorDecoder):
         Allocated before capture; the bucket's prefix K/V is copied in, never written."""
         if getattr(self, '_uses_shipped_state', False):
             return self._stateful_refresh_window_state(prefix_kv, bucket, rows=rows, lanes=lanes, like=like, glue=glue)
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         if self.prefix_layers is not self.layers:
             raise ValueError('JETSPEC_REFRESH_SWAP requires the target_slice decoder '
                              '(one set of shared prefix and window layers)')
@@ -2543,7 +2438,7 @@ class AnchorDecoder(MethodAnchorDecoder):
                         attn_mask=mask, scale=layer.self_attn.scaling).transpose(1, 2)
                     current = decoder_window_finish(layer, current, attended)
                 decoded = self.norm(current)
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         trimmed = state.get('glue') and kernel_enabled('draft_fuse_t12', '1')
         decoded = decoded[0] if trimmed else decoded[0, 4 + lanes:]
         if hidden.is_cuda and compact_cuda:
@@ -2624,6 +2519,113 @@ class AnchorDecoder(MethodAnchorDecoder):
 
 
 
+
+    def _replay_window_part(self, name, step, values):
+        entry = self._window_graphs.get(name)
+        if entry is None:
+            if self._graphs_warmed:
+                raise RuntimeError(f'decoder graph missing after warm-up: {name}')
+            inputs = tuple(value.clone() for value in values)
+            current = torch.cuda.current_stream(values[0].device)
+            stream = torch.cuda.Stream(device=values[0].device)
+            stream.wait_stream(current)
+            with torch.cuda.stream(stream):
+                for _ in range(3):
+                    step(*inputs)
+            current.wait_stream(stream)
+            expected = tuple(value.clone() for value in step(*inputs))
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                result = step(*inputs)
+            graph.replay()
+            if not all(torch.equal(a, b) for a, b in zip(expected, result)):
+                raise RuntimeError(f'decoder graph replay changed {name}')
+            self._window_graphs[name] = (inputs, graph, result)
+        else:
+            inputs, graph, result = entry
+            for destination, value in zip(inputs, values):
+                destination.copy_(value)
+            graph.replay()
+        return result
+
+    def _window_layer(self, layer, hidden, mask, rope, frozen):
+        from transformers.integrations.sdpa_attention import sdpa_attention_forward
+        attn = layer.self_attn
+        query, key, value = self._replay_window_part(
+            (id(layer), 'project', tuple(hidden.shape), hidden.dtype),
+            lambda state, cos, sin: decoder_window_project(layer, state, (cos, sin)),
+            (hidden, *rope))
+        if frozen is not None:
+            key, value = frozen.update(key, value, attn.layer_idx,
+                                       {'sin': rope[1], 'cos': rope[0],
+                                        'cache_position': None})
+        attended = sdpa_attention_forward(
+            attn, query, key, value, mask, dropout=0.0, scaling=attn.scaling,
+            sliding_window=attn.sliding_window)[0]
+        result, = self._replay_window_part(
+            (id(layer), 'finish', tuple(hidden.shape), hidden.dtype),
+            lambda state, output: (decoder_window_finish(layer, state, output),),
+            (hidden, attended))
+        return result
+
+    def _cached_window_mask(self, context_length, hidden, size=15):
+        mask = self._window_mask_cache
+        if (mask is None or mask.shape[-1] < context_length + size or mask.shape[-2] != size or
+                mask.device != hidden.device or mask.dtype != hidden.dtype):
+            capacity = ((context_length + 255) // 256) * 256
+            mask = window_mask(torch.tensor([capacity]), capacity, hidden.dtype,
+                               size).to(hidden.device)
+            self._window_mask_cache = mask
+        return mask[..., mask.shape[-1] - context_length - size:].contiguous()
+
+
+class DecoderPrefixCache:
+    """Committed prefix construction, retention, and prefetch."""
+
+    def _rope(self, hidden, position_ids, *, run_config=None):
+        """Rotary rows gathered from one table on the fused path; each position's
+        cos/sin is a single product, so the gather is bitwise the rotary call.
+        The graphed lean decoder (JETSPEC_DECODER_GRAPH_LEAN) gathers too."""
+        if not (rows_fused(hidden, run_config=self.run_config) or (decoder_graph_lean() and hidden.device.type == 'cuda')):
+            return self.rotary(hidden, position_ids)
+        capacity = int(setting(self.run_config, 'engine', 'engine_settings.decoder_cache_capacity', '800')) + 32
+        table = self._rope_table
+        if table is None or table[0].shape[0] < capacity or table[0].device != hidden.device:
+            positions = torch.arange(capacity, device=hidden.device)[None]
+            cos, sin = self.rotary(hidden, positions)
+            table = self._rope_table = (cos[0], sin[0])
+        flat = position_ids.reshape(-1)
+        return table[0].index_select(0, flat)[None], table[1].index_select(0, flat)[None]
+
+    def _rope_range(self, hidden, start, stop):
+        """``_rope`` for the contiguous positions start..stop (JETSPEC_DECODER_TABLES=1,
+        serving): the same table rows as a slice instead of a gather.  A row slice of the
+        contiguous table is contiguous and 16-byte aligned (a row is 128 values)."""
+        table = self._rope_table
+        if table is None or table[0].device != hidden.device:
+            self._rope(hidden, torch.zeros((1, 1), dtype=torch.long, device=hidden.device))
+            table = self._rope_table
+        if stop > table[0].shape[0]:
+            positions = torch.arange(start, stop, device=hidden.device, dtype=torch.long)[None]
+            return self._rope(hidden, positions)
+        return table[0][start:stop][None], table[1][start:stop][None]
+
+    def _causal_rows(self, hidden, start, stop):
+        """The prefix append's mask (key j visible to position i iff j <= i) for rows
+        start..stop over keys 0..stop, as a slice of one cached table whose rows are
+        16-aligned (JETSPEC_DECODER_TABLES=1, serving): the same values as the mask ``_prefix``
+        builds, already in the layout ``efficient_attention`` pads a mask into."""
+        table = self._causal_table
+        if (table is None or table.shape[0] < stop or table.device != hidden.device
+                or table.dtype != hidden.dtype):
+            rows = max(stop, int(setting(self.run_config, 'engine', 'engine_settings.decoder_cache_capacity', '800')))
+            width = (rows + 15) // 16 * 16
+            keys = torch.arange(width, device=hidden.device)
+            positions = torch.arange(rows, device=hidden.device)
+            allowed = keys[None, :] <= positions[:, None]
+            table = self._causal_table = hidden.new_zeros((rows, width)).masked_fill_(
+                ~allowed, torch.finfo(hidden.dtype).min)
+        return table[start:stop, :stop][None, None]
 
     @torch.inference_mode()
     def prefetch_prefix(self, sequence, *, run_config=None):
@@ -2868,64 +2870,6 @@ class AnchorDecoder(MethodAnchorDecoder):
             prefix.length += 1
         return prefix
 
-    def _replay_window_part(self, name, step, values):
-        entry = self._window_graphs.get(name)
-        if entry is None:
-            if self._graphs_warmed:
-                raise RuntimeError(f'decoder graph missing after warm-up: {name}')
-            inputs = tuple(value.clone() for value in values)
-            current = torch.cuda.current_stream(values[0].device)
-            stream = torch.cuda.Stream(device=values[0].device)
-            stream.wait_stream(current)
-            with torch.cuda.stream(stream):
-                for _ in range(3):
-                    step(*inputs)
-            current.wait_stream(stream)
-            expected = tuple(value.clone() for value in step(*inputs))
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph):
-                result = step(*inputs)
-            graph.replay()
-            if not all(torch.equal(a, b) for a, b in zip(expected, result)):
-                raise RuntimeError(f'decoder graph replay changed {name}')
-            self._window_graphs[name] = (inputs, graph, result)
-        else:
-            inputs, graph, result = entry
-            for destination, value in zip(inputs, values):
-                destination.copy_(value)
-            graph.replay()
-        return result
-
-    def _window_layer(self, layer, hidden, mask, rope, frozen):
-        from transformers.integrations.sdpa_attention import sdpa_attention_forward
-        attn = layer.self_attn
-        query, key, value = self._replay_window_part(
-            (id(layer), 'project', tuple(hidden.shape), hidden.dtype),
-            lambda state, cos, sin: decoder_window_project(layer, state, (cos, sin)),
-            (hidden, *rope))
-        if frozen is not None:
-            key, value = frozen.update(key, value, attn.layer_idx,
-                                       {'sin': rope[1], 'cos': rope[0],
-                                        'cache_position': None})
-        attended = sdpa_attention_forward(
-            attn, query, key, value, mask, dropout=0.0, scaling=attn.scaling,
-            sliding_window=attn.sliding_window)[0]
-        result, = self._replay_window_part(
-            (id(layer), 'finish', tuple(hidden.shape), hidden.dtype),
-            lambda state, output: (decoder_window_finish(layer, state, output),),
-            (hidden, attended))
-        return result
-
-    def _cached_window_mask(self, context_length, hidden, size=15):
-        mask = self._window_mask_cache
-        if (mask is None or mask.shape[-1] < context_length + size or mask.shape[-2] != size or
-                mask.device != hidden.device or mask.dtype != hidden.dtype):
-            capacity = ((context_length + 255) // 256) * 256
-            mask = window_mask(torch.tensor([capacity]), capacity, hidden.dtype,
-                               size).to(hidden.device)
-            self._window_mask_cache = mask
-        return mask[..., mask.shape[-1] - context_length - size:].contiguous()
-
     @torch.inference_mode()
     def presize_batch_pool(self, slots):
         """JETSPEC_BATCH_DRAFT_GRAPH: create or grow the N>1 static prefix pool to ``slots``
@@ -3111,6 +3055,10 @@ class AnchorDecoder(MethodAnchorDecoder):
             for component, rows in enumerate((key, value)):
                 pool.kv[index][component][entry['write_slots'], :, entry['write_positions']] = (
                     rows.transpose(1, 2).reshape(bucket * window, rows.shape[1], rows.shape[-1]))
+
+
+class DecoderBatchGraphs:
+    """Batched decoder prediction graph capture and replay."""
 
     def _batch_graph_ready(self, prefixes, parameter, *, run_config=None):
         """JETSPEC_BATCH_DRAFT_GRAPH_FRONT=1 on the fused bf16 CUDA path with every request's prefix
@@ -3303,6 +3251,10 @@ class AnchorDecoder(MethodAnchorDecoder):
             rejected=rejected_base[row])
             for row, (block, miss) in enumerate(zip(pending_blocks, after_misses))]
 
+
+class DecoderOfferAssembly:
+    """Anchor offer assembly for single and batched predictions."""
+
     @torch.inference_mode()
     def predict_batch(self, sequences, pending_blocks, *, dataset, coverage, grouped, cap,
                       after_misses, run_config=None):
@@ -3325,15 +3277,11 @@ class AnchorDecoder(MethodAnchorDecoder):
         for sequence in sequences:
             staged = sequence.staged.predicted_hidden
             if staged is None or staged.shape[1] < count:
-                if setting(self.run_config, 'engine', 'engine_settings.device_split', '0') == '1':
-                    print('B22_DECODER_FALLBACK batch_unready=1', flush=True)
                 return [self.predict(seq, block, dataset=dataset, coverage=coverage,
                                      grouped=grouped, cap=cap, after_miss=miss, run_config=run_config if run_config is not None else getattr(self, 'run_config', None))
                         for seq, block, miss in zip(sequences, pending_blocks, after_misses)]
             length = int(sequence.taps.shape[0])
             if length < 0:
-                if setting(self.run_config, 'engine', 'engine_settings.device_split', '0') == '1':
-                    print('B22_DECODER_FALLBACK prefix_unready=1', flush=True)
                 return [self.predict(seq, block, dataset=dataset, coverage=coverage,
                                      grouped=grouped, cap=cap, after_miss=miss, run_config=run_config if run_config is not None else getattr(self, 'run_config', None))
                         for seq, block, miss in zip(sequences, pending_blocks, after_misses)]
@@ -3667,6 +3615,85 @@ class AnchorDecoder(MethodAnchorDecoder):
                                  elapsed_ms=elapsed_ms,
                                  total_ms=total_ms, prefix_ms=prefix_ms,
                                  select_ms=select_ms, stage_ms=stage_ms)
+
+
+class AnchorDecoder(
+    DecoderOfferAssembly,
+    DecoderBatchGraphs,
+    DecoderPrefixCache,
+    DecoderWindowExecution,
+    ShippedDecoderState,
+    DecoderCheckpointLoading,
+    MethodAnchorDecoder,
+):
+    """Two trained target layers over one private adapter window per round."""
+    def __init__(self, layers, norm, lm_head, *, prefix_layers=None, rotary=None, root=None,
+                 hidden_size=None, rope_theta=None, capacity=None, spec=None,
+                 state_policy=None, run_config=None):
+        self.run_config = run_config
+        super().__init__(layers=layers, prefix_layers=prefix_layers, norm=norm,
+                         lm_head=lm_head, rotary=rotary, root=root, hidden_size=hidden_size or norm.weight.numel())
+        self.spec = spec
+        self.tap_position = spec.taps.index(max(spec.taps)) if spec is not None and spec.taps else -1
+        self._uses_shipped_state = rope_theta is not None
+        self.state_policy = dict(
+            {'full_attention': 'ship', 'linear_attention': 'ship'} if self._uses_shipped_state
+            else {'full_attention': 'rebuild', 'linear_attention': 'recompute'})
+        self.state_policy.update(state_policy or {})
+        allowed_sources = {'full_attention': {'ship', 'rebuild'},
+                           'linear_attention': {'ship', 'recompute'}}
+        if any(kind not in allowed_sources or source not in allowed_sources[kind]
+               for kind, source in self.state_policy.items()):
+            raise ValueError('unsupported decoder state source')
+        if self._uses_shipped_state:
+            self.tail = hybrid_tail(layers)
+            self.rope_theta = float(rope_theta)
+            self.hidden_size = norm.weight.numel()
+            self.capacity = capacity
+            self._state = None
+        self._lm_head_kn = None
+        self._prefixes = {}
+        self._prefix_finalizers = {}
+        self._static_prefix_pool = None
+        self._batch_frozen = {}
+        self._recorded_inputs = 0
+        self._window_graphs = {}
+        self._window_graph_states = {}
+        self._graphs_warmed = False
+        self._window_mask_cache = None
+        self._rope_table = None
+        self._loop_plans = {}
+        self._loop_entries = {}
+        self._causal_table = None
+
+    def _tap_hidden(self, hidden):
+        """Select the spec's deepest tap from packed adapter predictions."""
+        if self.spec is None or hidden.shape[-1] == self.hidden_size:
+            return hidden[..., -self.hidden_size:]
+        start = self.tap_position * self.hidden_size
+        return hidden[..., start:start + self.hidden_size]
+
+    def forward(self, hidden, **state):
+        if not self._uses_shipped_state:
+            return super().forward(hidden, **state)
+        if hidden.ndim == 3:
+            count = hidden.shape[0]
+            names = ('recurrent', 'conv', 'prefix_key', 'prefix_value')
+            if any(state[name].shape[0] != count for name in names if name in state):
+                raise ValueError('one private decoder state is required per sequence')
+            outputs = []
+            for row in range(count):
+                private = {name: value[row] if name in names else value
+                           for name, value in state.items()}
+                if 'layer_states' in private:
+                    private['layer_states'] = {index: {name: tensor[row] for name, tensor in values.items()}
+                                               for index, values in private['layer_states'].items()}
+                if isinstance(private.get('start'), torch.Tensor) and private['start'].ndim:
+                    private['start'] = private['start'][row]
+                outputs.append(super().forward(hidden[row], **private))
+            return tuple(torch.stack([output[i] for output in outputs]) for i in range(2))
+        return super().forward(hidden, **state)
+
 
 
 class FrozenPrefix:

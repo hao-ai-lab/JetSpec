@@ -18,7 +18,7 @@ A round runs through them in this order:
 2. `SpecDecodeStep` in `verify/step.py` drives verification on the target GPU and sends the outcome through `wire/`.
 3. `ChainRoundDriver` in `draft/driver.py` runs the draft passes on the draft GPU and sends the next rows back.
 
-To read one round in plain torch, see the [torch reference](../../methods/jetspec_plus_plus/README.md).
+The shared method lives in `draft/method/`. The eager one-GPU loop uses the same adapter, decoder, passes, refresh decisions, calibration and row selection. To read one round in plain torch, see the [torch reference](draft/reference/README.md).
 
 The other paths support these three:
 
@@ -30,13 +30,13 @@ The other paths support these three:
 | `launch/` | The public command, recipe resolution, artifact checks, the child process |
 | `config/`, `artifacts/` | Model, method, engine and hardware data, file hashes |
 | `runtime/` | Run settings and DSpark serving integration |
-| `launch/anatomy.py`, `launch/eos_stop.py`, `launch/run_manifest.py`, `trace/` | Read analysis, run records and tracing |
+| `bench/jetspec_plus_plus/analysis/`, `launch/run_manifest.py`, `runtime/round_timing.py` | Offline reductions, run records and round timing |
 | `bench/jetspec_plus_plus/third_party/`, `bench/jetspec_plus_plus/baselines/` | Pinned DSpark code and comparison routes, loaded only when selected from a source checkout |
 
 ## From the command to the first forward pass
 
 1. `__main__.py` calls `main` in `launch/cli.py`.
-2. `launch/cli.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
+2. `launch/flags.py` defines the command-line parsers. `launch/cli.py` maps the model, schedule and GPU family to an entry in `RECIPES`. `generate` also renders the prompt.
 3. `launch/runner.py` checks the artifact hashes, builds the launch plan and starts a child process.
 4. The child runs `launch/bench.py`, which constructs `LLMEngine` from `serving/llm_engine.py`.
 5. `LLMEngine` constructs `TargetRunner` from `verify/forward.py` in the current process and spawns `DraftRunner` from `draft/rank.py`. Both inherit `ModelRunner` from `serving/model_runner.py`.
@@ -106,5 +106,5 @@ The public name Qwen3.8-27B uses the checkpoint type `qwen3_5_text`, the hybrid 
 3. Add new layer or state arithmetic to `models/target_layers.py` and `models/state.py` only if the target needs it.
 4. Train a drafter, an adapter and a calibration, then pin their hashes in `config/model.json` and `artifacts/manifest.json`.
 5. Add the model, its recipes and its defaults to `launch/cli.py`. List each kernel family that you tested.
-6. Extend the torch reference loader in `jetspec/methods/jetspec_plus_plus/drafter.py`.
+6. Extend the torch reference loader in `jetspec/engines/jetspec_plus_plus/draft/reference/drafter.py`.
 7. Validate on GPUs: the eager target, reference rounds, graph replay, draft hits and misses, and EOS and token-cap stops.

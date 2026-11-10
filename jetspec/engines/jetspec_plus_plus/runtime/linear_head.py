@@ -809,27 +809,14 @@ class TimedLinearBlockhead:
             split_s = perf_counter()
 
         anchor = context_ids[:, -1]
-        from jetspec.engines.jetspec_plus_plus.trace.current import active_recorder
-        trace = active_recorder()
         if self.domino is not None:
             embed = self.drafter.target.model.embed_tokens
-            if trace is None:
-                sampled, corrected = self.domino.walk(
-                    proposal_hidden, base_logits, anchor, embed)
-            else:
-                with trace.span('domino_walk', 'draft'):
-                    sampled, corrected = self.domino.walk(
-                        proposal_hidden, base_logits, anchor, embed)
-        elif trace is None:
+            sampled, corrected = self.domino.walk(
+                proposal_hidden, base_logits, anchor, embed)
+        else:
             sampled, corrected = self.drafter.head.sample_draft_tokens(
                 base_logits, first_prev_token_ids=anchor, temperature=0.0,
                 hidden_states=proposal_hidden)
-        else:
-            label = 'sampling' if offset else 'markov_sampling'
-            with trace.span(label, 'draft'):
-                sampled, corrected = self.drafter.head.sample_draft_tokens(
-                    base_logits, first_prev_token_ids=anchor, temperature=0.0,
-                    hidden_states=proposal_hidden)
 
         if use_cuda_events:
             end.record()
@@ -926,18 +913,9 @@ class TimedLinearBlockhead:
             split.record()
         else:
             split_s = perf_counter()
-        from jetspec.engines.jetspec_plus_plus.trace.current import active_recorder
-        trace = active_recorder()
-        if trace is None:
-            sampled, corrected = self.drafter.head.sample_draft_tokens(
-                base_logits, first_prev_token_ids=anchors, temperature=0.0,
-                hidden_states=proposal_hidden)
-        else:
-            label = "sampling" if offset else "markov_sampling"
-            with trace.span(label, "draft"):
-                sampled, corrected = self.drafter.head.sample_draft_tokens(
-                    base_logits, first_prev_token_ids=anchors, temperature=0.0,
-                    hidden_states=proposal_hidden)
+        sampled, corrected = self.drafter.head.sample_draft_tokens(
+            base_logits, first_prev_token_ids=anchors, temperature=0.0,
+            hidden_states=proposal_hidden)
 
         if use_cuda_events:
             end.record()

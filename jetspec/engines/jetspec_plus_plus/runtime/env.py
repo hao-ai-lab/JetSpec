@@ -119,7 +119,7 @@ def context_append_enabled(environ=None, *, run_config=None):
 
 
 def unregistered_names(environ):
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import RETIRED_SELECTORS
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import RETIRED_SELECTORS
     retired = {'JETSPEC_' + name.upper() for name in RETIRED_SELECTORS}
     return sorted(name for name in environ
                   if name.startswith(VALIDATED_PREFIXES) and name not in legacy_registry()
@@ -234,7 +234,7 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
     Returns accepted knobs present in ``environ``, including retired defaults (name -> value). Raises
     ``EnvironmentContractError`` naming every breach at once.
     """
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import RETIRED_SELECTORS, refuse_retired
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import RETIRED_SELECTORS, refuse_retired
     environ = {} if environ is None else environ
     refuse_retired(environ)
     problems = []
@@ -407,7 +407,7 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
             _name('engine', 'engine_settings.verify_plan_reuse'), _name('engine', 'engine_settings.verify_plan_lean'),
             _name('engine', 'engine_settings.verify_prestage_mixed'), _name('engine', 'engine_settings.verify_outcome_fused'),
             _name('engine', 'engine_settings.verify_publish_first'), _name('engine', 'engine_settings.outcome_pack_presync'),
-            _name('engine', 'engine_settings.candidate_recv_ahead'), _name('engine', 'engine_settings.verify_host_census'),
+            _name('engine', 'engine_settings.candidate_recv_ahead'),
         )
         for name in forbidden:
             if environ.get(name, "0") == "1":

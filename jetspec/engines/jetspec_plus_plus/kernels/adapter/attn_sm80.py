@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -10,7 +10,7 @@ import torch
 
 
 def enabled(device: torch.device, dtype: torch.dtype) -> bool:
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if not kernel_enabled('attn_sm80', '1'):
         return False
     if device.type != "cuda":

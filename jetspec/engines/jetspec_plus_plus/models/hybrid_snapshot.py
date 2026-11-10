@@ -2,8 +2,8 @@
 """Capture every recurrent GDN state in one launch during hybrid verification."""
 
 import torch
-from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
-from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
+from jetspec.engines.jetspec_plus_plus.runtime._optional import triton
+from jetspec.engines.jetspec_plus_plus.runtime._optional import tl
 
 
 from jetspec.engines.jetspec_plus_plus.kernels.hybrid_snapshot import _snapshot_states

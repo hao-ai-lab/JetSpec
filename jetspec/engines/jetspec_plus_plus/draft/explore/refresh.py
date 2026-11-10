@@ -169,7 +169,7 @@ class RefreshSwap(ServingRefreshSwap):
         they are injected: swap ``ids`` in place, pin the swaps, reopen swapped rows in
         ``finished``, and return the fixed-layout inject count (entries 0..khat_used; 0 on an
         inactive row)."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         hidden = self.decoder.hidden_size
         legacy_write = self.rule is None and not self.dense_pins
         positions = (length + self.true_lane).clamp_min(0)

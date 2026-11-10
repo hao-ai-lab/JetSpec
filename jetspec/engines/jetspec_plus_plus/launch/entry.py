@@ -1,6 +1,5 @@
 # Adaptation: package relocation and deferred optional dependencies.
 """CPU resolution and the launch of a manifest-pinned read."""
-import argparse
 from copy import deepcopy
 import json
 import os
@@ -24,7 +23,7 @@ COMPOSED_RECIPES = _COMPOSED['recipes']
 
 def profile_environment(config):
     """A named profile owns selectors; compatibility leaves own other values."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
     from jetspec.engines.jetspec_plus_plus.runtime.env import REQUIRED
     from jetspec.engines.jetspec_plus_plus.runtime.env import NO_DEFAULT
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
@@ -165,7 +164,7 @@ def serving_recipe(config, *, root=ROOT):
 
 
 def build_plan(config, *, launch=None, root=ROOT, prompts_root=None, output='read.json',
-               sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
+               sequential_prompts=False, cache_root=None, wire_records=None):
     """Return the environment and legacy argv without probing host artifacts or GPUs."""
     prompts_root = Path(prompts_root or Path(root).parents[2] / 'bench/jetspec_plus_plus/prompts')
     recipe = serving_recipe(config, root=root) if launch is None else deepcopy(launch)
@@ -199,7 +198,7 @@ def build_plan(config, *, launch=None, root=ROOT, prompts_root=None, output='rea
         argv.append('--sequential-prompts')
     if cache_root is not None:
         argv.extend(['--cache-root', str(cache_root)])
-    for flag, value in (('--wire-records', wire_records), ('--anatomy', anatomy)):
+    for flag, value in (('--wire-records', wire_records),):
         if value is not None:
             if value not in ('on', 'off'):
                 raise ValueError(f'{flag} must be on or off')
@@ -213,11 +212,11 @@ def build_plan(config, *, launch=None, root=ROOT, prompts_root=None, output='rea
 
 
 def resolve_read(names, overrides=(), *, root=ROOT / 'config', prompts_root=None, launch=None, output='read.json',
-                 sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
+                 sequential_prompts=False, cache_root=None, wire_records=None):
     config = resolve(names, overrides, root=root)
     plan = build_plan(config, launch=launch, root=Path(root).parent, prompts_root=prompts_root, output=output,
                       sequential_prompts=sequential_prompts, cache_root=cache_root,
-                      wire_records=wire_records, anatomy=anatomy)
+                      wire_records=wire_records)
     return dict(schema='jetspec.config_read/1', config=config, canonical_json=canonical_json(config),
                 config_sha256=config_hash(config), launched=False, **plan)
 
@@ -241,7 +240,7 @@ def write_eval_records(record, *, process_wall_seconds):
     # Adaptation: retain the public error for incomplete record requests.
     if 'environment' not in record:
         raise ValueError('eval records need the environment of the read')
-    from jetspec.engines.jetspec_plus_plus.analysis.eval_records import write_eval_records as writer
+    from jetspec.engines.jetspec_plus_plus.launch.records import write_eval_records as writer
     environment = record['environment']
     method = record['config']['method']
     values = dict(
@@ -259,21 +258,8 @@ def write_eval_records(record, *, process_wall_seconds):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('settings', nargs='+', help='category=entry or category.key=JSON')
-    parser.add_argument('--resolve-only', action='store_true')
-    parser.add_argument('--output', default='read.json')
-    parser.add_argument('--host-values')
-    parser.add_argument('--artifacts-dir')
-    parser.add_argument('--sequential-prompts', action='store_true',
-                        help='serve C=1 prompts sequentially in one loaded process')
-    parser.add_argument('--cache-root', help='root for the serving child compiler caches')
-    parser.add_argument('--wire-records', choices=('on', 'off'),
-                        help='write proposal wire records (serving default: on)')
-    parser.add_argument('--anatomy', choices=('on', 'off'),
-                        help='write per-read host anatomy (serving default: on)')
-    parser.add_argument('--child-wall-seconds', type=float,
-                        help='wall limit of the serve child, compile included (default: the launcher\'s)')
+    from jetspec.engines.jetspec_plus_plus.launch.flags import entry_parser
+    parser = entry_parser()
     args = parser.parse_args(argv)
     names, overrides = {}, []
     for setting in args.settings:
@@ -289,7 +275,7 @@ def main(argv=None):
     try:
         record = resolve_read(names, overrides, output=args.output,
                               sequential_prompts=args.sequential_prompts, cache_root=args.cache_root,
-                              wire_records=args.wire_records, anatomy=args.anatomy)
+                              wire_records=args.wire_records)
         from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine
         Engine.from_config(record['config'], sealed_record=args.resolve_only)
     except (ValueError, OSError) as error:

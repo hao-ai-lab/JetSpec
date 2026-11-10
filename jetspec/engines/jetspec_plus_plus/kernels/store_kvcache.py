@@ -1,8 +1,8 @@
 """Device kernels for models/attention.py."""
 
 # Adaptation: defer optional accelerator imports for CPU package inspection.
-from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
-from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
+from jetspec.engines.jetspec_plus_plus.runtime._optional import triton
+from jetspec.engines.jetspec_plus_plus.runtime._optional import tl
 
 
 @triton.jit

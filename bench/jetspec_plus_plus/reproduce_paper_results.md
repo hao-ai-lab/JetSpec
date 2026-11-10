@@ -73,4 +73,3 @@ for example with `hf download REPOSITORY --revision REVISION --local-dir DIRECTO
 - The JetSpec++ pair arms pin each rank to CPUs on its GPU's NUMA node. Unpinned reads of the 8B arm ran 5 to 10 percent slower.
 - All groups of one command share the compiler cache in `<output-dir>/compiler-cache`, so only the first group of each arm compiles.
 - On a cold cache, a pinned pair's warmup can exceed the 10-minute NCCL timeout of its first receive. The command then reruns that group once with the warm cache and keeps the failed log as `read.failed.log`.
-- The 27B JetSpec++ reads run the chain-graph error audit in `paper/audit/`, and validation requires a zero error word from every run.

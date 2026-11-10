@@ -138,7 +138,7 @@ def chain_pass_into(logits, ids, keys, active, outputs, previous_top1, tokens,
     """Publish a chain pass in the last vocabulary producer, without a spin wait."""
     rows, lanes, vocab = logits.shape
     chunks = partials[0].shape[-1]
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     group = 4
     if vocab == 248320 and lanes == 16 and kernel_value('draft_fuse_stats27', '0') == '1':
         group = 3 if rows in (1, 4) else 6 if rows == 16 else 4
@@ -164,7 +164,7 @@ def qkv_into(query, key, value, q_weight, k_weight, cos, sin, output,
     """Keep each head's reduction and BF16 casts while sharing a CTA."""
     # Keep the original four warps per head: packing heads into fewer warps
     # changes FP32 reduction order and can cross a BF16 rounding boundary.
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     heads = 4
     if (query.shape[0] == 64 and (q_heads, kv_heads, dim) == (32, 8, 128)
             and kernel_value('draft_fuse_geo8', '0') == '1'):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import json
 import os
@@ -102,8 +102,8 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
     def __getattr__(self, name):
         # The first access can follow serve_read's environment setup. Later
         # rounds use the instance attribute, including __new__ test instances.
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled, TRANSPORT_SWITCHES
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled, TRANSPORT_SWITCHES
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         env_name = type(self)._round_env.get(name)
         if env_name is None:
             raise AttributeError(name)
@@ -115,7 +115,7 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
         else:
             raw = "1" if kernel_enabled(env_name) else "0"
             if raw == "0":
-                from jetspec.engines.jetspec_plus_plus.runtime.profiles import verify_cut_lean27b
+                from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import verify_cut_lean27b
                 raw = "1" if verify_cut_lean27b(
                     env_name, self, getattr(self, '_verify_stage_runner', None)) else "0"
         if name == "_chain_redraft_max_ms":
@@ -155,7 +155,7 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
         run_config=None,
     ):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         super().__init__(lookahead, device)
         self.run_config = run_config if run_config is not None else getattr(target_model_runner, 'run_config', None)
@@ -432,7 +432,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
 
     def speculate(self, seqs: list[Sequence], verify_result: VerifyResult) -> SpeculateResult:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         if self.jetspec and any(
             getattr(seq, "draft_temperature", None) not in (None, 0) for seq in seqs
         ):
@@ -444,7 +443,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
             for seq in seqs:
                 assert seq.recovery_token_id is not None
                 seq.append_token(seq.recovery_token_id)
-            _census_mark("append", run_config=getattr(self, 'run_config', None))
 
             if self.verbose:
                 sep = '=' * 80
@@ -465,7 +463,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                 jetspec_verify_mask,
                 jetspec_decisions,
             ) = self._speculation_request(seqs, eagle)
-            _census_mark("request_tail", run_config=getattr(self, 'run_config', None))
 
             # Build speculations using pre-allocated buffers (avoids torch.tensor(device=cuda) sync)
             B = len(seqs)
@@ -515,7 +512,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
             if not (self.jetspec and B == 1 and self._verify_input_direct_enabled and
                     self._verify_device_enabled):
                 speculations = self._speculations_buf
-            _census_mark("proposal", run_config=getattr(self, 'run_config', None))
 
             for i, seq in enumerate(seqs):
                 verified = (jetspec_verify_mask is None or
@@ -531,7 +527,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                     if verified
                     else 1
                 )
-            _census_mark("spec_tail", run_config=getattr(self, 'run_config', None))
 
             return SpeculateResult(
                 speculations,
@@ -579,9 +574,8 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
 
     def _speculation_request(self, seqs: list[Sequence], eagle: bool):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         B = len(seqs)
         chain_graph_seg = getattr(self, "_chain_graph_seg", None)
         if chain_graph_seg is None:
@@ -602,8 +596,7 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
         if sync_audit is None:
             sync_audit = setting(self, 'engine.engine_settings.jetspec_verify_sync_audit', '0') == "1"
         trace = getattr(self, "_w258b_trace", None)
-        if trace is None:
-            trace = setting(self, 'engine.engine_settings.w258b_trace') == "1"
+        trace = setting(self, 'engine.engine_settings.w258b_trace') == "1"
         if B != self._hs_B:
             self._alloc_handshake_bufs(B)
 
@@ -750,7 +743,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                     group=request_pg,
                 )
 
-        _census_mark("request", run_config=getattr(self, 'run_config', None))
         if self.jetspec:
             if self.jetspec_sync:
                 dist.recv(
@@ -789,7 +781,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                         raise RuntimeError("early verify stage lacks target runner")
                     self._verify_stage_runner.call("prepare_jetspec_mixed_device", seqs[0], True)
                 self._wait_for_jetspec_candidates(seqs)
-                _census_mark("cand_wait", run_config=getattr(self, 'run_config', None))
                 candidate_sets = [
                     self.jetspec_mailbox.take(
                         seq_id=seq.seq_id,
@@ -810,7 +801,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                                 seq_id=seq.seq_id, round=candidate_set.round_id,
                                 consume_ns=consumed_ns)), flush=True)
                 self.metrics["jetspec_stale_count"] = self.jetspec_mailbox.stale
-                _census_mark("cand_take", run_config=getattr(self, 'run_config', None))
             reference_select = B == 1 and getattr(self, "_reference_host_select", False)
             lean_select = B == 1 and select_lean and verify_device or reference_select
             host_select = lean_select and (getattr(self, "_verify_select_host", False) or reference_select)
@@ -876,7 +866,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                         counters=self.jetspec_counters,
                         selected_block=selected_block,
                     )
-                _census_mark("select", run_config=getattr(self, 'run_config', None))
                 if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
                     print(f"MAILBOX_ID side=verify event=select seq={seq.seq_id} round={seq.jetspec_round} branch={decision.kind} ar={len(decision.drafts) == 0}", flush=True)
                 fallback = None
@@ -1028,7 +1017,6 @@ class SpeculatorAsync(RequestChannel, RoundRecords, CandidateChannel, ChainRedra
                             **({} if fallback is None else fallback),
                         }
                     )
-                    _census_mark("record", run_config=getattr(self, 'run_config', None))
             return tokens, self._logits_q, verify_mask, verify_mask, decisions
 
         # Recv into pre-allocated buffers

@@ -5,7 +5,7 @@ before consulting an autotune cache. The guard checks that every compiled kernel
 actually receives one configuration and records it in the read manifest.
 """
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 import json
 import os
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
@@ -17,7 +17,7 @@ WORKSPACE = ':4096:8'
 
 
 def install(rank, *, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if not current_engine().deterministic:
         return None

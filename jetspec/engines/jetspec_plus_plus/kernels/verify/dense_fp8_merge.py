@@ -1,6 +1,6 @@
 """8B merge output stores without gathering each row into a separate layout."""
 # Adaptation: defer unavailable accelerator imports during CPU inspection.
-from jetspec.engines.jetspec_plus_plus.kernels._optional import triton, tl
+from jetspec.engines.jetspec_plus_plus.runtime._optional import triton, tl
 try:
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4._w4a8_quant import quantize_activation_block
     from jetspec.engines.jetspec_plus_plus.kernels.qwen3_8b.verify_layer8b import gdc_launch, gdc_wait

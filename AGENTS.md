@@ -4,26 +4,26 @@ This file tells coding agents how this repository is organized and how to run ea
 
 ## Repository map
 
-- `jetspec/methods/jetspec_plus_plus/`: JetSpec++ torch reference (adapter, decoder, refinement passes, rounds). It has its own `AGENTS.md`.
-- `jetspec/engines/jetspec_plus_plus/`: JetSpec++ serving engine (pipelined draft and verify on two GPUs). It has its own `AGENTS.md`.
+- `jetspec/engines/jetspec_plus_plus/draft/reference/`: JetSpec++ eager round loop and local loaders, using the shared engine method. The acceptance-length reader is `bench/jetspec_plus_plus/reader.py`. It has its own `AGENTS.md`.
+- `jetspec/engines/jetspec_plus_plus/`: JetSpec++ shared method and serving engine (pipelined draft and verify on two GPUs). It has its own `AGENTS.md`.
 - `jetspec/methods/jetspec/`, `jetspec/engines/jetspec/`: JetSpec tree drafting and its engine.
 - `bench/jetspec_plus_plus/`: `verify.py`, `tau.py`, `speedup.py`.
 
 ## How JetSpec++ works
 
-The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three parts. The torch reference in `jetspec/methods/jetspec_plus_plus/` implements each part in readable form, and the serving engine runs the same method with CUDA graphs and fused kernels.
+The paper is [arXiv 2610.19792](https://arxiv.org/abs/2610.19792). It has three parts. The shared method is in `jetspec/engines/jetspec_plus_plus/draft/method/`. The eager route in `draft/reference/` and the serving engine use it; serving adds CUDA graphs and fused kernels. Paths below are relative to the engine package.
 
-- **Pipelined drafting and verification.** The target model runs on one GPU and the draft model on a second GPU. While the target verifies block t, the draft model drafts block t+1, so the draft time hides under the verify time. `round.py` (`RoundDriver`) runs one round.
+- **Pipelined drafting and verification.** The target model runs on one GPU and the draft model on a second GPU. While the target verifies block t, the draft model drafts block t+1, so the draft time hides under the verify time. In the serving engine, `ChainRoundDriver` in `draft/driver.py` runs the draft side of each round. The eager `RoundDriver` in `draft/reference/round.py` runs one round on one GPU.
 - **Foresight drafting.** While block t is in verification, two facts are unknown: how many draft tokens the target accepts, and the anchor token (the target's own token after the accepted prefix, which starts block t+1).
-  - A hidden-to-hidden adapter (`models/adapter.py`) predicts the target hidden states of block t.
-  - The anchor decoder (`models/decoder.py`) is the target's last layers, final norm and LM head, untrained. It reads the predicted states and scores the possible anchor tokens.
-  - The draft model drafts block t+1 for several (accepted length, anchor token) outcomes in one pass, one row per outcome (`context.py` builds the hypothesis contexts).
-  - The rows to draft are selected with calibrated thresholds on the blended outcome probabilities (`method/rows.py`, `method/blend.py`, `method/kmass.py`). The thresholds ship in each checkpoint's `calibration/`.
+  - A hidden-to-hidden adapter (`draft/method/adapter.py`) predicts the target hidden states of block t.
+  - The anchor decoder (`draft/method/decoder/anchor.py`) is the target's last layers, final norm and LM head, untrained. It reads the predicted states and scores the possible anchor tokens.
+  - The draft model drafts block t+1 for several (accepted length, anchor token) outcomes in one pass, one row per outcome (`draft/drafter.py` builds the hypothesis contexts).
+  - The rows to draft are selected with calibrated thresholds on the blended outcome probabilities (`draft/method/cache_rows.py`). The thresholds ship in each checkpoint's `calibration/`.
   - After verification, a row that matches the real outcome becomes the next draft (a hit). On a miss, the draft model drafts block t+1 again from the verified context (a fallback round).
-- **Self refinement.** The draft model is trained to correct its own parallel draft. Jacobi passes (`method/passes.py`) redraft the block from its previous version.
-  - A context refresh (`method/refresh.py`) predicts the target states of the current draft again between passes.
-  - An anchor replacement (`method/swap.py`) replaces the first draft token that the anchor decoder disagrees with.
-  - Pins in `RefreshSwap` (`method/swap.py`) keep the tokens that agree.
+- **Self refinement.** The draft model is trained to correct its own parallel draft. Jacobi passes (`draft/method/passes.py`) redraft the block from its previous version.
+  - A context refresh (`draft/method/refresh.py`) predicts the target states of the current draft again between passes.
+  - An anchor replacement (`draft/reference/refresh.py`) replaces the first draft token that the anchor decoder disagrees with.
+  - Pins in `RefreshSwap` (`draft/reference/refresh.py`) keep the tokens that agree.
 - **Schedules.** `jJ-rR` means J refinement passes after the first draft and R context refreshes. The release defaults are `j1-r0` for Qwen3-8B on A100 and `j1-r1` elsewhere. The paper's Table 3 runs J1-R1 for Qwen3-8B and J3-R3 for Qwen3.8-27B.
 - **Lossless output.** At temperature 0, verification accepts the longest draft prefix that equals the target's greedy tokens, then appends the target's own next token.
 
