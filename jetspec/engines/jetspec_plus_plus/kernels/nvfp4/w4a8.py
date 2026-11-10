@@ -3,7 +3,7 @@
 The weight pack holds E2M1 codes (low nibble = even K) and one UE8M0 scale per
 32 K elements, the OCP MX layout. Each call quantizes the BF16 activation to
 FP8 E4M3 with one UE8M0 scale per row and per 32 K elements. The GEMM is the K1
-swap-AB kernel (`_k1_kernel.py`) built for `tcgen05.mma.kind::mxf8f6f4`. The
+swap-AB kernel (`_swapab_kernel.py`) built for `tcgen05.mma.kind::mxf8f6f4`. The
 weights are the A operand (128 rows per CTA) and the tokens are the B operand.
 Its TMA unpacks the FP4 weights into byte containers in shared memory, as the
 mixed FP8 x FP4 MMA kind needs. HBM traffic stays 4 bits per weight.
@@ -97,7 +97,7 @@ class W4A8Config:
 
 
 def smem_bytes(config: W4A8Config, stages: int) -> int:
-    """Mirror `_k1_kernel._smem_bytes` for FP4 x FP8 with UE8M0 scales per 32."""
+    """Mirror `_blockscaled_gemm_kernel._smem_bytes` for FP4 x FP8 with UE8M0 scales per 32."""
     def align(value, alignment):
         return (value + alignment - 1) // alignment * alignment
     cluster_split = config.split if config.resolved_reduction() == "dsmem" else 1
@@ -321,7 +321,7 @@ def draft_config(n: int, k: int, m: int, sms: int = 148) -> W4A8Config:
     """Select compact CTAs only for the gated M16 draft projections, default off."""
     config = default_config(n, k, m, sms)
     if m == 16 and (n, k) in ((6144, 4096), (4096, 4096), (24576, 4096), (4096, 12288)):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
         if kernel_value('draft_fuse_gemm8b', '0') == '1':
             return replace(config, compact=True)
     return config

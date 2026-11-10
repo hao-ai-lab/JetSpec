@@ -25,7 +25,7 @@ no swap object.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -45,7 +45,7 @@ R1_CONFIGS = ('J1-R1', 'J2-R1', 'J3-R1', 'J2-R2', 'J3-R3')
 
 
 def refresh_swap_lean_enabled(*, run_config=None):
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     value = kernel_value('refresh_swap_lean', '0')
     if value not in ('0', '1'):
         raise ValueError('JETSPEC_REFRESH_SWAP_LEAN must be 0 or 1')
@@ -122,7 +122,8 @@ def decision_errors(observed, expected):
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.compact_head import (_compact_head, _compact_merge)
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.compact_head import _compact_head
+    from jetspec.engines.jetspec_plus_plus.kernels.decoder.compact_head import _compact_merge
 
 
 def allocate_compact(rows, slots, vocab, device):
@@ -211,7 +212,7 @@ class RefreshSwap:
 
     def __init__(self, decoder, front, tap_store, *, rows, lanes, run_config=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if decoder is None:
             raise ValueError(f'{NAME}=1 needs the anchor decoder')
         self.decoder = decoder
@@ -318,7 +319,7 @@ class RefreshSwap:
         they are injected: swap ``ids`` in place, pin the swaps, reopen swapped rows in
         ``finished``, and return the fixed-layout inject count (entries 0..khat_used; 0 on an
         inactive row)."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         hidden = self.decoder.hidden_size
         legacy_write = not self.dense_pins
         if getattr(self, 'true_taps', None) is not None:
@@ -344,13 +345,13 @@ class RefreshSwap:
         if (config_values(getattr(self, 'run_config', None)).get(
                 'engine.engine_settings.draft_fuse_t10', '0') == '1'
                 and legacy_write and self.lean and not self.check and not self.multi_refresh):
-            from jetspec.engines.jetspec_plus_plus.draft.swap_write import decide_and_finish
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.swap_write import decide_and_finish
             return decide_and_finish(result, ids, khat, slot_counts, active,
                                      self.pin_slot, self.pin_token, finished, inclusive=inclusive)
         wrote_ids = (legacy_write and self.lean and not self.check and
                      kernel_enabled('refresh_swap_write_fused', '1'))
         if wrote_ids:
-            from jetspec.engines.jetspec_plus_plus.draft.swap_write import decide_and_write
+            from jetspec.engines.jetspec_plus_plus.draft.refresh.swap_write import decide_and_write
             khat_used, slot, new, apply = decide_and_write(result, ids, khat, slot_counts, active)
         else:
             decision = compact_decision if self.lean else swap_decision

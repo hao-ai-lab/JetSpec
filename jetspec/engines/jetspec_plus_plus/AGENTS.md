@@ -5,7 +5,7 @@ This folder is the JetSpec++ serving engine. Read the [README](README.md) first:
 ## Rules
 
 - `config/` and `artifacts/` hold data, not code. Keep their hashes equal to the published checkpoints.
-- Do not edit `third_party/`. The engine checks that code by hash.
+- Do not edit `bench/jetspec_plus_plus/third_party/`. The comparison code is available from a source checkout and is checked by hash when selected.
 - Share one `--cache-root` between reads that you compare.
 
 ## Check a change

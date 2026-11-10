@@ -1,6 +1,6 @@
 """Default-off packed N=1 fixed-refresh injection."""
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 from types import SimpleNamespace
 import os
 
@@ -66,7 +66,7 @@ def inject_g27c(bucket, hidden, khat, reset, inclusive):
     fused_norm = (kernel_value('draft_fuse_g27e', '0') == '1'
                   and getattr(head.fc, 'out_features', None) == 5120)
     if fused_norm:
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.refresh_norms import plain_norms
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_norms import plain_norms
         extra = {}
         if kernel_value('draft_fuse_g27f', '0') == '1':
             from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled
@@ -154,7 +154,7 @@ def project(bucket, hidden, khat, run_config=None):
 
 def commit(bucket, projected, khat, reset, guard=None):
     """Write only the final cutoff's rows and expose them to the next pass."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     head = bucket.head
     _, _, norms, width = head._refresh_inject_kv
     nh, hd = head.layers[0].self_attn.config.num_key_value_heads, head.layers[0].self_attn.head_dim
@@ -202,7 +202,7 @@ def commit(bucket, projected, khat, reset, guard=None):
     if not fuse_mask:
         bucket._inject_mask(khat, projected.shape[0], reset)
     if guard is not None and not projected.is_cuda:
-        from jetspec.engines.jetspec_plus_plus.draft.glue import mask_token_guard
+        from jetspec.engines.jetspec_plus_plus.draft.decoder_window import mask_token_guard
         mask_token_guard(*guard)
 
 
@@ -212,4 +212,4 @@ from jetspec.engines.jetspec_plus_plus.draft.method.refresh import inject_mask_r
 _front = _postprocess = None
 
 
-from jetspec.engines.jetspec_plus_plus.kernels.refresh_inject import _kernels
+from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_inject import _kernels

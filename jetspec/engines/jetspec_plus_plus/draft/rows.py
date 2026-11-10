@@ -6,7 +6,7 @@ and r = N * len(k-set) * F. The existing wire uses hypothesis = k - 1.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import importlib.util
 import math
@@ -16,7 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from jetspec.engines.jetspec_plus_plus.runtime.env import context_append_enabled
 from jetspec.engines.jetspec_plus_plus.runtime.config_values import config_values
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
 
 try:
     import torch
@@ -192,7 +192,11 @@ def _rotary(x, cos, sin):
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.row_cache import (_context_kv_postprocess_kernel, _kv_rotary_into_cache_kernel, _kv_rotary_into_slots_kernel, _top1_probability_kernel, _kv_rotary_into_cache_at_kernel)
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _context_kv_postprocess_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_cache_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_slots_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _top1_probability_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.rows.row_cache import _kv_rotary_into_cache_at_kernel
 
 
 def kv_rotary_into_cache(normalized_key, projected_value, cos, sin, key_out, value_out, *,
@@ -271,9 +275,9 @@ def top1_probabilities_fast(logits):
 
 def fused_kernels():
     """The certified C1 kernels, under the one module name the adapter loads."""
-    name = 'jetspec_c1_fused'
+    name = 'jetspec_fused_decoder'
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, (Path(__file__).parent.parent / 'kernels/c1_fused.py'))
+        spec = importlib.util.spec_from_file_location(name, (Path(__file__).parent.parent / 'kernels/fused_decoder.py'))
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         sys.modules[name] = module
@@ -283,7 +287,7 @@ def fused_kernels():
 
 def rows_fused(tensor, *, run_config=None):
     """Legacy eager fusion, also read by the decoder's residual dispatch."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return (kernel_enabled('rows_fused', '1') and tensor.device.type == 'cuda'
             and tensor.dtype == torch.bfloat16
             and not (kernel_enabled('rows_fused_graph', '1')
@@ -293,7 +297,7 @@ def rows_fused(tensor, *, run_config=None):
 
 def rows_pass_fused(tensor, *, run_config=None):
     """Fuse the row pass and context refresh without changing decoder dispatch."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return (tensor.device.type == 'cuda' and tensor.dtype == torch.bfloat16
             and (rows_fused(tensor, run_config=run_config) or kernel_enabled('rows_fused_graph', '1')))
 
@@ -305,7 +309,7 @@ def check_rows_fused_regime(*, run_config=None):
     and never hand the fused path its pending residual pair, so a served round
     would reach ``fast_add_rms_norm(*None)`` (B200, /decoder_ predict, round 4).
     """
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if not kernel_enabled('rows_fused', '1'):
         return
     graphed = [name for name in ('engine.engine_settings.rows_graphs', 'engine.engine_settings.host_fast', 'engine.engine_settings.c1_graph')
@@ -341,7 +345,7 @@ def refresh_inject_lean():
     run once over the stacked keys (elementwise ops and a per-row mean over head_dim), the
     cache writes are index_copy_ instead of advanced-index puts, and the packed mask comes from
     a per-bucket (row, k-hat) bank (the rows' bits are disjoint, so their byte sum is their OR)."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     value = kernel_value('refresh_inject_lean', '0')
     if value not in ('0', '1'):
         raise ValueError('JETSPEC_REFRESH_INJECT_LEAN must be 0 or 1')
@@ -380,7 +384,7 @@ class EarlyContextKV:
     @torch.inference_mode()
     def __init__(self, head, P, tail_rows=15, N=1, *, run_config=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         parameter = next(head.parameters())
         self.head, self.P, self.N = head, P, N
         self.T = int(tail_rows)  # serving: 16 with 15 drafts
@@ -630,7 +634,7 @@ def chain_geometry_into(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, m
     if (keys.dtype != torch.int64 or mask_bytes != count * block_bytes or
             tuple(qcos.shape) != (count * 16, dim) or mask.numel() < mask_bytes):
         raise ValueError('chain geometry shapes disagree with the mask banks')
-    from jetspec.engines.jetspec_plus_plus.kernels import chain_geometry
+    from jetspec.engines.jetspec_plus_plus.kernels.chain import chain_geometry
     if not cos.is_cuda or chain_geometry.triton is None:
         _chain_geometry_reference(cos, sin, length, keys, banks, ccos, csin, qcos, qsin, mask,
                                   prefix=prefix, tail=tail, key_offset=key_offset)
@@ -681,7 +685,7 @@ class RowDraftHead(nn.Module):
 
     def __init__(self, head, *, backend='flashinfer', workspace_bytes_per_row=2 * 1024 * 1024, run_config=None):
         self.run_config = run_config
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         super().__init__()
         self.head = DraftLinear.bind(head)
         self.backend = backend
@@ -830,7 +834,7 @@ class RowDraftHead(nn.Module):
     @staticmethod
     def _context_into_cache(fused, head, hidden, cos, sin, caches, slots, span, storage,
                             source_rows=None, *, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         packed = getattr(head, '_context_kv', None)
         if (not kernel_enabled('ctx_kv_fused', '1')
                 and config_values(run_config).get('engine.engine_settings.hybrid_context_dirty', '0') != '1') or packed is None:
@@ -921,7 +925,7 @@ class RowDraftHead(nn.Module):
                                 length=self._jpass_state.lengths, prefix=self.P)
                 return output[0].transpose(0, 1)
         if getattr(self, '_jpass_len_enabled', False):
-            from jetspec.engines.jetspec_plus_plus.kernels.jpass_len_attention import attend
+            from jetspec.engines.jetspec_plus_plus.kernels.passes.jpass_len_attention import attend
             return attend(q, cache, self.custom_mask_buffer, self._jpass_state.lengths,
                           groups=self.N, prefix=self.P, scale=attn.head_dim ** -0.5)
         return self.wrapper.run(q, cache)
@@ -957,7 +961,7 @@ class RowDraftHead(nn.Module):
         plus rotary fused for q and k, the residual add fused into the post
         norm, and a strided cache copy per tensor.  Same projections, same
         attention call, same order of additions as the reference above."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         layout = self.layout
         rows = hidden.shape[0]
         cos, sin = self.qcos[0], self.qsin[0]
@@ -991,7 +995,7 @@ class RowDraftHead(nn.Module):
             else:
                 qp, projected_kv = attn.q_proj(normalized), None
             if qkv_glue and projected_kv is not None:
-                from jetspec.engines.jetspec_plus_plus.kernels.qkv_glue import qkv_norm_rotary_cache
+                from jetspec.engines.jetspec_plus_plus.kernels.row_qkv_cache import qkv_norm_rotary_cache
                 q = qkv_norm_rotary_cache(
                     qp, *projected_kv, attn.q_norm.weight, attn.k_norm.weight,
                     cos, sin, cache, layout.noise_slots, self.noise_span,
@@ -1198,7 +1202,7 @@ class BucketRowDraftHead(RowDraftHead):
     def __init__(self, head, *, N, H, prefix_bucket, backend='flashinfer', F=1,
                  row_capacity=None, flat=False, graphs=False, refresh=False, tail_rows=15,
                  block_size=16, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         self.run_config = run_config
         super().__init__(head,backend=backend,workspace_bytes_per_row=4*1024*1024,
                          run_config=run_config)
@@ -1426,7 +1430,7 @@ class BucketRowDraftHead(RowDraftHead):
     def update_chain(self, prefix_padded, tails, length, ks, *, mark=True,
                      incremental=False, geometry=True):
         """Fixed-P context copy and one device-length geometry update for N=1."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if self.N != 1 or prefix_padded.shape != (self.P, self.contexts.shape[-1]) or \
                 tails.shape != (1, self.T, self.contexts.shape[-1]):
             raise ValueError('chain context requires one fixed-P prefix and one fixed tail')
@@ -1440,7 +1444,7 @@ class BucketRowDraftHead(RowDraftHead):
                             for name in ('draft_fuse_cgm27', 'draft_fuse_dctx',
                                          'hybrid_context_dirty_rows')))
         if gathered:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import context_gather_mark
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import context_gather_mark
             context_gather_mark(
                 self._chain_ctx_length, length, prefix_padded, tails,
                 self.head.adapted_position_embedding.weight, context,
@@ -1448,7 +1452,7 @@ class BucketRowDraftHead(RowDraftHead):
                 *self._chain_ctx_gather, self._chain_ctx_dirty_source,
                 self._chain_ctx_dirty_slots, self._chain_ctx_previous)
         elif kernel_enabled('chain_sega_glue', '2') and mark:
-            from jetspec.engines.jetspec_plus_plus.draft.glue import context_copy_mark
+            from jetspec.engines.jetspec_plus_plus.draft.decoder_window import context_copy_mark
             context_copy_mark(length, prefix_padded, tails,
                               self.head.adapted_position_embedding.weight, context)
         else:
@@ -1713,7 +1717,7 @@ class BucketRowDraftHead(RowDraftHead):
         one cos/sin table (each position's value is one product, so the gather
         is bitwise the rotary_emb call), and the mask is the OR of packed banks.
         The prefix rows of ccos/csin never change after prepare()."""
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if getattr(self, '_rope_table', None) is None:
             positions = torch.arange(self.P + 32, device=self.device)
             cos, sin = self.head.rotary_emb(self.hidden_stub, positions[None])
@@ -1778,7 +1782,7 @@ class BucketRowDraftHead(RowDraftHead):
         ``reset`` (a second refresh in the round): hide every earlier refresh entry
         first, so the mask exposes exactly this call's entries.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         if not self.refresh:
             raise RuntimeError('bucket was built without refresh slots')
         head, rows = self.head, self.N * self.R * self.B

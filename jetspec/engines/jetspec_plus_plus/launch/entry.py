@@ -9,7 +9,7 @@ import sys
 import time
 
 from jetspec.engines.jetspec_plus_plus.draft.method.config import CATEGORIES, canonical_json, config_hash
-from jetspec.engines.jetspec_plus_plus.launch_env import environment_name, serving_environment, apply_serving_profile
+from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name, serving_environment, apply_serving_profile
 from .resolution import ROOT, resolve
 
 FAMILIES = {'dspark': 'blockhead', 'fanout-tree': 'ssd', 'domino': 'spec_sync',
@@ -24,7 +24,7 @@ COMPOSED_RECIPES = _COMPOSED['recipes']
 
 def profile_environment(config):
     """A named profile owns selectors; compatibility leaves own other values."""
-    from jetspec.engines.jetspec_plus_plus.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import get_profile, legacy_names, legacy_selector_names, TRANSPORT_SWITCHES
     from jetspec.engines.jetspec_plus_plus.runtime.env import REQUIRED
     from jetspec.engines.jetspec_plus_plus.runtime.env import NO_DEFAULT
     from jetspec.engines.jetspec_plus_plus.runtime.env import legacy_registry as _legacy_registry
@@ -72,7 +72,7 @@ def _without_inert_dependents(environment, selectors):
 
 def _recipe_environment(environment):
     """Project canonical compatibility fields through the existing legacy binding."""
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
     return {(environment_name(*key.split('.', 1)) if '.' in key else key): value
             for key, value in environment.items()}
 
@@ -164,10 +164,10 @@ def serving_recipe(config, *, root=ROOT):
     return recipe
 
 
-def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read.json',
+def build_plan(config, *, launch=None, root=ROOT, prompts_root=None, output='read.json',
                sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
     """Return the environment and legacy argv without probing host artifacts or GPUs."""
-    config_root = Path(config_root or Path(root) / 'config')
+    prompts_root = Path(prompts_root or Path(root).parents[2] / 'bench/jetspec_plus_plus/prompts')
     recipe = serving_recipe(config, root=root) if launch is None else deepcopy(launch)
     # Model declarations own new compositions; sealed recipe launches keep their source.
     if (launch is None and recipe['method'] == 'jetspecpp'
@@ -186,12 +186,12 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
             '--recipe', recipe['name'], '--placement', hardware['placement'],
             '--devices', ','.join(map(str, hardware['devices'])),
             '--dataset', benchmark['dataset'], '--prompts-json',
-            str(config_root / 'prompts' / prompt['file']),
+            str(prompts_root / prompt['file']),
             '--count', str(benchmark['count']), '--tokens', str(benchmark['cap']),
             '--temperature', str(benchmark['temperature']), '--seed', str(benchmark['seed']),
             '--repeats', str(benchmark['repeats']), '--output-json', str(output),
             '--cpu-pin', hardware['cpu_pin']]
-    from jetspec.engines.jetspec_plus_plus.run_config import RunConfig
+    from jetspec.engines.jetspec_plus_plus.runtime.run_config import RunConfig
     run_config = RunConfig.from_config(config)
     if sequential_prompts:
         if run_config.concurrency != 1:
@@ -204,24 +204,18 @@ def build_plan(config, *, launch=None, root=ROOT, config_root=None, output='read
             if value not in ('on', 'off'):
                 raise ValueError(f'{flag} must be on or off')
             argv.extend([flag, value])
-    if run_config.concurrency > 1 and not run_config.batch_capacity.supports_batch:
-        profile = config['engine'].get('profile', 'current')
-        raise ValueError(f'engine profile {profile!r} is missing supports_batch=true '
-                         f'for benchmark.concurrency={run_config.concurrency}')
     if benchmark['stop_at_eos']:
         argv.extend(['--stop-at-eos', 'on'])
     if hardware.get('mps'):
         argv.extend(['--mps-root', str(Path(output).absolute().parent / 'mps')])
-    if run_config.concurrency > 1:
-        argv.extend(['--batch', str(run_config.concurrency)])
     return dict(recipe=recipe, environment=recipe['environment'], serve_argv=argv,
                 launch_overlay=run_config.batch_overlay())
 
 
-def resolve_read(names, overrides=(), *, root=ROOT / 'config', launch=None, output='read.json',
+def resolve_read(names, overrides=(), *, root=ROOT / 'config', prompts_root=None, launch=None, output='read.json',
                  sequential_prompts=False, cache_root=None, wire_records=None, anatomy=None):
     config = resolve(names, overrides, root=root)
-    plan = build_plan(config, launch=launch, root=Path(root).parent, config_root=root, output=output,
+    plan = build_plan(config, launch=launch, root=Path(root).parent, prompts_root=prompts_root, output=output,
                       sequential_prompts=sequential_prompts, cache_root=cache_root,
                       wire_records=wire_records, anatomy=anatomy)
     return dict(schema='jetspec.config_read/1', config=config, canonical_json=canonical_json(config),
@@ -296,7 +290,7 @@ def main(argv=None):
         record = resolve_read(names, overrides, output=args.output,
                               sequential_prompts=args.sequential_prompts, cache_root=args.cache_root,
                               wire_records=args.wire_records, anatomy=args.anatomy)
-        from jetspec.engines.jetspec_plus_plus.engine import Engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import Engine
         Engine.from_config(record['config'], sealed_record=args.resolve_only)
     except (ValueError, OSError) as error:
         parser.error(str(error))
@@ -305,6 +299,11 @@ def main(argv=None):
         return
     from . import runner
     serve_argv = list(record['serve_argv'])
+    # The serving entry passes its own --prompts-json; this launcher runs the plan's pinned file.
+    prompts = Path(serve_argv[serve_argv.index('--prompts-json') + 1])
+    if not prompts.is_file():
+        parser.error(f'pinned prompt file {prompts} does not exist: install with `pip install -e .` '
+                     'from a source checkout, or call resolve_read with prompts_root')
     devices = serve_argv.index('--devices') + 1
     try:
         serve_argv[devices] = granted_devices(serve_argv[devices], os.environ.get('CUDA_VISIBLE_DEVICES'))

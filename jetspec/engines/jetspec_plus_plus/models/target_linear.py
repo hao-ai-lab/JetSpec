@@ -396,7 +396,7 @@ def w4a8_draft_linear(x, weight, bias=None, *, out=None, site=None, draft=False)
     n, k = weight.shape
     m = x.numel() // k if k else 0
     site = site or _w4a8_site()
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     vhead = (site.startswith('lm_head:') and 48 <= m <= 256 and n % 8 == 0
              and bias is None and kernel_value('draft_fuse_vhead', '0') == '1')
     reason = _w4a8_fallback_reason(x, weight, bias, m)
@@ -425,7 +425,7 @@ def w4a8_draft_linear(x, weight, bias=None, *, out=None, site=None, draft=False)
             target = None
     if bias is not None and not bias.is_contiguous():
         bias = bias.contiguous()
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     # draft_fuse_w1h27: consume the hybrid producer's immutable storage side output.
     if kernel_enabled('draft_fuse_w1', '1') or kernel_enabled('draft_fuse_w1h27', '1'):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import activation_for
@@ -461,7 +461,7 @@ def _w4a8_bmm(x, weight, *, draft=False):
 
 def packed_draft_linear(x, weight, bias=None, *, role='draft'):
     """``F.linear`` on a packed draft-lane weight; the W4A8 kernel serves it under mxfp4_w4a8."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if getattr(current_engine(), 'precision_' + role) == 'mxfp4_w4a8':
         output = w4a8_draft_linear(x, weight, bias, draft=role == 'draft')
         if output is not None:
@@ -477,7 +477,7 @@ def w4a8_head_logits(hidden, weight, *, site=None):
     activation workspace, callers must consume it before reusing the head.
     Unsupported heads retain their existing BF16 path; a cold capture raises.
     """
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     reduced = getattr(weight, '_draft_vocab', None)
     if reduced is not None:
         from jetspec.engines.jetspec_plus_plus.models.draft_vocab import expand_logits
@@ -551,7 +551,7 @@ def round_nvfp4_weights(module, role):
     on its precision (NVFP4) or in the W4A8 pack registry (MXFP4). Embeddings,
     norms and biases are not projections and stay.
     """
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.format import dequantize, quantize_weight
     engine = current_engine()
     if not set(ROUNDED_MODES) & {engine.precision_target, engine.precision_draft, engine.precision_lm_head,
@@ -700,7 +700,7 @@ def report_nvfp4_census(roots, device=None):
 
 
 def _precision_for_role(role):
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     if role not in ('target', 'draft', 'lm_head'):
         raise ValueError('projection role must be target, draft or lm_head')
     mode = getattr(current_engine(), 'precision_' + role)
@@ -711,7 +711,7 @@ def _precision_for_role(role):
 
 def bind_weight_role(weight, role):
     """Attach a role to a parameter or pack without changing its storage."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     mode = getattr(current_engine(), 'precision_' + role)
     precision = getattr(weight, '_projection_precision', None)
     if precision is None or precision.weight_format.mode != mode:
@@ -721,7 +721,7 @@ def bind_weight_role(weight, role):
 
 def bind_projection_role(module, role):
     """Assign decoder-tail and vocabulary roles before weights are warmed."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     for name, child in module.named_modules():
         selected = 'lm_head' if name.rsplit('.', 1)[-1] == 'lm_head' else role
         if isinstance(child, TargetLinear):

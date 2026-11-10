@@ -2,21 +2,21 @@ from importlib import import_module
 
 
 _EXPORTS = {
-    "LLM": ("jetspec.engines.jetspec_plus_plus.llm", "LLM"),
+    "LLM": ("jetspec.engines.jetspec_plus_plus.serving.llm", "LLM"),
     "SamplingParams": ('jetspec.engines.jetspec_plus_plus.serving.sampling_params', 'SamplingParams'),
     "Sequence": ('jetspec.engines.jetspec_plus_plus.serving.sequence', 'Sequence'),
     "SequenceStatus": ('jetspec.engines.jetspec_plus_plus.serving.sequence', 'SequenceStatus'),
     "ModelRunner": ('jetspec.engines.jetspec_plus_plus.serving.model_runner', 'ModelRunner'),
-    "Config": ('jetspec.engines.jetspec_plus_plus.serving.config', 'Config'),
-    "infer_model_family": ('jetspec.engines.jetspec_plus_plus.serving.misc', 'infer_model_family'),
+    "Config": ('jetspec.engines.jetspec_plus_plus.runtime.config', 'Config'),
+    "infer_model_family": ('jetspec.engines.jetspec_plus_plus.serving.token_text', 'infer_model_family'),
     "Attention": ('jetspec.engines.jetspec_plus_plus.models.attention', 'Attention'),
     "set_context": ('jetspec.engines.jetspec_plus_plus.models.context', 'set_context'),
     "get_context": ('jetspec.engines.jetspec_plus_plus.models.context', 'get_context'),
     "reset_context": ('jetspec.engines.jetspec_plus_plus.models.context', 'reset_context'),
     "verify": ('jetspec.engines.jetspec_plus_plus.verify.verify', 'verify'),
-    "make_glue_decode_input_ids": ('jetspec.methods.baselines.tree_glue', 'make_glue_decode_input_ids'),
+    "make_glue_decode_input_ids": ('bench.jetspec_plus_plus.baselines.tree_glue', 'make_glue_decode_input_ids'),
     "get_forked_recovery_tokens_from_logits": (
-        'jetspec.methods.baselines.tree_glue',
+        'bench.jetspec_plus_plus.baselines.tree_glue',
         'get_forked_recovery_tokens_from_logits',
     ),
     "apply_sampler_x_rescaling": ('jetspec.engines.jetspec_plus_plus.models.sampling', 'apply_sampler_x_rescaling'),
@@ -25,7 +25,7 @@ _EXPORTS = {
     "run_decode_cudagraph": ('jetspec.engines.jetspec_plus_plus.serving.graphs', 'run_decode_cudagraph'),
     "capture_cudagraph": ('jetspec.engines.jetspec_plus_plus.serving.graphs', 'capture_cudagraph'),
     "capture_verify_cudagraph": ('jetspec.engines.jetspec_plus_plus.serving.graphs', 'capture_verify_cudagraph'),
-    "run_fi_tree_decode_cudagraph": ('jetspec.methods.baselines.fanout_graphs', 'run_fi_tree_decode_cudagraph'),
+    "run_fi_tree_decode_cudagraph": ('bench.jetspec_plus_plus.baselines.fanout_graphs', 'run_fi_tree_decode_cudagraph'),
     "prepare_decode_tensors_from_seqs": (
         'jetspec.engines.jetspec_plus_plus.serving.runner_helpers',
         'prepare_decode_tensors_from_seqs',
@@ -48,6 +48,11 @@ def __getattr__(name):
     if name not in _EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     module_name, attribute = _EXPORTS[name]
-    value = getattr(import_module(module_name), attribute)
+    if module_name.startswith('bench.'):
+        from .serving._source_checkout import baseline_module
+        module = baseline_module(module_name.rsplit('.', 1)[1])
+    else:
+        module = import_module(module_name)
+    value = getattr(module, attribute)
     globals()[name] = value
     return value

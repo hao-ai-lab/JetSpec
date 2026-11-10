@@ -12,7 +12,7 @@ import zlib
 
 
 def enabled(run_config=None, *, engine=None):
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
     engine = current_engine() if engine is None else engine
     return (engine.record == 'anatomy'
@@ -21,7 +21,7 @@ def enabled(run_config=None, *, engine=None):
 
 def target_host_stamps(jetspec, run_config=None, *, engine=None):
     from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     return jetspec and ((engine if engine is not None else current_engine()).kind == 'reference'
                        or setting(run_config, 'engine.engine_settings.device_host_stamps', '0') == '1')
 

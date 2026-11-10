@@ -3,7 +3,7 @@ SDPA path vs the paged tree-attention triton kernel, on a real model.
 
     JETSPEC_TEST_MODEL=Qwen/Qwen3-8B python examples/engine/jetspec_engine_generate.py
 
-Reports tok/s for each backend over a fixed batch (B=8, 64 new tokens, greedy). The
+Reports tok/s for each backend over one prompt (64 new tokens, greedy). The
 SDPA N2a baseline reconstructs every seq's dense KV + pads + masks each step; the
 kernel reads K/V straight from the pool with no pad/mask/copy-back. Decode-only (AR,
 no tree), so this isolates the per-step attention substrate. Not a gate — a number."""
@@ -31,16 +31,9 @@ def main():
     model = os.environ.get("JETSPEC_TEST_MODEL", "Qwen/Qwen3-8B")
     dtype = torch.bfloat16
     sp = SamplingParams(temperature=0.0, max_new_tokens=64)
-    # B=8 distinct prompts (ragged lengths exercise the per-seq pool).
+    # One request at a time.
     raw = [
         "The three primary colors are",
-        "In a distant galaxy, a lone explorer discovered",
-        "The key to a good algorithm is",
-        "Once upon a time, in a small village near the mountains,",
-        "Photosynthesis is the process by which",
-        "To prove the theorem, we first assume that",
-        "The history of computing began when",
-        "A balanced diet consists of",
     ]
 
     results = {}

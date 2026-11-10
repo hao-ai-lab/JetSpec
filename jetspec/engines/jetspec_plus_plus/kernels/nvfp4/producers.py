@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
 
 from .w4a8 import MAX_M, TUNED, token_tile
 
@@ -30,8 +30,8 @@ class W4A8Activation:
 
 
 def enabled(x):
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     return (x.is_cuda and x.dtype == torch.bfloat16 and x.shape[-1] % 128 == 0
             and 128 <= x.shape[-1] and 1 <= x.numel() // x.shape[-1] <= MAX_M
             and current_engine().precision_draft == 'mxfp4_w4a8'
@@ -79,8 +79,8 @@ def allocate_activation(output, *, group_rows=None, tiles=None):
 
 def attention_activation(output):
     """Own MX8 for the exact contiguous O-projection view, without making a copy."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
     if (kernel_value('draft_fuse_am', '0') not in ('1', '2') or not output.is_cuda
             or output.dtype != torch.bfloat16 or output.shape[-1] != 128
             or current_engine().precision_draft != 'mxfp4_w4a8'
@@ -238,7 +238,7 @@ def norm(x, weight, eps, *, residual=None, append=None, ids=None):
     rows = ids.numel() if ids is not None else x.numel() // width
     appended = 0 if append is None else append.numel() // width
     if not x.is_cuda or x.dtype != torch.bfloat16 or rows + appended > MAX_M:
-        from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _reference_rms_norm
+        from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _reference_rms_norm
         state = x if residual is None else x + residual
         source = state if append is None else torch.cat((append, state))
         return _reference_rms_norm(source, weight, eps), state
@@ -279,7 +279,7 @@ def silu_mul(gate, up):
 
 
 def grouped_norm(prefix, weights, stream_indices, eps):
-    from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import _grouped_rms_norm_w1_kernel
+    from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import _grouped_rms_norm_w1_kernel
     blocks, width = weights.shape
     rows = prefix.shape[1]
     output = prefix.new_empty((blocks, rows, width))

@@ -1,11 +1,9 @@
 import os
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import json
 from random import randint
 from typing import List, Optional, Tuple
 from transformers import AutoTokenizer
-from jetspec.engines.jetspec_plus_plus.serving.paths import resolve_paths
+from jetspec.engines.jetspec_plus_plus.runtime.paths import resolve_paths
 
 
 def _get_snapshot_path(base_path: str) -> str:

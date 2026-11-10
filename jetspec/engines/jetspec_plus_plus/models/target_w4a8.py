@@ -17,7 +17,7 @@ MODE = 'mxfp4_w4a8'
 
 
 def target_w4a8_enabled():
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     engine = current_engine()
     return MODE in (getattr(engine, 'precision_target', 'bf16'), getattr(engine, 'precision_target_head', 'bf16'))
 
@@ -46,7 +46,7 @@ def _current_packs(model):
 
 def bind_target_head_w4a8(model):
     """Bind the verify head (layout head) to mxfp4_w4a8 when precision_target_head asks for it."""
-    from jetspec.engines.jetspec_plus_plus.engine import current_engine
+    from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
     from jetspec.engines.jetspec_plus_plus.models.target_linear import ProjectionPrecision, TargetLinear, WeightFormat
     if getattr(current_engine(), 'precision_target_head', 'bf16') != MODE:
         return 0

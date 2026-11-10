@@ -3,7 +3,7 @@ import torch
 from collections import deque
 from transformers import AutoTokenizer
 
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.serving.sequence import SequenceStatus
 from jetspec.engines.jetspec_plus_plus.serving.block_manager import BlockManager
@@ -354,7 +354,7 @@ class Scheduler:
                 self.running.remove(seq)
 
 import torch
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from transformers import AutoTokenizer
 
 @torch.inference_mode()

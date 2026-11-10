@@ -37,7 +37,7 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
     if save_previous:
         previous_top1.copy_(values.p_top1[:, 1:])
     if index == 0 and '_t17_refresh' in outputs:
-        from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import reference_refresh
+        from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import reference_refresh
         reference_refresh(values.p_top1, active, keys, rp[Offset.L], outputs['_t17_refresh'])
     source = torch.cat((tokens.committed_ids.index_select(0, rp[Offset.L].reshape(1)),
                         tokens.pending_draft_ids, tokens.pending_draft_ids[-1:]))
@@ -48,8 +48,8 @@ def reference_chain_pass(logits, ids, keys, active, outputs, previous_top1,
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.chain_publish import _finish_publish
-    from jetspec.engines.jetspec_plus_plus.kernels.refresh_prefix_scan import _refresh
+    from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_publish import _finish_publish
+    from jetspec.engines.jetspec_plus_plus.kernels.refresh.refresh_prefix_scan import _refresh
     @triton.jit
     def _partials(LOGITS, PMAX, PSUM, PIDX, V: tl.constexpr,
                   L: tl.constexpr, C: tl.constexpr, S0: tl.constexpr,
@@ -162,9 +162,9 @@ def allocate_partials(rows, lanes, vocab, device, *, block=2048):
     partials = (torch.empty(shape, device=device, dtype=torch.float32),
                 torch.empty(shape, device=device, dtype=torch.float32),
                 torch.empty(shape, device=device, dtype=torch.int32))
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
-        from jetspec.engines.jetspec_plus_plus.kernels.draft_glue_tune import PassPartials
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import PassPartials
         return PassPartials(partials, torch.zeros(rows, device=device, dtype=torch.int32))
     return partials
 
@@ -177,9 +177,9 @@ def chain_pass(logits, ids, keys, active, outputs, previous_top1, tokens, rp,
     as in ``reference_pass``; default None."""
     if triton is None:
         raise RuntimeError('JETSPEC_REFINE_K3 on CUDA requires Triton')
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     if kernel_enabled('draft_fuse_t6'):
-        from jetspec.engines.jetspec_plus_plus.kernels.draft_glue_tune import chain_pass_into
+        from jetspec.engines.jetspec_plus_plus.kernels.passes.launch_tuning import chain_pass_into
         return chain_pass_into(logits, ids, keys, active, outputs, previous_top1,
                                tokens, rp, partials, index, save_previous,
                                pinned_second, pins)

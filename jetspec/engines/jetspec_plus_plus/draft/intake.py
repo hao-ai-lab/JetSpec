@@ -1,7 +1,7 @@
 """Fused metadata and exact-tap intake for a captured chain round."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -20,18 +20,18 @@ except ImportError:  # The pinned Mac CPU test environment has no Triton.
 
 # Field offsets and hash parameters are contract-emitted Triton constants.
 # Error literals mirror CHAIN_ERR_* in intake.py.
-from jetspec.engines.jetspec_plus_plus.kernels.chain_intake import _select
+from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_intake import _select
 
 
-from jetspec.engines.jetspec_plus_plus.kernels.chain_intake import _metadata
+from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_intake import _metadata
 
 
-from jetspec.engines.jetspec_plus_plus.kernels.chain_intake import _tap_front
+from jetspec.engines.jetspec_plus_plus.kernels.chain.chain_intake import _tap_front
 
 
 def fused_intake(buffers: dict, *, max_length: int | None) -> None:
     """Run the two kernels using only static shapes and device pointers."""
-    from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
     packet = buffers["packet"]
     if not packet.is_cuda:
         raise ValueError("fused intake requires CUDA tensors")

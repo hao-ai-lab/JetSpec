@@ -1,1 +1,1 @@
-"""Paper Table 3 serving protocol and reduction."""
+"""Public-checkpoint Table 3 comparison."""

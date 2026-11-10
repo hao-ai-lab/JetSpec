@@ -2,11 +2,9 @@
 import torch
 
 from .ops import reference_op
-from .batching import sequencewise
 
 
 @reference_op("greedy_accept_device")
-@sequencewise('proposals', 3)
 @torch.inference_mode()
 def greedy_accept_device(logits, proposals):
     """Return accepted draft counts and recovery IDs without a host read."""
@@ -18,7 +16,6 @@ def greedy_accept_device(logits, proposals):
 
 
 @reference_op("point_mass_accept_device")
-@sequencewise('proposals', 3)
 @torch.inference_mode()
 def point_mass_accept_device(logits, proposals, temperatures, *, sampler_x=None,
                              async_fan_out=None):
@@ -61,7 +58,6 @@ def point_mass_accept_device(logits, proposals, temperatures, *, sampler_x=None,
 
 
 @reference_op("greedy_accept")
-@sequencewise('proposals', 3)
 @torch.inference_mode()
 def greedy_accept(logits, proposals, *, return_predictions=False, proposal_rows=None):
     """Native greedy decisions with one packed device-to-host materialization."""

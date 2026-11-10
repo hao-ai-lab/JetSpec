@@ -53,7 +53,7 @@ def outcome_reference(prefix, proposal, count, recovery, *, seq_id, round_id,
 
 
 if triton is not None:
-    from jetspec.engines.jetspec_plus_plus.kernels.verify_outcome import (_outcome_kernel)
+    from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_outcome import _outcome_kernel
 
 
 def launch_outcome_fused(proposal, count, recovery, token_storage, taps,

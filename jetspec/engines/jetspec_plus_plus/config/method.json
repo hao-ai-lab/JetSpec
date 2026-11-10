@@ -3,10 +3,6 @@
     "block_size": 16,
     "family": "ar"
   },
-  "dflash-historical": {
-    "block_size": 16,
-    "family": "dflash"
-  },
   "dspark-historical": {
     "block_size": 16,
     "family": "dspark"
@@ -14,18 +10,6 @@
   "fanout-tree-historical": {
     "block_size": 16,
     "family": "fanout-tree"
-  },
-  "jetspecpp-historical": {
-    "method_execution": {
-      "defaults": {
-        "refresh_swap": "1",
-        "refresh_fixed": "1",
-        "chain_miss_redraft": "1",
-        "refresh_swap_lean": "1"
-      }
-    },
-    "block_size": 16,
-    "family": "jetspecpp"
   },
   "jetspecpp-j1r0-b16": {
     "method_execution": {

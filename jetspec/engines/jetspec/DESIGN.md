@@ -28,7 +28,7 @@ big-engine performance, with the JetSpec tree path kept local and lossless.
   tree contract turns it into a `DraftTree`. Identical to the fork's adapter.
 - **Verify accept** — `jetspec.tree.tree_accept`, ancestor mask via
   `jetspec.tree.build_ancestor_matrix`.
-- **The persistent-cache verify pattern** — `jetspec/core/llm.py
+- **The persistent-cache verify pattern** — `jetspec/core/llm.py`
   `_generate_tree_kv_cached` + `_select_kv_cache`: forward only the tree nodes
   against a cached prefix, then gather the accepted root-to-leaf path's KV back to
   a linear prefix. JetSpec's paged cache generalises exactly this gather to block
@@ -39,9 +39,9 @@ big-engine performance, with the JetSpec tree path kept local and lossless.
 | | `jetspec/core` | `JetSpec` |
 |---|---|---|
 | KV store | HF `DynamicCache` (contiguous) | **paged** (fixed blocks + block table) |
-| tree attn | SDPA 4D additive mask | 4D mask now; **tree-attn kernel** later |
+| tree attn | SDPA 4D additive mask | SDPA 4D mask or **paged tree-attn kernel** |
 | streams | single (batch=1) | **continuous batching** |
-| target fwd | HF `model(...)` | HF `model(...)` initially, then own |
+| target fwd | HF `model(...)` | HF `model(...)` or the compiled verify stack |
 
 ## Milestone ladder (mirrors how `jetspec/core` was built: M0→M1→M2)
 
@@ -70,7 +70,7 @@ with our own triton tree-attention kernel.
 
 **N3 result (`attn_backend="triton_paged_tree"`):** the paged tree-attn kernel is
 **correct + lossless** — `kernel == SDPA` on a random pool (30/30, fp32 2e-6 / bf16
-8e-3) and token-identical end-to-end (`test_jetspec_kernel_e2e.py`, 13/13). It **reaches
+8e-3) and token-identical end-to-end (historical kernel end-to-end tests, 13/13). It **reaches
 parity** with the fork: with `torch.compile` + a CUDA-graph verify, the **verify-only
 `decode_cuda_speedup` is 7.31× (cudagraph backend) / 6.27× (compiled backend) vs the
 fork's 7.55×** (Qwen3-8B, gsm8k, tree budget 255, width 7, epoch6 distill head, bf16,
@@ -81,7 +81,7 @@ is target-greedy; fp32 token-identical, lossless gate 21/21) but **not bitwise-e
 to AR greedy in bf16** — one borderline-argmax flip; fp32 is exact. The
 `decode_cuda_speedup` is **verify-only**: the drafter is excluded from both legs via
 a CUDA-event split, matching the fork's `decode_cuda_s` accounting (which wraps only
-the target forward, not the drafter). Reproduce via `bench/jetspec/profiling/compare_engine_with_vllm_integration.py`.
+the target forward, not the drafter). The historical comparison harness is not shipped; the current wall-clock benchmark is `bench/jetspec/engine/tps_walltime.py`.
 
 > **Superseded:** an earlier eager-mode measurement (no `torch.compile` / CUDA graph)
 > framed the kernel as a batch-scaling crossover — kernel/SDPA = 0.59× @ B8 · 0.80× @
@@ -91,7 +91,10 @@ the target forward, not the drafter). Reproduce via `bench/jetspec/profiling/com
 > per-step host overhead and reaches fork parity. SDPA stays the default + the
 > correctness oracle.
 
-## N3 — implementation plan (resumption)
+## N3 — historical implementation plan
+
+The plan below records the shipped kernel's design. The current implementation is in
+`kernels/paged_tree_attn.py`, `serving/attn_metadata.py` and `serving/paged_attn_backend.py`.
 
 **Goal:** replace the per-step dense-KV-reconstruct + SDPA 4D mask (in
 `engine._batched_decode_forward` / `_batched_tree_verify_forward`) with a **paged
@@ -107,9 +110,8 @@ the fork's **7.55× decode** (reached: verify-only 7.31× cudagraph; see "N3 res
    iterate until bitwise-close (fp32) / within-tolerance (bf16), THEN wire it in. No
    guessing — every iteration has a ground-truth check.
 2. **Reference implementation.** The fork's working triton tree kernel —
-   `refs`/GPU `/an/external/vllm/fork/vllm/v1/attention/backends/tree_attn.py` +
-   `vllm/v1/attention/ops/triton_unified_attention.py` — is the shape to adapt &
-   simplify (drop CUDA-graph capture / debug instrumentation), not invent.
+   the upstream tree-attention backend and unified Triton attention — informed
+   `kernels/paged_tree_attn.py`, which retains its source attribution.
 3. **Cheap failure.** Work is pushed + on `master`; failed kernel attempts cost
    nothing — iterate/reset freely. (This is exactly why we shipped N2 first.)
 
@@ -124,8 +126,8 @@ the fork's **7.55× decode** (reached: verify-only 7.31× cudagraph; see "N3 res
 
 **Gates:**
 1. **Kernel == SDPA** on random inputs (b200) — the correctness gate. Then the full
-   JetSpec suite (`test_jetspec_*`) must stay green with the kernel enabled (reuses the
-   existing per-seq lossless gates as end-to-end correctness).
+   historical JetSpec suite gated the kernel (reusing the
+   per-seq lossless gates as end-to-end correctness); those tests are not shipped.
 2. **Throughput** — `decode_cuda_speedup` / tok/s vs the SDPA path and vs the
    fork's 7.55×, at matched batch + budget.
 
@@ -138,17 +140,17 @@ the fork's **7.55× decode** (reached: verify-only 7.31× cudagraph; see "N3 res
   default + the correctness oracle; flip the default to the kernel only once it
   matches SDPA + beats it on throughput.
 
-## Module layout (to be created at N0)
+## Current module layout
 
 ```
 jetspec/engines/jetspec/
-  paged_kv_cache.py   # block pool + block table; allocate/append/gather/free
+  serving/paged_kv_cache.py   # block pool + block table; allocate/append/gather/free
   engine.py           # JetSpecEngine: prefill + decode loop (consumes jetspec.tree)
-  scheduler.py        # (N2) admit/evict across sequences
+  serving/scheduler.py        # (N2) admit/evict across sequences
   README.md / DESIGN.md
 ```
 
-## Open decisions (resolve at N0)
+## Historical decisions (at N0)
 
 1. **Target forward** — wrap HF `model(...)` with a paged cache adapter (fast to
    N1, reuses the validated forward), or a from-scratch attention (more control,

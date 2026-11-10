@@ -24,7 +24,7 @@ class MPS:
 
 
 def resolve_placement(placement, devices, *, shared_kv_cap=None):
-    from jetspec.engines.jetspec_plus_plus.launch_env import environment_name
+    from jetspec.engines.jetspec_plus_plus.runtime.launch_env import environment_name
     device_map = environment_name('hardware', 'hardware_settings.rank_device_map')
     shared_dist = environment_name('hardware', 'hardware_settings.shared_gpu_dist')
     shared_kv = environment_name('hardware', 'hardware_settings.shared_gpu_kv_utilization')

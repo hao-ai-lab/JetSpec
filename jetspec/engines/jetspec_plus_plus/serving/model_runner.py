@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
 
 import io
 import pickle
@@ -12,8 +12,8 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from transformers import AutoTokenizer, AutoConfig
 import os
-from jetspec.engines.jetspec_plus_plus._optional import flashinfer
-from jetspec.engines.jetspec_plus_plus.serving.config import Config
+from jetspec.engines.jetspec_plus_plus.kernels._optional import flashinfer
+from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.models.registry import model_class as target_model_class, model_spec
 from jetspec.engines.jetspec_plus_plus.models.target import TargetForCausalLM
@@ -39,12 +39,9 @@ from jetspec.engines.jetspec_plus_plus.serving.same_gpu_dist import install_cpu_
 from jetspec.engines.jetspec_plus_plus.wire.nccl_pack import append_committed_taps
 from jetspec.engines.jetspec_plus_plus.serving.graphs import run_verify_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import run_decode_cudagraph
-from jetspec.methods.baselines.fanout_graphs import run_fi_tree_decode_cudagraph
-from jetspec.methods.baselines.fanout_graphs import run_glue_decode_cudagraph
+from jetspec.engines.jetspec_plus_plus.serving._source_checkout import baseline_module
 from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import capture_verify_cudagraph
-from jetspec.methods.baselines.fanout_graphs import capture_fi_tree_decode_cudagraph
-from jetspec.methods.baselines.fanout_graphs import capture_glue_decode_cudagraph
 from jetspec.engines.jetspec_plus_plus.serving.graphs import get_custom_mask
     
 
@@ -86,25 +83,25 @@ class ModelRunner:
 
     def __init__(self, config: Config, rank: int, event: Event | list[Event], is_draft: bool = False, num_tp_gpus: int = -1, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
         self.run_config = (run_config if run_config is not None else
                            getattr(config, 'run_config', None))
         if self.run_config is None:
             raise ValueError('ModelRunner missing RunConfig launch_overlay')
         self.verify_mask_cache = self.run_config.engine.engine_settings.verify_mask_cache == "1"
-        from jetspec.engines.jetspec_plus_plus.serving.paths import install_architecture
+        from jetspec.engines.jetspec_plus_plus.runtime.paths import install_architecture
         install_architecture(self.run_config)
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine, install_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, install_engine
         self.engine = install_engine(engine if engine is not None else getattr(config, 'engine', None) or current_engine())
         from jetspec.engines.jetspec_plus_plus.draft.serve_policy import install_method_settings
         install_method_settings(getattr(config, 'method_settings', None))
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         pin_plan_value = setting(self, 'hardware.hardware_settings.cpu_pin_plan')
         pin_plan = json.loads(pin_plan_value) if pin_plan_value is not None else None
         if pin_plan is None or pin_plan["mode"] != "off":
             pin_rank_cpu_affinity(setting(self, 'hardware.hardware_settings.rank_cpu_affinity'), rank, plan=pin_plan)
         if pin_plan is not None:
-            import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
             row = pin_plan["ranks"][rank]
             if row["cpus"] and set(os.sched_getaffinity(0)) != set(row["cpus"]):
                 raise RuntimeError(f"CPU_PIN rank={rank} applied affinity differs from requested")
@@ -589,7 +586,7 @@ class ModelRunner:
 
     def setup_and_warmup_model_and_cudagraphs(self, config: Config, hf_config: AutoConfig, init_q=None, is_draft=False):
         # cudagraphs 
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         self.graph_vars = {}
         self.graph_pools = {}
@@ -702,13 +699,13 @@ class ModelRunner:
                 self.graphs["verify"] = verify_graphs
                 self.graph_bs_list["verify"] = verify_graph_bs_list
             if self.config.speculate and self.is_draft and self.config.draft_async:
-                fi_tree_decode_graph_vars, fi_tree_decode_graph_pool, fi_tree_decode_graphs, fi_tree_decode_graph_bs_list = capture_fi_tree_decode_cudagraph(self)  # fi tree decode cudagraph, draft only
+                fi_tree_decode_graph_vars, fi_tree_decode_graph_pool, fi_tree_decode_graphs, fi_tree_decode_graph_bs_list = baseline_module('fanout_graphs').capture_fi_tree_decode_cudagraph(self)  # fi tree decode cudagraph, draft only
                 self.graph_vars["fi_tree_decode"] = fi_tree_decode_graph_vars
                 self.graph_pools["fi_tree_decode"] = fi_tree_decode_graph_pool
                 self.graphs["fi_tree_decode"] = fi_tree_decode_graphs
                 self.graph_bs_list["fi_tree_decode"] = fi_tree_decode_graph_bs_list
             if self.config.speculate and self.is_draft and self.config.draft_async and self.config.use_eagle:
-                glue_gv, glue_pool, glue_graphs, glue_bs_list = capture_glue_decode_cudagraph(self)
+                glue_gv, glue_pool, glue_graphs, glue_bs_list = baseline_module('fanout_graphs').capture_glue_decode_cudagraph(self)
                 self.graph_vars["glue_decode"] = glue_gv
                 self.graph_pools["glue_decode"] = glue_pool
                 self.graphs["glue_decode"] = glue_graphs
@@ -791,13 +788,13 @@ class ModelRunner:
 
     def _check_compile_pin_served(self):
         """Check both serving ranks before bench seals the run manifest."""
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not setting(self, 'engine.engine_settings.c1_compile_pin', ''):
             return False
         from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_check
-        import jetspec.engines.jetspec_plus_plus.runtime.run_manifest as run_manifest
+        import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
         process_check("served")
         if self.config.jetspec and self.draft_async:
             ranks = (self.draft_rank,)
@@ -930,9 +927,9 @@ class ModelRunner:
         Best-effort: send cmd=2 to draft (async_pg) from TARGET rank 0.
         Safe to call multiple times.
         """
-        from jetspec.engines.jetspec_plus_plus.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.engine import current_engine
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not (self.draft_async and not self.is_draft and self.rank == 0):
             return
         try:
@@ -1263,10 +1260,10 @@ class ModelRunner:
                 return logits
 
         elif is_tree_decode:
-            return run_fi_tree_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["fi_tree_decode"], tree_decode_step, cache_hits, hidden_states=hidden_states)
+            return baseline_module('fanout_graphs').run_fi_tree_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["fi_tree_decode"], tree_decode_step, cache_hits, hidden_states=hidden_states)
         elif is_mq_kp1 and hidden_states is not None and "glue_decode" in self.graph_vars:
             # EAGLE draft glue decode with 2K+1 per seq
-            return run_glue_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["glue_decode"], hidden_states)
+            return baseline_module('fanout_graphs').run_glue_decode_cudagraph(self, input_ids, positions, last_only, self.graph_vars["glue_decode"], hidden_states)
         elif is_mq_kp1: # verify or non-EAGLE glue decode, "verify" ~ mq decode of len K+1
             return run_verify_cudagraph(self, input_ids, positions, last_only, self.graph_vars["verify"])
         else: # draft decoding in sync spec or JIT single-token decode

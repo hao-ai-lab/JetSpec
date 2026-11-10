@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 import torch
-from jetspec.engines.jetspec_plus_plus._optional import triton
-from jetspec.engines.jetspec_plus_plus._optional import tl
-from jetspec.engines.jetspec_plus_plus.kernels.c1_fused import attention_output
+from jetspec.engines.jetspec_plus_plus.kernels._optional import triton
+from jetspec.engines.jetspec_plus_plus.kernels._optional import tl
+from jetspec.engines.jetspec_plus_plus.kernels.fused_decoder import attention_output
 # Adaptation: CUDA helpers are needed only when Triton kernels execute.
 try:
     from triton.language.extra.cuda import libdevice

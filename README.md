@@ -42,11 +42,11 @@ JetSpec++ runs on Linux with two GPUs that have peer access and needs a CUDA com
 
 ```bash
 git clone https://github.com/hao-ai-lab/JetSpec.git && cd JetSpec
-pip install --no-deps -r jetspec/engines/jetspec_plus_plus/requirements-x86_64.lock
+pip install --no-deps -r jetspec/engines/jetspec_plus_plus/requirements/requirements-x86_64.lock
 pip install --no-deps -e .
 ```
 
-On GB200, use `requirements-gb200-aarch64.lock` with `--extra-index-url https://download.pytorch.org/whl/cu128`.
+On GB200, use `jetspec/engines/jetspec_plus_plus/requirements/requirements-gb200-aarch64.lock` with `--extra-index-url https://download.pytorch.org/whl/cu128`.
 
 ## Quick Start
 
@@ -65,17 +65,17 @@ Speedup over autoregressive decoding on your GPU. `--dataset` takes `gsm8k`, `ma
 python bench/jetspec_plus_plus/speedup.py --model qwen3-8b --dataset math500
 ```
 
-The paper's Table 3 on a GB200 pair, against DSpark. The [guide](bench/jetspec_plus_plus/reproduce_paper_results.md) explains the host file:
+The Table 3 comparison on a GB200 pair, against DSpark with public checkpoints. The [guide](bench/jetspec_plus_plus/reproduce_paper_results.md) explains the host file:
 
 ```bash
-python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3-8b --assets release --host-values host-8b.json
-python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --assets release --host-values host-27b.json
+python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3-8b --host-values /path/to/host-8b.json --output-dir /path/to/table3-8b
+python bench/jetspec_plus_plus/reproduce_paper_results.py --model qwen3.8-27b --host-values /path/to/host-27b.json --output-dir /path/to/table3-27b
 ```
 
 ## Code
 
-- **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/README.md) holds the method in readable form.
-- **Engine:** the [serving engine](jetspec/engines/jetspec_plus_plus/README.md) runs the method on two GPUs.
+- **Method:** the [torch reference](jetspec/methods/jetspec_plus_plus/) holds the method in readable form.
+- **Engine:** the [serving engine](jetspec/engines/jetspec_plus_plus/) runs the method on two GPUs.
 
 <details>
 <summary><h2>JetSpec</h2></summary>

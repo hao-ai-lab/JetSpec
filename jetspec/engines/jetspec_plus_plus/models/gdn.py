@@ -141,7 +141,7 @@ class HybridGDN(nn.Module):
                                             '0') == '1'
         self.verify_cut_w1prod27b = setting(
             run_config, 'engine', 'engine_settings.verify_cut_w1prod27b', '0') == '1'
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_pdl27b import cut_mode
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.dependent_launch import cut_mode
         self.verify_cut_pdl27b = cut_mode(run_config)
         from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import fp8store27b_enabled
         self.verify_cut_fp8store27b = fp8store27b_enabled(run_config)
@@ -389,13 +389,13 @@ class HybridGDN(nn.Module):
             if (self.verify_cut_gdnfuse27b and verify
                     and self.key_dim in (64, 128) and self.value_dim == 128 and width <= 16
                     and self._gdnconv_ready(raw, committed_recurrent, scratch_conv)):
-                from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnfuse27b import verify as fused_verify
+                from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_fused import verify as fused_verify
                 b, a = outputs[2:] if len(outputs) == 4 else (self.in_proj_b(x), self.in_proj_a(x))
                 return fused_verify(self, raw, outputs[1], a, b, committed_recurrent, committed_conv, scratch_conv)
             z = outputs[1].reshape(-1, self.value_dim)
             b, a = outputs[2:] if len(outputs) == 4 else (self.in_proj_b(x), self.in_proj_a(x))
             if self.verify_cut_gbeta:
-                from jetspec.engines.jetspec_plus_plus.kernels.verify_pack_glue import gate_beta_rows
+                from jetspec.engines.jetspec_plus_plus.kernels.verify.packed_nonlinearities import gate_beta_rows
                 g, beta = gate_beta_rows(a, b, self.dt_bias, self.gate_decay())
             else:
                 beta = b.sigmoid()
@@ -405,7 +405,7 @@ class HybridGDN(nn.Module):
             if (self.verify_cut_gdnfuse27b and verify
                     and self.key_dim in (64, 128) and self.value_dim == 128 and width <= 16
                     and self._gdnconv_ready(raw, committed_recurrent, scratch_conv)):
-                from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnfuse27b import verify as fused_verify
+                from jetspec.engines.jetspec_plus_plus.kernels.verify.gdn_fused import verify as fused_verify
                 return fused_verify(self, raw, self.in_proj_z(x), self.in_proj_a(x), self.in_proj_b(x),
                                     committed_recurrent, committed_conv, scratch_conv)
             z = self.in_proj_z(x).reshape(-1, self.value_dim)
@@ -479,7 +479,7 @@ class HybridGDN(nn.Module):
         output = output.reshape(-1, self.value_dim)
         if (self.verify_cut_w1prod27b and verify and output.is_cuda
                 and output.dtype == torch.bfloat16 and self._recurrent is not None):
-            from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdn_w1 import gated_norm
+            from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gdn_gated_norm import gated_norm
             from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import activation_buffers, w1_linear
             output = gated_norm(output, z, self.norm, self.value_heads,
                                 activation=activation_buffers(self.out_proj, width),
@@ -541,13 +541,13 @@ class HybridGDN(nn.Module):
                 and self.value_heads > self.key_heads and self._recurrent is not None and raw.is_cuda
                 and self._lazy_state() and committed_recurrent is self.committed_recurrent):
             return False
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnconv import supported
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gdnconv import supported
         return supported(raw, self.committed_conv, self.conv1d.weight, scratch_conv)
 
     def _verify_gdnconv(self, raw, z, g, beta, committed_recurrent, committed_conv, scratch_conv):
         """The lazy GVA verify mixer with the fused conv launch (kernels/verify_gdnconv.py)."""
         from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.gdn_lazy import commit_state
-        from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdnconv import conv_verify
+        from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gdnconv import conv_verify
         width = raw.shape[-1]
         if width >= scratch_conv.shape[0]:
             raise ValueError("verify width exceeds the GDN scratch capacity")
@@ -563,11 +563,11 @@ class HybridGDN(nn.Module):
             self._lazy_warm = True
         output = None
         if self.verify_cut_gdnrec27b:
-            from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import verify_gdnrec27b
+            from jetspec.engines.jetspec_plus_plus.kernels.verify import gdn_recurrence as verify_gdnrec27b
             if verify_gdnrec27b.supported(q, k, v, g, beta, committed_recurrent):
                 # The final state is not read: the lazy commit replays the kept inputs.
                 if self.verify_cut_gdnrec27b2:
-                    from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b import verify_gdnrec27b2
+                    from jetspec.engines.jetspec_plus_plus.kernels.verify import gdn_recurrence_tiled as verify_gdnrec27b2
                     output = verify_gdnrec27b2.recurrent_verify(q, k, v, g, beta, committed_recurrent,
                         **({'staged': True} if self.verify_cut_gdnrec27b3 else {}),
                         **({'delta_keep': self._delta_keep()} if self.verify_cut_commitdelta27b else {}))[0]
@@ -576,7 +576,7 @@ class HybridGDN(nn.Module):
         if output is None:
             output, _ = self._delta(q, k, v, g, beta, committed_recurrent, chunk=False)
         if self.verify_cut_w1prod27b and output.dtype == torch.bfloat16:
-            from jetspec.engines.jetspec_plus_plus.kernels.qwen3p8_27b.verify_gdn_w1 import gated_norm
+            from jetspec.engines.jetspec_plus_plus.kernels.verify.verify_gdn_gated_norm import gated_norm
             from jetspec.engines.jetspec_plus_plus.kernels.verify_w1 import activation_buffers, w1_linear
             output = gated_norm(output.reshape(-1, self.value_dim), z, self.norm, self.value_heads,
                                 activation=activation_buffers(self.out_proj, width),

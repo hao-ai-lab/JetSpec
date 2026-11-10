@@ -5,7 +5,7 @@ from jetspec.engines.jetspec_plus_plus.draft.method.ops import register_impl, us
 
 METHODS = {}
 _MODULES = {"explore.swap_rule": "swap_rule", "explore.after_swap_fill": "after_swap_fill",
-            "explore.legacy_kpred": "legacy_kpred"}
+            "explore.legacy_kpred": "ensemble_k_predictor"}
 
 def register(key, **overrides):
     if key not in explore.KEYS:
