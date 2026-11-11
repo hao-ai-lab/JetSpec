@@ -304,6 +304,37 @@ def _kernel_paged_tree_attn(
             mask=query_mask_0 & query_mask_1
         )
 
+@triton.jit
+def _kernel_merge(
+    part_out_ptr,
+    part_m_ptr,
+    part_l_ptr,
+    output_ptr,
+    total_q: tl.int32,
+    output_stride_0: tl.int64,
+    output_stride_1: tl.int64,
+    num_query_heads: tl.constexpr,
+    HEAD_SIZE: tl.constexpr,
+    SPLITS: tl.constexpr,
+    BS: tl.constexpr,
+):
+    t = tl.program_id(0)
+    h = tl.program_id(1)
+    split = tl.arange(0, BS)
+    dim = tl.arange(0, HEAD_SIZE)
+
+    offset = (split * total_q + t) * num_query_heads + h
+    m = tl.load(part_m_ptr + offset, mask=split < SPLITS, other=float("-inf"))
+    l = tl.load(part_l_ptr + offset, mask=split < SPLITS, other=0.0)
+
+    acc = tl.load(part_out_ptr + offset[:, None] * HEAD_SIZE + dim[None, :], mask=split[:, None] < SPLITS, other=0.0)
+
+    max_m = tl.max(m, 0)
+    w = tl.exp(m - max_m)
+    total = tl.sum(w * l, 0)
+    res = tl.sum(w[:, None] * acc, 0)
+    tl.store((output_ptr + t * output_stride_0) + h * output_stride_1 + dim, res / total)
+
 
 def paged_tree_attn(
     q: torch.Tensor,            # (total_q, Hq, D)            post-RoPE queries, ragged-batched
@@ -412,8 +443,17 @@ def paged_tree_attn(
     )
 
     if num_splits > 1:
-        max_m = part_m.max(dim=0).values
-        w = torch.exp(part_m - max_m)
-        out = ((w.unsqueeze(-1) * part_out).sum(dim=0) / (w * part_l).unsqueeze(-1).sum(dim=0)).to(q.dtype)
-
+        _kernel_merge[(total_q, num_query_heads)](
+            part_out_ptr=part_out,
+            part_m_ptr=part_m,
+            part_l_ptr=part_l,
+            output_ptr=out,
+            total_q=total_q,
+            output_stride_0=out.stride(0),
+            output_stride_1=out.stride(1),
+            num_query_heads=num_query_heads,
+            HEAD_SIZE=head_size,
+            SPLITS=num_splits,
+            BS=triton.next_power_of_2(num_splits),
+        )
     return out
