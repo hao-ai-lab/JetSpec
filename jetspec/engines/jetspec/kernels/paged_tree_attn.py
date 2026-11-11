@@ -62,6 +62,10 @@ def _kernel_paged_tree_attn(
     logical_kv_lens_ptr,  # [num_seqs] or unused
     seq_lens_ptr,         # [num_seqs]
     qq_bias_ptr,          # [total_q, total_q] or unused
+    part_out_ptr,
+    part_m_ptr,
+    part_l_ptr,
+    total_q: tl.int32,
     scale,                # float32
     num_query_heads: tl.constexpr,
     num_queries_per_kv: tl.constexpr,
@@ -90,9 +94,11 @@ def _kernel_paged_tree_attn(
     BLOCK_Q: tl.constexpr,
     num_seqs: tl.int32,
     BLOCK_M: tl.constexpr,
+    SPLITS: tl.constexpr,
 ):
     q_block_global_idx = tl.program_id(0)
     kv_head_idx = tl.program_id(1)
+    split_idx = tl.program_id(2)
 
     seq_idx = _find_seq_idx(query_start_len_ptr, q_block_global_idx, num_seqs, BLOCK_Q)
 
@@ -156,7 +162,11 @@ def _kernel_paged_tree_attn(
     max_seq_prefix_len = tl.minimum(max_seq_prefix_len, seq_len)
     num_tiles = _cdiv_fn(max_seq_prefix_len, TILE_SIZE)
 
-    for j in range(0, num_tiles):
+    tps = _cdiv_fn(num_tiles, SPLITS)
+    lo = split_idx * tps
+    hi = tl.minimum(lo + tps, num_tiles)
+
+    for j in range(lo, hi):
         seq_offset = j * TILE_SIZE + offs_t
         tile_mask = seq_offset < max_seq_prefix_len
         physical_offset = seq_offset % BLOCK_SIZE
@@ -257,18 +267,42 @@ def _kernel_paged_tree_attn(
 
         acc += tl.dot(P.to(V.dtype), V, allow_tf32=False)
 
-    acc = acc / L[:, None]
+    if SPLITS == 1:
+        acc = acc / L[:, None]
 
-    output_offset = (
-        query_offset_0[:, None] * output_stride_0
-        + query_offset_1[:, None] * output_stride_1
-        + offs_d[None, :]
-    )
-    tl.store(
-        output_ptr + output_offset,
-        acc,
-        mask=dim_mask[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
-    )
+        output_offset = (
+            query_offset_0[:, None] * output_stride_0
+            + query_offset_1[:, None] * output_stride_1
+            + offs_d[None, :]
+        )
+        tl.store(
+            output_ptr + output_offset,
+            acc,
+            mask=dim_mask[None, :] & query_mask_0[:, None] & query_mask_1[:, None],
+        )
+
+    else:
+        idx = (split_idx * total_q + query_offset_0) * num_query_heads + query_offset_1
+
+        part_offset = idx[:, None] * HEAD_SIZE + offs_d[None, :]
+
+        m_safe = tl.where(L > 0, M, float('-inf'))
+
+        tl.store(
+            part_out_ptr + part_offset,
+            acc,
+            mask=dim_mask[None, :] & query_mask_0[:, None] & query_mask_1[:, None]
+        )
+        tl.store(
+            part_m_ptr + idx,
+            m_safe,
+            mask=query_mask_0 & query_mask_1
+        )
+        tl.store(
+            part_l_ptr + idx,
+            L,
+            mask=query_mask_0 & query_mask_1
+        )
 
 
 def paged_tree_attn(
@@ -285,6 +319,7 @@ def paged_tree_attn(
     logical_kv_slots: Optional[torch.Tensor] = None,  # (num_seqs, max_logical_slots) physical slot ids
     logical_kv_starts: Optional[torch.Tensor] = None,  # (num_seqs,) first logical key pos to remap
     logical_kv_lens: Optional[torch.Tensor] = None,  # (num_seqs,) number of logical key positions
+    num_splits: int = 1,
 ) -> torch.Tensor:
     """Tree attention over a paged K/V pool; returns (total_q, Hq, D), q's dtype.
 
@@ -323,7 +358,14 @@ def paged_tree_attn(
     # tree's N-scaling attn cost rides this tile). fp32 stays 32. Gate token+accept-len.
     TILE_SIZE = 32 if q.element_size() >= 2 else 32
 
-    _kernel_paged_tree_attn[(total_num_q_blocks, num_kv_heads)](
+    if num_splits > 1:
+        part_out = torch.empty([num_splits, total_q, num_query_heads, head_size], dtype=torch.float32, device=q.device)
+        part_m = torch.empty([num_splits, total_q, num_query_heads], dtype=torch.float32, device=q.device)
+        part_l = torch.empty([num_splits, total_q, num_query_heads], dtype=torch.float32, device=q.device)
+    else:
+        part_out = part_m = part_l = None
+
+    _kernel_paged_tree_attn[(total_num_q_blocks, num_kv_heads, num_splits)](
         output_ptr=out,
         query_ptr=q,
         key_cache_ptr=k_pool,
@@ -334,6 +376,10 @@ def paged_tree_attn(
         logical_kv_lens_ptr=logical_kv_lens,
         seq_lens_ptr=seq_lens_k,
         qq_bias_ptr=qq_bias,
+        part_out_ptr=part_out,
+        part_m_ptr=part_m,
+        part_l_ptr=part_l,
+        total_q=total_q,
         scale=scale,
         num_query_heads=num_query_heads,
         num_queries_per_kv=num_queries_per_kv,
@@ -362,5 +408,12 @@ def paged_tree_attn(
         BLOCK_Q=BLOCK_Q,
         num_seqs=num_seqs,
         BLOCK_M=BLOCK_M,
+        SPLITS=num_splits,
     )
+
+    if num_splits > 1:
+        max_m = part_m.max(dim=0).values
+        w = torch.exp(part_m - max_m)
+        out = ((w.unsqueeze(-1) * part_out).sum(dim=0) / (w * part_l).unsqueeze(-1).sum(dim=0)).to(q.dtype)
+
     return out
