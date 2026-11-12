@@ -56,23 +56,47 @@ import torch.nn.functional as F
 from jetspec.engines.jetspec.kernels.paged_tree_attn_op import paged_tree_attn  # noqa: F401  (registers jetspec::paged_tree_attn)
 
 
+def _is_fused(modules, weight):
+    # true if each module weight is still its slice of the fused weight
+    off = 0
+    for module in modules:
+        n = module.weight.shape[0]
+        if off + n > weight.shape[0] or module.weight.data_ptr() != weight[off:off + n].data_ptr():
+            return False
+        off += n
+    return off == weight.shape[0]
+
+
 def _cat_linear_params(modules):
-    """Build a fresh fused linear weight/bias tuple from separate projections."""
+    """Fuse the projections once, the separate weights become views of the fused tensor"""
+    cached = getattr(modules[0], "_fused", None)
+    if cached is not None and _is_fused(modules, cached[0]):
+        return cached
     weight = torch.cat([module.weight.detach() for module in modules], dim=0).contiguous()
     biases = [module.bias for module in modules]
-    if all(bias is None for bias in biases):
-        return weight, None
-    bias_parts = []
-    for module, bias in zip(modules, biases):
-        if bias is None:
-            bias_parts.append(torch.zeros(
-                module.weight.shape[0],
-                device=module.weight.device,
-                dtype=module.weight.dtype,
-            ))
-        else:
-            bias_parts.append(bias.detach())
-    return weight, torch.cat(bias_parts, dim=0).contiguous()
+    if all(b is None for b in biases):
+        bias = None
+    else:
+        bias_parts = []
+        for module, b in zip(modules, biases):
+            if b is None:
+                bias_parts.append(torch.zeros(
+                    module.weight.shape[0],
+                    device=module.weight.device,
+                    dtype=module.weight.dtype,
+                ))
+            else:
+                bias_parts.append(b.detach())
+        bias = torch.cat(bias_parts, dim=0).contiguous()
+    off = 0
+    for module in modules:
+        n = module.weight.shape[0]
+        module.weight = torch.nn.Parameter(weight[off:off + n], requires_grad=False)
+        if module.bias is not None:
+            module.bias = torch.nn.Parameter(bias[off:off + n], requires_grad=False)
+        off += n
+    modules[0]._fused = (weight, bias)
+    return weight, bias
 
 
 class CompiledVerifyStack:
