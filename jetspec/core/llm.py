@@ -447,12 +447,25 @@ class LLM:
             and any(lt in ("full_attention", "full") for lt in _layer_types)
         )
         # Use depth-based window only for a pure sliding-window model (all
-        # layers share the same window; no full-attention layers).  Mixed
-        # models (e.g. Step-3.7-Flash) fall back to full-context and rely on
-        # the model's own per-layer sliding-window enforcement.
+        # layers share the same window; no full-attention layers).
         _use_sw_mask: bool = (
             isinstance(_sw, int) and _sw > 0 and not _has_full_attn
         )
+        # Mixed models (sliding + full layers, e.g. GPT-OSS, Gemma 3): HF uses a
+        # custom 4D mask as-is for every layer, so the window is not applied by
+        # the model. Pass a per-layer-type mask dict instead (HF accepts a dict
+        # keyed by `layer_types`).
+        _sliding_types = {
+            lt for lt in (_layer_types or ()) if "sliding" in str(lt)
+        }
+        _use_mixed_sw_mask: bool = (
+            isinstance(_sw, int) and _sw > 0 and _has_full_attn and bool(_sliding_types)
+        )
+        if (_use_sw_mask or _use_mixed_sw_mask) and tree_attn == "triton":
+            raise NotImplementedError(
+                "tree_attn='triton' does not apply a sliding window; use tree_attn='sdpa' "
+                "for models with sliding-window layers"
+            )
 
         new_ids, rounds = [], 0
         accept_lengths, tree_sizes = [], []   # per-round (acc+1) and node count (return_stats)
@@ -573,22 +586,35 @@ class LLM:
                     )
             else:
                 allowed = torch.zeros(N, past_len + N, dtype=torch.bool, device=self.device)
-                if _use_sw_mask and past_len > 0:
-                    # Pure sliding-window model: restrict each tree node's
+                windowed = None
+                if (_use_sw_mask or _use_mixed_sw_mask) and past_len > 0:
+                    # Sliding-window layers: restrict each tree node's
                     # context view to the depth-based AR window.  Node at
                     # depth d has AR position past_len+d, so its window is
                     # [past_len+d-W+1, past_len-1].
                     depths = tree.depth.to(dtype=torch.long, device=self.device)
                     win_starts = (past_len + depths - _sw + 1).clamp(min=0)
                     j = torch.arange(past_len, device=self.device).unsqueeze(0)
-                    allowed[:, :past_len] = j >= win_starts.unsqueeze(1)
-                else:
-                    # Full-attention or mixed-layer model: all past context
-                    # visible; the model applies any layer-specific window.
-                    allowed[:, :past_len] = True
+                    windowed = torch.zeros_like(allowed)
+                    windowed[:, :past_len] = j >= win_starts.unsqueeze(1)
+                    windowed[:, past_len:] = ancestor
+                # Full-attention layers: all past context visible.
+                allowed[:, :past_len] = True
                 allowed[:, past_len:] = ancestor
-                mask = torch.where(allowed, torch.zeros((), dtype=dtype, device=self.device),
-                                   torch.full((), neg, dtype=dtype, device=self.device)).view(1, 1, N, past_len + N)
+                zero = torch.zeros((), dtype=dtype, device=self.device)
+                ninf = torch.full((), neg, dtype=dtype, device=self.device)
+
+                def _additive(a):
+                    return torch.where(a, zero, ninf).view(1, 1, N, past_len + N)
+
+                if windowed is None:
+                    mask = _additive(allowed)
+                elif _use_sw_mask:
+                    mask = _additive(windowed)
+                else:
+                    full_mask, sw_mask = _additive(allowed), _additive(windowed)
+                    mask = {lt: (sw_mask if lt in _sliding_types else full_mask)
+                            for lt in set(_layer_types)}
                 target_logits, cache, verify_hidden = _phase(
                     "verify",
                     lambda: self.runner.forward(
