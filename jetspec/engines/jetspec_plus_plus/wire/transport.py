@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 from dataclasses import dataclass
 import os
 import time
@@ -40,7 +40,7 @@ class ChainCommandInbox:
 
     def next(self) -> tuple[int, str]:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         command_id = self.next_id
         if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
             print(f"MAILBOX_ID side=draft event=command_await id={command_id} source={self.pair_source}", flush=True)

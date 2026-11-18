@@ -75,7 +75,7 @@ def query_length(q, k, v, length, scale, *, mode):
 
 def add_norm(update, residual, weight, eps, *, fallback):
     """Return (normalized, state) with state = bf16(update + residual)."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     if kernel_enabled('draft_fuse_w1', '1'):
         from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import enabled, add_norm as produce
         if enabled(update):

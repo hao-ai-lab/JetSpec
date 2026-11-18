@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
 
 from .w4a8 import MAX_M, TUNED, token_tile
 
@@ -31,7 +31,7 @@ class W4A8Activation:
 
 def enabled(x):
     from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return (x.is_cuda and x.dtype == torch.bfloat16 and x.shape[-1] % 128 == 0
             and 128 <= x.shape[-1] and 1 <= x.numel() // x.shape[-1] <= MAX_M
             and current_engine().precision_draft == 'mxfp4_w4a8'
@@ -80,7 +80,7 @@ def allocate_activation(output, *, group_rows=None, tiles=None):
 def attention_activation(output):
     """Own MX8 for the exact contiguous O-projection view, without making a copy."""
     from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     if (kernel_value('draft_fuse_am', '0') not in ('1', '2') or not output.is_cuda
             or output.dtype != torch.bfloat16 or output.shape[-1] != 128
             or current_engine().precision_draft != 'mxfp4_w4a8'

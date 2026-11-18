@@ -16,7 +16,7 @@ except ImportError:  # CPU-only hosts: the knob stays off
 
 
 def enabled(q):
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return (triton is not None and kernel_enabled('draft_fuse_skv', '1') and q.is_cuda
             and q.dtype == torch.bfloat16
             and q.shape[-1] == 128
@@ -25,7 +25,7 @@ def enabled(q):
 
 def jpass27_enabled(q):
     """Select the long-bucket 27B drafter without changing the D128 policy."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     return (kernel_value('draft_fuse_skv27', '0') == '1' and triton is not None
             and q.is_cuda and q.dtype == torch.bfloat16 and q.ndim == 3
             and q.shape[1:] == (32, 128)
@@ -34,7 +34,7 @@ def jpass27_enabled(q):
 
 def a256_enabled(q, site):
     """Select hybrid adapter/decoder sites independently of the D128 selector."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     return (site in ('adapter', 'decoder') and kernel_value('draft_fuse_a256', '0') in ('1', site)
             and triton is not None and q.is_cuda and q.dtype == torch.bfloat16
             and q.shape[-1] == 256
@@ -169,7 +169,7 @@ if triton is not None:
 
 def attention27_launch(rows, keys):
     """Opt in to gated adapter launch buckets; other row captures stay unchanged."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     if (kernel_value('draft_fuse_attn27b', '0') != '1' or rows not in (16, 64)
             or not 384 <= keys <= 2652):
         return None
@@ -181,7 +181,7 @@ def attention27_launch(rows, keys):
 
 def row_tile(dim, rows, splits=4):
     """Use 32-row tiles when they add no padded rows and the grid stays large."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     return (32 if dim == 128 and splits >= 4 and (16 < rows <= 32 or 48 < rows <= 64)
             and kernel_value('draft_fuse_attn8a', '0') == '1'
             and kernel_value('draft_fuse_skv27', '0') != '1' else 16)
@@ -193,7 +193,7 @@ def merge_warps(dim, splits):
     The warp layout changes FP32 reduction rounding (class B). The explicit
     27B drafter selector retains its existing four-warp path.
     """
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     return (1 if dim == 128 and splits >= 4
             and kernel_value('draft_fuse_attn8', '0') == '1'
             and kernel_value('draft_fuse_skv27', '0') != '1' else 4)
@@ -201,7 +201,7 @@ def merge_warps(dim, splits):
 
 def ordered_merge(dim, splits):
     """Use the original four-warp reduction tree in one warp for served 8B buckets."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     return (dim == 128 and 4 <= splits <= 10
             and kernel_value('draft_fuse_attn8a', '0') == '1'
             and kernel_value('draft_fuse_skv27', '0') != '1')
@@ -274,7 +274,7 @@ def extended_attention_launch(rows, keys):
 
 def bucket_policy(dim, rows, keys):
     """Select measured 8B buckets explicitly; preserve hybrid and 27B launches."""
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     if (dim == 128 and kernel_value('draft_fuse_attn8c', '0') == '1'
             and kernel_value('draft_fuse_skv27', '0') != '1'):
         extended = extended_attention_launch(rows, keys)
@@ -291,7 +291,7 @@ def attend(q, k, v, scale, *, mode, mask=None, length=None, count=None,
            prefix=0, packed=None, out=None, gate=None):
     """Attend [1,H,R,D] with a dense, device-length, or packed-bit mask."""
     from jetspec.engines.jetspec_plus_plus.kernels.len_attention import _merge
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
     from jetspec.engines.jetspec_plus_plus.kernels.nvfp4.producers import attention_activation, _arguments
     modes = {'dense': 0, 'c1': 1, 'decoder': 2, 'merged': 3, 'packed': 4}
     if (mode not in modes or q.ndim != 4 or q.shape[0] != 1 or k.shape != v.shape

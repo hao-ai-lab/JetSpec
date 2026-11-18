@@ -5,11 +5,11 @@ import torch
 
 from .activation import ActivationWorkspace
 from .gemm import _validate_weight
-from .swapab_gemm import K1Plan
+from .swapab_gemm import BlockScaledGemmPlan
 from .swiglu_epilogue import interleave_gate_up
 
 
-class K1PPlan(K1Plan):
+class K1PPlan(BlockScaledGemmPlan):
     """Fuse the producer inside each GEMM CTA with calibrated input descale.
 
     Residual input is immutable. ``residual_out`` is a distinct BF16 output,

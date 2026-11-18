@@ -1,7 +1,7 @@
 """Pure bookkeeping for the JetSpec candidate-set protocol."""
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import math
 import os
@@ -13,7 +13,6 @@ from typing import Literal
 
 import torch
 
-from jetspec.engines.jetspec_plus_plus.trace import host_census
 
 
 DecisionKind = Literal["hit", "miss", "late"]
@@ -207,26 +206,15 @@ class CandidateReceiver:
     """One CPU reader fetches immutable packets while verification proceeds."""
 
     def __init__(self, store, decode, *, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         # A blocking get must not hold the request publisher's TCP connection.
         store = store.clone()
         self.pending = SimpleQueue()
-        census = host_census.enabled(run_config)
-        id_trace = setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1'
 
         def receive():
             while True:
                 key, message = self.pending.get()
                 try:
-                    if id_trace:
-                        print(f"MAILBOX_ID side=verify event=candidate_await key={key}", flush=True)
                     wire = self._read(store, key)
-                    if census:
-                        got = host_census.perf_counter()
-                        delivery = decode(wire)
-                        message.census_stamps = (got, host_census.perf_counter())
-                        message.ready.set_result(delivery)
-                        continue
                     message.ready.set_result(decode(wire))
                 except Exception as error:
                     message.ready.set_exception(error)
@@ -338,7 +326,7 @@ class CandidateSet:
 
     def __post_init__(self, row_keys_host, run_config=None) -> None:
         width = draft_width(run_config=run_config) + 1
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         if self.blocks.ndim not in (2, 3) or self.blocks.shape[-1] != width:
             raise ValueError(f"candidate blocks must have shape [H, {width}] or [H, F, {width}]")
         if self.row_keys is not None:

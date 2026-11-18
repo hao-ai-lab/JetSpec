@@ -85,9 +85,6 @@ class SpecDecodeStep(InferenceStep):
         verifier.target_model_runner._reference_tap_prepare_hook = (
             speculator.prepare_reference_taps
             if getattr(speculator, "_reference_tap_prepare", False) else None)
-        kernel_profile = getattr(verifier, "_verify_kernel_profile", None)
-        if kernel_profile is not None:
-            speculator._verify_kernel_profile = kernel_profile
         if getattr(speculator, "_outcome_pack_presync", False):
             verifier._jetspec_presync_pack_hook = speculator.pack_device_outcome_presync
         if getattr(speculator, "_verify_record_late", False):
@@ -133,7 +130,6 @@ class SpecDecodeStep(InferenceStep):
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         _prof = setting(self, 'engine.engine_settings.profile', '0') == "1"
         timing = getattr(getattr(self.verifier, 'target_model_runner', None), '_anatomy_lite', None)
-        from jetspec.engines.jetspec_plus_plus.trace.host_census import mark as _census_mark
         if _prof:
             torch.cuda.synchronize()
             _t0 = perf_counter()
@@ -151,7 +147,6 @@ class SpecDecodeStep(InferenceStep):
             eagle_acts=eagle_sentinel,
         )
         #### STEP 1: SPECULATE ####
-        _census_mark("save", run_config=getattr(self, 'run_config', None))
         if timing is not None:
             timing.stamp('speculate_start')
         speculate_result = self.speculator.speculate(seqs, in_verify_result)
@@ -179,9 +174,6 @@ class SpecDecodeStep(InferenceStep):
             timing.mark(6)
         device_outcome = getattr(out_verify_result, "device_outcome", None)
         if device_outcome is not None:
-            kernel_profile = getattr(self.verifier, "_verify_kernel_profile", None)
-            if kernel_profile is not None and kernel_profile.active is not None:
-                kernel_profile.step("publish_head")
             if timing is not None:
                 timing.mark(7)
             self.speculator.publish_device_outcome(seqs, device_outcome)
@@ -189,8 +181,6 @@ class SpecDecodeStep(InferenceStep):
                 timing.mark(8)
             if getattr(self.verifier, "_jetspec_publish_first", False):
                 self.verifier.finish_jetspec_postpublish(seqs[0])
-            if kernel_profile is not None and kernel_profile.active is not None:
-                kernel_profile.finish(**kernel_profile.round_meta)
 
         if _prof:
             torch.cuda.synchronize()
@@ -212,7 +202,6 @@ class SpecDecodeStep(InferenceStep):
             seq.last_token = orig_lt
             seq.num_draft_cached_tokens = orig_ndc
             seq.num_cached_tokens = orig_nct
-        _census_mark("restore", run_config=getattr(self, 'run_config', None))
         if timing is not None:
             timing.stamp('restore_end')
 
@@ -223,7 +212,6 @@ class SpecDecodeStep(InferenceStep):
             out_verify_result.recovery_tokens,
             eagle_acts=out_verify_result.eagle_acts if self.eagle else None,
         )
-        _census_mark("postprocess", run_config=getattr(self, 'run_config', None))
         if timing is not None:
             timing.stamp('postprocess_end')
 

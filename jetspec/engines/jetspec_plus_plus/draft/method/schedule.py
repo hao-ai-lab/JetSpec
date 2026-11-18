@@ -16,7 +16,7 @@ class Schedule:
     def parse(cls, config):
         match = re.fullmatch(r'J([0-9]+)-R([0-9]+)', config or '')
         if match is None:
-            raise ValueError(f'JETSPEC_CHAIN_FIXED_CONFIG={config!r}: expected J<m>-R<n>')
+            raise ValueError(f'--schedule {config!r} (JETSPEC_CHAIN_FIXED_CONFIG): expected J<m>-R<n>')
         return cls(*map(int, match.groups()))
 
     def __str__(self):

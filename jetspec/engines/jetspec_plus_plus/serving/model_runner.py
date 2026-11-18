@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import io
 import pickle
@@ -12,7 +12,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from transformers import AutoTokenizer, AutoConfig
 import os
-from jetspec.engines.jetspec_plus_plus.kernels._optional import flashinfer
+from jetspec.engines.jetspec_plus_plus.runtime._optional import flashinfer
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
 from jetspec.engines.jetspec_plus_plus.models.registry import model_class as target_model_class, model_spec
@@ -79,255 +79,8 @@ def shm_name():
     return os.environ.get(name, "ssd")
 
 
-class ModelRunner:
-
-    def __init__(self, config: Config, rank: int, event: Event | list[Event], is_draft: bool = False, num_tp_gpus: int = -1, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
-        self.run_config = (run_config if run_config is not None else
-                           getattr(config, 'run_config', None))
-        if self.run_config is None:
-            raise ValueError('ModelRunner missing RunConfig launch_overlay')
-        self.verify_mask_cache = self.run_config.engine.engine_settings.verify_mask_cache == "1"
-        from jetspec.engines.jetspec_plus_plus.runtime.paths import install_architecture
-        install_architecture(self.run_config)
-        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, install_engine
-        self.engine = install_engine(engine if engine is not None else getattr(config, 'engine', None) or current_engine())
-        from jetspec.engines.jetspec_plus_plus.draft.serve_policy import install_method_settings
-        install_method_settings(getattr(config, 'method_settings', None))
-        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
-        pin_plan_value = setting(self, 'hardware.hardware_settings.cpu_pin_plan')
-        pin_plan = json.loads(pin_plan_value) if pin_plan_value is not None else None
-        if pin_plan is None or pin_plan["mode"] != "off":
-            pin_rank_cpu_affinity(setting(self, 'hardware.hardware_settings.rank_cpu_affinity'), rank, plan=pin_plan)
-        if pin_plan is not None:
-            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
-            row = pin_plan["ranks"][rank]
-            if row["cpus"] and set(os.sched_getaffinity(0)) != set(row["cpus"]):
-                raise RuntimeError(f"CPU_PIN rank={rank} applied affinity differs from requested")
-            run_manifest.record_value(f"cpu_pin_rank_{rank}", row, run_config=run_config)
-        if config.verbose: print(f'ModelRunner init got args: rank={rank}, is_draft={is_draft}, num_tp_gpus={num_tp_gpus}', flush=True)
-        self.config = config
-        self.eagle3_model_class = eagle3_model_class
-        if self.engine.deterministic:
-            from jetspec.engines.jetspec_plus_plus.runtime.eval_determinism import install
-            install(rank, run_config=run_config)
-        # serving JETSPEC_C1_COMPILE_PIN: the pinned inductor cache goes in before any compile
-        from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_install
-        process_install(run_config=self.run_config)
-        config.gpu_memory_utilization = gpu_memory_utilization(config.gpu_memory_utilization, run_config=self.run_config)
-        
-        assert is_draft in [True, False], "ERROR in ModelRunner: is_draft must be True or False"
-        self.is_draft = is_draft
-        if self.is_draft: 
-            if config.draft_hf_config.torch_dtype != config.hf_config.torch_dtype:
-                if self.verbose:
-                    print(f"Warning: Draft dtype {config.draft_hf_config.torch_dtype} differs from target {config.hf_config.torch_dtype}. Casting draft to {config.hf_config.torch_dtype}.")
-                config.draft_hf_config.torch_dtype = config.hf_config.torch_dtype
-            assert (config.draft_hf_config.vocab_size == config.hf_config.vocab_size) or config.use_eagle, "ERROR in ModelRunner: draft_hf_config.vocab_size != hf_config.vocab_size"
-        
-        self.hf_config = config.hf_config if not is_draft else config.draft_hf_config
-        self.model_spec = model_spec(self.hf_config) if not (is_draft and config.use_eagle) else None
-        if has_state(self) and num_tp_gpus != 1:
-            raise ValueError("stateful target currently requires one GPU")
-        self.block_size = config.kvcache_block_size
-        self.enforce_eager = config.enforce_eager
-        self.verify_plan_cache = setting(self, 'engine.engine_settings.verify_plan_cache', '0') == "1"
-        self._jetspec_verify_device = setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
-        self._ssd_verify_device = setting(self, 'engine.engine_settings.ssd_verify_device', '0') == "1"
-        self._verify_stage_host_enabled = setting(self, 'engine.engine_settings.verify_stage_host', '0') == "1"
-        self._verify_stage_early_enabled = setting(self, 'engine.engine_settings.verify_stage_early', '0') == "1"
-        self._verify_plan_reuse_enabled = setting(self, 'engine.engine_settings.verify_plan_reuse', '0') == "1"
-        self._verify_plan_reuse_check = setting(self, 'engine.engine_settings.verify_plan_reuse_check', '0') == "1"
-        self._verify_stage_blob_enabled = setting(self, 'engine.engine_settings.verify_stage_blob', '0') == "1"
-        self._verify_stage_blob_fast_enabled = setting(self, 'engine.engine_settings.verify_stage_blob_fast', '0') == "1"
-        self._verify_stage_blob_fast_check = setting(self, 'engine.engine_settings.verify_stage_blob_fast_check', '0') == "1"
-        self._verify_stage_blob_fast_rounds = self._verify_stage_blob_fast_mismatches = 0
-        self._verify_plan_lean_enabled = kernel_enabled('verify_plan_lean', '1')
-        self._verify_input_direct_enabled = setting(self, 'engine.engine_settings.verify_input_direct', '0') == "1"
-        self._verify_reuse_signature = {}
-        self._verify_reuse_rounds = self._verify_reuse_hits = self._verify_reuse_replans = 0
-        self._verify_reuse_mismatches = 0
-        self._verify_plan_cache = {}
-        self._verify_plan_cache_hits = 0
-        self._verify_plan_cache_misses = 0
-        self._staged_verify = None
-        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_path if config.tokenizer_path else config.model, use_fast=True)
-        self.max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
-
-        assert self.hf_config is not None, "ERROR in ModelRunner: hf_config is None" # this implies boundedness to the end 
-        
-        # TODO: Get rid of this.
-        if self.is_draft:
-            should_use_dist = self.config.draft_async
-        else:
-            should_use_dist = self.config.num_gpus > 1
-
-        # determines whether we create a process group and our process is aware of others, etc
-        self.world_size = config.num_gpus if should_use_dist else 1
-        self.rank = rank
-        self.use_eagle = config.use_eagle
-
-        if config.draft_async:
-            self.draft_rank = config.num_gpus - 1
-            if self.is_draft:
-                # [N, 3] int64, {(seq_id, len(new_suffix), rec_token): (speculated_tokens, logits_q)}
-                self.prev_fork_keys: torch.Tensor | None = None
-                self.prev_fork_block_tables: torch.Tensor | None = None  # [N, M] int32 with -1 padding
-
-        self.num_tp_gpus = num_tp_gpus # will be in [1 if no dist, num_gpus if not async, num_gpus-1 if async]
-        
-        if self.world_size == 1: # sync speculation or genuine single gpu 
-            assert (config.speculate and not config.draft_async) or self.num_tp_gpus == 1, "ERROR in ModelRunner: draft and async must be False or num_tp_gpus=1"
-
-        self.verbose = config.verbose
-        self.draft_async = config.draft_async
-        self.event = event
-        self._exiting = False 
-        
-        self.cuda_device_index = cuda_device_for_rank(self.rank, run_config=self.run_config)
-        if self.cuda_device_index >= torch.cuda.device_count():
-            raise ValueError("SSD_RANK_DEVICE_MAP names an unavailable CUDA device")
-        torch.cuda.set_device(self.cuda_device_index)
-        self.device = torch.device(f'cuda:{self.cuda_device_index}')
-        print(f'SSD_RANK_DEVICE logical_rank={self.rank} cuda_device={self.cuda_device_index}'
-              f' visible={os.environ.get("CUDA_VISIBLE_DEVICES")}'
-              f' mps={bool(os.environ.get("CUDA_MPS_PIPE_DIRECTORY"))}', flush=True)
-        if not is_draft:
-            major, minor = torch.cuda.get_device_capability(self.device)
-            architecture = f'sm{major}{minor}'
-            qualifications = tuple(name for name in ('hybrid_verify_triton', 'hybrid_verify_flashinfer')
-                                   if setting(self, 'engine.engine_settings.' + name, '0') == '1')
-            bind_attention_backend(select_attention_backend(
-                self.model_spec.attention, self.model_spec.has_state, architecture,
-                requested=ATTENTION_BACKEND, qualifications=qualifications,
-                reference=self.engine.kind == 'reference'))
-        jetspec_target = bool(config.jetspec and not is_draft)
-        flashinfer_dtype_supported = self.hf_config.torch_dtype in {
-            torch.float16,
-            torch.bfloat16,
-        }
-        jetspec_verify_backend = resolve_jetspec_verify_backend(
-            config.jetspec_verify_backend,
-            jetspec_target=jetspec_target,
-            flashinfer_dtype_supported=flashinfer_dtype_supported,
-        )
-        self.jetspec_paged_flashinfer = (
-            jetspec_verify_backend == "flashinfer_paged")
-        if has_state(self) and jetspec_target:
-            require_hybrid_sdpa_verify(jetspec_verify_backend, ATTENTION_BACKEND, run_config=run_config,
-                                      attention=self.model_spec.attention,
-                                      has_state=self.model_spec.has_state, architecture=architecture)
-        if self._verify_plan_reuse_enabled and jetspec_target and (
-                self.enforce_eager or ATTENTION_BACKEND != "flashinfer" or
-                flashinfer.__version__ != "0.6.18"):
-            raise RuntimeError(
-                "JETSPEC_VERIFY_PLAN_REUSE requires FlashInfer 0.6.18 "
-                "target CUDA-graph mode")
-        if self.jetspec_paged_flashinfer:
-            print(
-                "W217_JETSPEC_ATTENTION=flashinfer_paged "
-                f"dtype={self.hf_config.torch_dtype}",
-                flush=True,
-            )
-        if jetspec_target and config.jetspec_verify_backend == "sdpa":
-            backend_label = "triton_paged" if ATTENTION_BACKEND == "triton" else "sdpa_serial"
-            print(
-                f"W220_JETSPEC_ATTENTION={backend_label} "
-                f"dtype={self.hf_config.torch_dtype}",
-                flush=True,
-            )
-        elif jetspec_target and not flashinfer_dtype_supported:
-            print(
-                "W217_FLASHINFER_FP32_CONTROL=fallback_sdpa "
-                f"dtype={self.hf_config.torch_dtype} "
-                "reason=flashinfer_paged_dtype_unsupported",
-                flush=True,
-            )
-        if ATTENTION_BACKEND == "flashinfer" or self.jetspec_paged_flashinfer:
-            self._init_flashinfer_attention_backend()
-        
-        # cudagraph logic for FlashInfer kernels, need diff wrapper for each batch size we make a graph for 
-        if is_draft and config.draft_async:
-            self._init_flashinfer_wrappers()
-        
-        if self.verbose: print(f'INSIDE MODEL RUNNER INIT, DRAFT={is_draft}', flush=True)
-        self.tp_pg = None 
-
-        if should_use_dist:
-            default_port = int(os.environ.get("SSD_DIST_PORT", "1223"))
-            shared_gpu = setting(self, 'hardware.hardware_settings.shared_gpu_dist') == "gloo"
-            kwargs = dict(
-                backend="gloo" if shared_gpu else "nccl",
-                init_method=f"tcp://localhost:{default_port}",
-                world_size=self.world_size,
-                rank=self.rank,
-            )
-            if not shared_gpu:
-                kwargs["device_id"] = self.device
-            dist.init_process_group(**kwargs)
-            if shared_gpu:
-                install_cpu_staging(dist)
-                print("SSD_SHARED_GPU_DIST backend=gloo staging=cpu", flush=True)
-
-            self.tp_pg = dist.new_group(ranks=list(range(self.num_tp_gpus))) # everyone should see the new_group init even if not in group 
-
-        default_dtype = torch.get_default_dtype()
-        torch.set_default_dtype(self.hf_config.torch_dtype)
-        torch.set_default_device("cuda")
-        
-        if self.is_draft:
-            assert num_tp_gpus == 1, "ERROR in ModelRunner: draft should have tp_size=1"
-            self.tp_pg = None # every rank is given an object from self.tp_pg, even tho draft doesnt participate it gets GROUP_NON_MEMBER object != None back, so we can't assert None here, we 
-        
-        print(f'[model_runner] about to setup and warmup model and cudagraphs, is use_eagle={self.use_eagle}', flush=True)
-        model_role = self.setup_and_warmup_model_and_cudagraphs(config, self.hf_config, init_q, is_draft)
-
-        if self.verbose: print(f'-----CAPTURED {model_role}CUDAGRAPH----', flush=True)
-        # None, not "cpu": factories already default to the CPU, and a "cpu" mode
-        # still routes every later torch call (the verify host path) through Python dispatch.
-        torch.set_default_device(None)
-        # torch 2.9's set_default_device(None) leaves device_context = None, which a
-        # later torch.get_default_device() (transformers from_pretrained, e.g. the
-        # DSpark head load) dereferences. Without the attribute it reports the CPU.
-        if getattr(getattr(torch, "_GLOBAL_DEVICE_CONTEXT", None), "device_context", False) is None:
-            del torch._GLOBAL_DEVICE_CONTEXT.device_context
-        torch.set_default_dtype(default_dtype)
-
-        if self.config.draft_async:
-            if self.config.fan_out_list is None:
-                self.config.fan_out_list = [
-                    self.config.async_fan_out] * (self.config.speculate_k + 1)
-
-            self.config.fan_out_t = torch.tensor(self.config.fan_out_list, device=self.device)
-            self.config.fan_out_t_miss = torch.tensor(self.config.fan_out_list_miss, device=self.device)
-            assert len(self.config.fan_out_list) == self.config.speculate_k + \
-                1, "ERROR in Config: fan_out_list must be length speculate_k + 1"
-            assert any(f > 0 for f in self.config.fan_out_list), "ERROR in Config: fan_out_list must be > 0"
-            self.config.MQ_LEN = sum(self.config.fan_out_list)
-            print(f'F={self.config.async_fan_out}, fan_out_list={self.config.fan_out_list}, fan_out_list_miss={self.config.fan_out_list_miss}, MQ_LEN={self.config.MQ_LEN}', flush=True)
-
-        if should_use_dist: # (draft model when async=False or just single gpu logic) doesn't even enter this loop 
-            if self.is_draft and self.draft_async: 
-                pass # handled on draft runner after this init, includes doing draft_loop
-            elif self.rank == 0: # target in a distributed setup 
-                # Try to clean up any existing shared memory first
-                try:
-                    existing_shm = SharedMemory(name=shm_name())
-                    existing_shm.close() # here we bind it 
-                    existing_shm.unlink()
-                except FileNotFoundError:
-                    # can proceed, nothing to clean up 
-                    pass
-                
-                self.shm = SharedMemory(name=shm_name(), create=True, size=2**28)
-                dist.barrier(group=self.tp_pg, **({} if shared_gpu else {"device_ids": [self.cuda_device_index]})) # leader on tp_group
-            else: 
-                dist.barrier(group=self.tp_pg, **({} if shared_gpu else {"device_ids": [self.cuda_device_index]})) # follower on tp_group, don't want them hooking onto shm before its been created
-                self.shm = SharedMemory(name=shm_name())
-                self.loop()
-                
-        if self.verbose: print(f'-----{model_role}MODEL RUNNER INITIALIZED----', flush=True)
+class RunnerAttentionPlanning:
+    """Bind FlashInfer wrappers and plan paged, prefill, and decode attention."""
 
     def _init_flashinfer_attention_backend(self):
         self.flashinfer_attention_workspace = torch.empty(
@@ -584,9 +337,55 @@ class ModelRunner:
             print(f'wrapper backend is {self.prefill_wrappers[bs]._backend}', flush=True)
 
 
+    def eager_tree_decode_plan(self, input_ids, positions, step, cache_hits):
+        """Plan FlashInfer for tree decode in eager mode"""
+        assert self.is_draft and self.config.draft_async, "ERROR in eager_tree_decode_plan: not a draft async model"
+        context = get_context()
+        
+        K, F = self.config.speculate_k, self.config.async_fan_out
+        # MQ_LEN = F * (K+1)
+        MQ_LEN = self.config.MQ_LEN
+        flat_batch_size = input_ids.size(0) 
+        B = flat_batch_size // MQ_LEN # [N] tokens = B * sum(fan_out_list)
+        
+        # Convert block_tables to FlashInfer format
+        block_tables = context.block_tables # [B, M]
+        context_lens = context.context_lens # [B]
+        
+        counts = (context_lens + self.block_size - 1) // self.block_size # [B]
+        kv_indptr = torch.cat([torch.tensor([0], device=block_tables.device),
+                               counts.cumsum(dim=0)]).to(torch.int32)  
+        mask = torch.arange(block_tables.size(1), device=block_tables.device)[None, :] < counts[:, None]
+        kv_indices = block_tables[mask]                    # flattened page ids
+        
+        # Last-page actual token count per request
+        kv_last_page_len = (context_lens % self.block_size)
+        kv_last_page_len[kv_last_page_len == 0] = self.block_size
+        kv_last_page_len = kv_last_page_len.to(torch.int32)
+        cu_seqlens_q = torch.arange(B + 1, device=self.device, dtype=torch.int32) * MQ_LEN # assumes same MQ_LEN across batch dimension 
+        custom_mask = get_custom_mask(self.config, context_lens, step, K, F, B, device=self.device, cache_hits=cache_hits)
+        
+        self.only_prefill_wrapper.plan(
+            cu_seqlens_q,
+            kv_indptr,
+            kv_indices,
+            kv_last_page_len,
+            self.hf_config.num_attention_heads,
+            self.hf_config.num_key_value_heads,
+            self.hf_config.head_dim,
+            self.block_size,
+            custom_mask=custom_mask,
+            q_data_type=self.hf_config.torch_dtype,
+            kv_data_type=self.hf_config.torch_dtype,
+        )
+
+
+class RunnerModelSetup:
+    """Load and warm the model, allocate its KV cache, and capture startup graphs."""
+
     def setup_and_warmup_model_and_cudagraphs(self, config: Config, hf_config: AutoConfig, init_q=None, is_draft=False):
         # cudagraphs 
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         self.graph_vars = {}
         self.graph_pools = {}
@@ -740,55 +539,131 @@ class ModelRunner:
         """Target runners capture mixed verify graphs at this startup boundary."""
         pass
 
-    @torch.inference_mode()
-    def commit_state(self, accepted: torch.Tensor):
-        if not has_state(self):
-            return
-        accepted = accepted.to(device=self._state_slots.device)
-        if self.enforce_eager:
-            self.state.commit(self._state_slots, accepted)
-        else:
-            count = self._state_slots.numel()
-            bucket = next(size for size in sorted(self._commit_graphs) if size >= count)
-            graph, slots, counts = self._commit_graphs[bucket]
-            if self.state.capacity > 1:
-                slots.copy_(self.state.reserved[:bucket])
-                slots[:count].copy_(self._state_slots)
-            if counts.ndim == 0:
-                counts.copy_(accepted.reshape(()))
-            else:
-                counts.zero_()
-                counts[:count].copy_(accepted.reshape(-1))
-            graph.replay()
+    def run_cold_prefill(self, lengths):
+        """serve_read's cold phase: one KV-less prefill of zero tokens per prompt, on every TP rank."""
+        probe_batch = self.config.max_num_seqs if has_state(self) else max(1, len(lengths))
+        for offset in range(0, len(lengths), probe_batch):
+            ids, positions = self.prepare_prefill([Sequence([0] * length)
+                for length in lengths[offset:offset + probe_batch]])
+            get_context().slot_mapping = ids.new_full(ids.shape, -1, dtype=torch.int32)
+            try:
+                self.run_model(ids, positions, True)
+            finally:
+                reset_context()
 
-    def prepare_state(self, seqs, *, prefill=False):
-        # The scheduler already reset live slots. KV-less startup probes have
-        # no scheduler owner and reset the reserved slot here instead.
-        reset = prefill and any(seq.seq_id not in self.state.owners for seq in seqs)
-        self._state_slots = self.state.for_sequences(seqs, prefill=reset)
-        self._state_prefill_lengths = (torch.tensor([len(seq) for seq in seqs], device='cpu')
-                                       if prefill else None)
+    def gather_full_vocab_weights(self):
+        """All-gather the vocab-sharded embedding and LM head over the target TP group.
 
-    def state_model_forward(self, input_ids, positions, *args, slot_ids=None, verify=None,
-                            query_lengths=None):
-        from jetspec.engines.jetspec_plus_plus.models.state import has_state
-        if not has_state(self):
-            return self.model(input_ids, positions, *args)
-        from jetspec.engines.jetspec_plus_plus.models.forward_context import forward_context, get_forward_context
-        verify = get_forward_context().verify if verify is None else verify
-        slots = self._state_slots if slot_ids is None else slot_ids
-        if verify:
-            self.state.prepare_verify(slots, max(query_lengths) if query_lengths is not None
-                                      else input_ids.shape[0] // slots.numel())
-        with forward_context(verify=verify, slot_ids=slots,
-                             prefill_lengths=(query_lengths if query_lengths is not None
-                                              else self._state_prefill_lengths if get_context().is_prefill
-                                              else None)):
-            return self.model(input_ids, positions, *args)
+        A sync-slot drafter on rank 0 (block head / DFlash) reads the target's embedding and LM
+        head as plain tensors, so under target TP it needs the full vocab rows; rank 0 keeps them
+        as model.jetspec_full_vocab, every other rank only joins the collective."""
+        full = []
+        for weight in (self.model.model.embed_tokens.weight, self.model.lm_head.weight):
+            parts = [torch.empty_like(weight) for _ in range(self.num_tp_gpus)]
+            dist.all_gather(parts, weight.data.contiguous(), group=self.tp_pg)
+            full.append(torch.cat(parts, dim=0) if self.rank == 0 else None)
+            del parts
+        if self.rank == 0:
+            self.model.jetspec_full_vocab = tuple(full)
+        torch.cuda.synchronize(self.device)
+
+    def warmup_model(self):
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len
+        num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)
+        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
+        
+        hidden_states = None
+        if self.config.use_eagle and self.is_draft:
+            num_tokens = num_seqs * max_model_len
+            d_model_target = self.config.d_model_target or 4096
+            hidden_states = torch.zeros(num_tokens, 3 * d_model_target, dtype=self.hf_config.torch_dtype, device=self.device)
+        
+        self.run(seqs, True, hidden_states=hidden_states)
+        torch.cuda.empty_cache()
+
+    def allocate_kv_cache(self):
+        print(f'inside allocate_kv_cache -- ', flush=True)
+        config = self.config
+        hf_config = self.hf_config
+        
+        # Simplify: just look at free memory on the GPU, and allocate up to gpu_memory_utilization * free.
+        free, _ = torch.cuda.mem_get_info()
+        num_kv_heads = hf_config.num_key_value_heads // self.num_tp_gpus
+        # Only attention layers bind a slice of the pool (the loop below). A linear-attention layer of a hybrid
+        # target keeps recurrent state instead, so the pool is sized by the attention layers.
+        attention_layers = sum(1 for module in self.model.modules()
+                               if hasattr(module, "k_cache") and hasattr(module, "v_cache"))
+        assert attention_layers > 0, "ERROR: the model has no attention layer to bind a KV cache to"
+        block_bytes = (
+            2
+            * attention_layers
+            * self.block_size
+            * num_kv_heads
+            * hf_config.head_dim
+            * hf_config.torch_dtype.itemsize
+        )
+        usable_bytes = free * config.gpu_memory_utilization
+
+        if self.is_draft and self.draft_async:
+            B = config.max_num_seqs          # max concurrent sequences
+            K = config.speculate_k           # speculative steps
+            F = config.async_fan_out         # branches per step
+            V = hf_config.vocab_size
+            dtype_size = hf_config.torch_dtype.itemsize
+            # Total forks = B * (K+1) * F, each fork stores (K+1)*V logits of size dtype_size
+            reserved_bytes = B * (K + 1) * F * (K + 1) * V * dtype_size
+            usable_bytes = max(usable_bytes - reserved_bytes, 0)
+            assert usable_bytes > 0, "ERROR: Not enough memory for draft KV cache after accounting for tree_cache for logits storage"
+
+        config.num_kvcache_blocks = int(usable_bytes) // block_bytes
+        from jetspec.engines.jetspec_plus_plus.runtime.profile import kv_cache_blocks
+        original_blocks = config.num_kvcache_blocks
+        config.num_kvcache_blocks = kv_cache_blocks(config, original_blocks)
+        if config.num_kvcache_blocks != original_blocks:
+            print('EVAL_KV_RESERVATION ' + json.dumps(dict(
+                draft=self.is_draft, original_blocks=original_blocks,
+                allocated_blocks=config.num_kvcache_blocks, block_bytes=block_bytes,
+                original_bytes=original_blocks * block_bytes,
+                allocated_bytes=config.num_kvcache_blocks * block_bytes)), flush=True)
+        if self.verbose:
+            print(f'KV CACHE ALLOCATION for {"TARGET" if not self.is_draft else "DRAFT"} model', flush=True)
+            print(f' free={free/1e9:.2f}GB, util={config.gpu_memory_utilization:.2f}', flush=True)
+            print(f' block_bytes={block_bytes/1e9:.2f}GB,'
+            + f' num_kvcache_blocks={config.num_kvcache_blocks}', flush=True)   
+        
+        assert config.num_kvcache_blocks > 0, "KV cache too big for free memory!"
+
+        allocated_blocks = config.num_kvcache_blocks
+        self.kv_cache = torch.zeros(
+            2,
+            attention_layers,
+            allocated_blocks,
+            self.block_size,
+            num_kv_heads,
+            hf_config.head_dim, 
+        )
+        
+        print(f"allocate_kv_cache(): kv_cache shape = {self.kv_cache.shape}", flush=True)
+        layer_id = 0
+        for module in self.model.modules():
+            if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
+                module.k_cache = self.kv_cache[0, layer_id]
+                module.v_cache = self.kv_cache[1, layer_id]
+                if self.is_draft and self.draft_async and not self.enforce_eager:
+                    module.prefill_wrappers = self.prefill_wrappers
+                elif self.is_draft and self.draft_async and self.enforce_eager:
+                    module.only_prefill_wrapper = self.only_prefill_wrapper # this will make it not None so it can be used on fwd
+                layer_id += 1
+
+
+class RunnerCommands:
+    """Dispatch rank commands and coordinate compile checks and shutdown."""
 
     def _check_compile_pin_served(self):
         """Check both serving ranks before bench seals the run manifest."""
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not setting(self, 'engine.engine_settings.c1_compile_pin', ''):
@@ -927,7 +802,7 @@ class ModelRunner:
         Best-effort: send cmd=2 to draft (async_pg) from TARGET rank 0.
         Safe to call multiple times.
         """
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if not (self.draft_async and not self.is_draft and self.rank == 0):
@@ -985,125 +860,56 @@ class ModelRunner:
             raise AttributeError(f"Method '{method_name}' not found")
         return method(*args)
 
-    def run_cold_prefill(self, lengths):
-        """serve_read's cold phase: one KV-less prefill of zero tokens per prompt, on every TP rank."""
-        probe_batch = self.config.max_num_seqs if has_state(self) else max(1, len(lengths))
-        for offset in range(0, len(lengths), probe_batch):
-            ids, positions = self.prepare_prefill([Sequence([0] * length)
-                for length in lengths[offset:offset + probe_batch]])
-            get_context().slot_mapping = ids.new_full(ids.shape, -1, dtype=torch.int32)
-            try:
-                self.run_model(ids, positions, True)
-            finally:
-                reset_context()
 
-    def gather_full_vocab_weights(self):
-        """All-gather the vocab-sharded embedding and LM head over the target TP group.
+class RunnerModelExecution:
+    """Prepare model inputs and state, then execute eager or graphed forwards."""
 
-        A sync-slot drafter on rank 0 (block head / DFlash) reads the target's embedding and LM
-        head as plain tensors, so under target TP it needs the full vocab rows; rank 0 keeps them
-        as model.jetspec_full_vocab, every other rank only joins the collective."""
-        full = []
-        for weight in (self.model.model.embed_tokens.weight, self.model.lm_head.weight):
-            parts = [torch.empty_like(weight) for _ in range(self.num_tp_gpus)]
-            dist.all_gather(parts, weight.data.contiguous(), group=self.tp_pg)
-            full.append(torch.cat(parts, dim=0) if self.rank == 0 else None)
-            del parts
-        if self.rank == 0:
-            self.model.jetspec_full_vocab = tuple(full)
-        torch.cuda.synchronize(self.device)
+    @torch.inference_mode()
+    def commit_state(self, accepted: torch.Tensor):
+        if not has_state(self):
+            return
+        accepted = accepted.to(device=self._state_slots.device)
+        if self.enforce_eager:
+            self.state.commit(self._state_slots, accepted)
+        else:
+            count = self._state_slots.numel()
+            bucket = next(size for size in sorted(self._commit_graphs) if size >= count)
+            graph, slots, counts = self._commit_graphs[bucket]
+            if self.state.capacity > 1:
+                slots.copy_(self.state.reserved[:bucket])
+                slots[:count].copy_(self._state_slots)
+            if counts.ndim == 0:
+                counts.copy_(accepted.reshape(()))
+            else:
+                counts.zero_()
+                counts[:count].copy_(accepted.reshape(-1))
+            graph.replay()
 
-    def warmup_model(self):
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len
-        num_seqs = min(max_num_batched_tokens // max_model_len, self.config.max_num_seqs)
-        seqs = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
-        
-        hidden_states = None
-        if self.config.use_eagle and self.is_draft:
-            num_tokens = num_seqs * max_model_len
-            d_model_target = self.config.d_model_target or 4096
-            hidden_states = torch.zeros(num_tokens, 3 * d_model_target, dtype=self.hf_config.torch_dtype, device=self.device)
-        
-        self.run(seqs, True, hidden_states=hidden_states)
-        torch.cuda.empty_cache()
+    def prepare_state(self, seqs, *, prefill=False):
+        # The scheduler already reset live slots. KV-less startup probes have
+        # no scheduler owner and reset the reserved slot here instead.
+        reset = prefill and any(seq.seq_id not in self.state.owners for seq in seqs)
+        self._state_slots = self.state.for_sequences(seqs, prefill=reset)
+        self._state_prefill_lengths = (torch.tensor([len(seq) for seq in seqs], device='cpu')
+                                       if prefill else None)
 
-    def allocate_kv_cache(self):
-        print(f'inside allocate_kv_cache -- ', flush=True)
-        config = self.config
-        hf_config = self.hf_config
-        
-        # Simplify: just look at free memory on the GPU, and allocate up to gpu_memory_utilization * free.
-        free, _ = torch.cuda.mem_get_info()
-        num_kv_heads = hf_config.num_key_value_heads // self.num_tp_gpus
-        # Only attention layers bind a slice of the pool (the loop below). A linear-attention layer of a hybrid
-        # target keeps recurrent state instead, so the pool is sized by the attention layers.
-        attention_layers = sum(1 for module in self.model.modules()
-                               if hasattr(module, "k_cache") and hasattr(module, "v_cache"))
-        assert attention_layers > 0, "ERROR: the model has no attention layer to bind a KV cache to"
-        block_bytes = (
-            2
-            * attention_layers
-            * self.block_size
-            * num_kv_heads
-            * hf_config.head_dim
-            * hf_config.torch_dtype.itemsize
-        )
-        usable_bytes = free * config.gpu_memory_utilization
+    def state_model_forward(self, input_ids, positions, *args, slot_ids=None, verify=None,
+                            query_lengths=None):
+        from jetspec.engines.jetspec_plus_plus.models.state import has_state
+        if not has_state(self):
+            return self.model(input_ids, positions, *args)
+        from jetspec.engines.jetspec_plus_plus.models.forward_context import forward_context, get_forward_context
+        verify = get_forward_context().verify if verify is None else verify
+        slots = self._state_slots if slot_ids is None else slot_ids
+        if verify:
+            self.state.prepare_verify(slots, max(query_lengths) if query_lengths is not None
+                                      else input_ids.shape[0] // slots.numel())
+        with forward_context(verify=verify, slot_ids=slots,
+                             prefill_lengths=(query_lengths if query_lengths is not None
+                                              else self._state_prefill_lengths if get_context().is_prefill
+                                              else None)):
+            return self.model(input_ids, positions, *args)
 
-        if self.is_draft and self.draft_async:
-            B = config.max_num_seqs          # max concurrent sequences
-            K = config.speculate_k           # speculative steps
-            F = config.async_fan_out         # branches per step
-            V = hf_config.vocab_size
-            dtype_size = hf_config.torch_dtype.itemsize
-            # Total forks = B * (K+1) * F, each fork stores (K+1)*V logits of size dtype_size
-            reserved_bytes = B * (K + 1) * F * (K + 1) * V * dtype_size
-            usable_bytes = max(usable_bytes - reserved_bytes, 0)
-            assert usable_bytes > 0, "ERROR: Not enough memory for draft KV cache after accounting for tree_cache for logits storage"
-
-        config.num_kvcache_blocks = int(usable_bytes) // block_bytes
-        from jetspec.engines.jetspec_plus_plus.runtime.profile import kv_cache_blocks
-        original_blocks = config.num_kvcache_blocks
-        config.num_kvcache_blocks = kv_cache_blocks(config, original_blocks)
-        if config.num_kvcache_blocks != original_blocks:
-            print('EVAL_KV_RESERVATION ' + json.dumps(dict(
-                draft=self.is_draft, original_blocks=original_blocks,
-                allocated_blocks=config.num_kvcache_blocks, block_bytes=block_bytes,
-                original_bytes=original_blocks * block_bytes,
-                allocated_bytes=config.num_kvcache_blocks * block_bytes)), flush=True)
-        if self.verbose:
-            print(f'KV CACHE ALLOCATION for {"TARGET" if not self.is_draft else "DRAFT"} model', flush=True)
-            print(f' free={free/1e9:.2f}GB, util={config.gpu_memory_utilization:.2f}', flush=True)
-            print(f' block_bytes={block_bytes/1e9:.2f}GB,'
-            + f' num_kvcache_blocks={config.num_kvcache_blocks}', flush=True)   
-        
-        assert config.num_kvcache_blocks > 0, "KV cache too big for free memory!"
-
-        allocated_blocks = config.num_kvcache_blocks
-        self.kv_cache = torch.zeros(
-            2,
-            attention_layers,
-            allocated_blocks,
-            self.block_size,
-            num_kv_heads,
-            hf_config.head_dim, 
-        )
-        
-        print(f"allocate_kv_cache(): kv_cache shape = {self.kv_cache.shape}", flush=True)
-        layer_id = 0
-        for module in self.model.modules():
-            if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
-                module.k_cache = self.kv_cache[0, layer_id]
-                module.v_cache = self.kv_cache[1, layer_id]
-                if self.is_draft and self.draft_async and not self.enforce_eager:
-                    module.prefill_wrappers = self.prefill_wrappers
-                elif self.is_draft and self.draft_async and self.enforce_eager:
-                    module.only_prefill_wrapper = self.only_prefill_wrapper # this will make it not None so it can be used on fwd
-                layer_id += 1
-
-    
     def prepare_prefill(self, seqs: list[Sequence]):
         from jetspec.engines.jetspec_plus_plus.models.state import has_state
         if has_state(self):
@@ -1164,48 +970,6 @@ class ModelRunner:
         return temperatures
 
 
-
-    def eager_tree_decode_plan(self, input_ids, positions, step, cache_hits):
-        """Plan FlashInfer for tree decode in eager mode"""
-        assert self.is_draft and self.config.draft_async, "ERROR in eager_tree_decode_plan: not a draft async model"
-        context = get_context()
-        
-        K, F = self.config.speculate_k, self.config.async_fan_out
-        # MQ_LEN = F * (K+1)
-        MQ_LEN = self.config.MQ_LEN
-        flat_batch_size = input_ids.size(0) 
-        B = flat_batch_size // MQ_LEN # [N] tokens = B * sum(fan_out_list)
-        
-        # Convert block_tables to FlashInfer format
-        block_tables = context.block_tables # [B, M]
-        context_lens = context.context_lens # [B]
-        
-        counts = (context_lens + self.block_size - 1) // self.block_size # [B]
-        kv_indptr = torch.cat([torch.tensor([0], device=block_tables.device),
-                               counts.cumsum(dim=0)]).to(torch.int32)  
-        mask = torch.arange(block_tables.size(1), device=block_tables.device)[None, :] < counts[:, None]
-        kv_indices = block_tables[mask]                    # flattened page ids
-        
-        # Last-page actual token count per request
-        kv_last_page_len = (context_lens % self.block_size)
-        kv_last_page_len[kv_last_page_len == 0] = self.block_size
-        kv_last_page_len = kv_last_page_len.to(torch.int32)
-        cu_seqlens_q = torch.arange(B + 1, device=self.device, dtype=torch.int32) * MQ_LEN # assumes same MQ_LEN across batch dimension 
-        custom_mask = get_custom_mask(self.config, context_lens, step, K, F, B, device=self.device, cache_hits=cache_hits)
-        
-        self.only_prefill_wrapper.plan(
-            cu_seqlens_q,
-            kv_indptr,
-            kv_indices,
-            kv_last_page_len,
-            self.hf_config.num_attention_heads,
-            self.hf_config.num_key_value_heads,
-            self.hf_config.head_dim,
-            self.block_size,
-            custom_mask=custom_mask,
-            q_data_type=self.hf_config.torch_dtype,
-            kv_data_type=self.hf_config.torch_dtype,
-        )
 
     @torch.inference_mode()
     def run_model(self, input_ids: torch.Tensor, positions: torch.Tensor, is_prefill: bool, last_only: bool = True, tree_decode_step: int = -1, cache_hits: torch.Tensor | None = None, hidden_states: torch.Tensor | None = None):
@@ -1433,6 +1197,267 @@ class ModelRunner:
 
 
     # should add spec_k that just loops this k times
+
+
+class ModelRunner(
+    RunnerAttentionPlanning,
+    RunnerModelSetup,
+    RunnerCommands,
+    RunnerModelExecution,
+):
+    """Coordinate the rank through components sharing this instance and its tensor state.
+
+    Method calls retain their original stream and graph capture order.
+    """
+
+    def __init__(self, config: Config, rank: int, event: Event | list[Event], is_draft: bool = False, num_tp_gpus: int = -1, init_q = None, eagle3_model_class=None, engine=None, run_config=None):
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
+        self.run_config = (run_config if run_config is not None else
+                           getattr(config, 'run_config', None))
+        if self.run_config is None:
+            raise ValueError('ModelRunner missing RunConfig launch_overlay')
+        self.verify_mask_cache = self.run_config.engine.engine_settings.verify_mask_cache == "1"
+        from jetspec.engines.jetspec_plus_plus.runtime.paths import install_architecture
+        install_architecture(self.run_config)
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine, install_engine
+        self.engine = install_engine(engine if engine is not None else getattr(config, 'engine', None) or current_engine())
+        from jetspec.engines.jetspec_plus_plus.draft.serve_policy import install_method_settings
+        install_method_settings(getattr(config, 'method_settings', None))
+        from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
+        pin_plan_value = setting(self, 'hardware.hardware_settings.cpu_pin_plan')
+        pin_plan = json.loads(pin_plan_value) if pin_plan_value is not None else None
+        if pin_plan is None or pin_plan["mode"] != "off":
+            pin_rank_cpu_affinity(setting(self, 'hardware.hardware_settings.rank_cpu_affinity'), rank, plan=pin_plan)
+        if pin_plan is not None:
+            import jetspec.engines.jetspec_plus_plus.launch.run_manifest as run_manifest
+            row = pin_plan["ranks"][rank]
+            if row["cpus"] and set(os.sched_getaffinity(0)) != set(row["cpus"]):
+                raise RuntimeError(f"CPU_PIN rank={rank} applied affinity differs from requested")
+            run_manifest.record_value(f"cpu_pin_rank_{rank}", row, run_config=run_config)
+        if config.verbose: print(f'ModelRunner init got args: rank={rank}, is_draft={is_draft}, num_tp_gpus={num_tp_gpus}', flush=True)
+        self.config = config
+        self.eagle3_model_class = eagle3_model_class
+        if self.engine.deterministic:
+            from jetspec.engines.jetspec_plus_plus.runtime.eval_determinism import install
+            install(rank, run_config=run_config)
+        # serving JETSPEC_C1_COMPILE_PIN: the pinned inductor cache goes in before any compile
+        from jetspec.engines.jetspec_plus_plus.serving.compile_pin import process_install
+        process_install(run_config=self.run_config)
+        config.gpu_memory_utilization = gpu_memory_utilization(config.gpu_memory_utilization, run_config=self.run_config)
+        
+        assert is_draft in [True, False], "ERROR in ModelRunner: is_draft must be True or False"
+        self.is_draft = is_draft
+        if self.is_draft: 
+            if config.draft_hf_config.torch_dtype != config.hf_config.torch_dtype:
+                if self.verbose:
+                    print(f"Warning: Draft dtype {config.draft_hf_config.torch_dtype} differs from target {config.hf_config.torch_dtype}. Casting draft to {config.hf_config.torch_dtype}.")
+                config.draft_hf_config.torch_dtype = config.hf_config.torch_dtype
+            assert (config.draft_hf_config.vocab_size == config.hf_config.vocab_size) or config.use_eagle, "ERROR in ModelRunner: draft_hf_config.vocab_size != hf_config.vocab_size"
+        
+        self.hf_config = config.hf_config if not is_draft else config.draft_hf_config
+        self.model_spec = model_spec(self.hf_config) if not (is_draft and config.use_eagle) else None
+        if has_state(self) and num_tp_gpus != 1:
+            raise ValueError("stateful target currently requires one GPU")
+        self.block_size = config.kvcache_block_size
+        self.enforce_eager = config.enforce_eager
+        self.verify_plan_cache = setting(self, 'engine.engine_settings.verify_plan_cache', '0') == "1"
+        self._jetspec_verify_device = setting(self, 'engine.engine_settings.jetspec_verify_device', '0') == "1"
+        self._ssd_verify_device = setting(self, 'engine.engine_settings.ssd_verify_device', '0') == "1"
+        self._verify_stage_host_enabled = setting(self, 'engine.engine_settings.verify_stage_host', '0') == "1"
+        self._verify_stage_early_enabled = setting(self, 'engine.engine_settings.verify_stage_early', '0') == "1"
+        self._verify_plan_reuse_enabled = setting(self, 'engine.engine_settings.verify_plan_reuse', '0') == "1"
+        self._verify_plan_reuse_check = setting(self, 'engine.engine_settings.verify_plan_reuse_check', '0') == "1"
+        self._verify_stage_blob_enabled = setting(self, 'engine.engine_settings.verify_stage_blob', '0') == "1"
+        self._verify_stage_blob_fast_enabled = setting(self, 'engine.engine_settings.verify_stage_blob_fast', '0') == "1"
+        self._verify_stage_blob_fast_check = setting(self, 'engine.engine_settings.verify_stage_blob_fast_check', '0') == "1"
+        self._verify_stage_blob_fast_rounds = self._verify_stage_blob_fast_mismatches = 0
+        self._verify_plan_lean_enabled = kernel_enabled('verify_plan_lean', '1')
+        self._verify_input_direct_enabled = setting(self, 'engine.engine_settings.verify_input_direct', '0') == "1"
+        self._verify_reuse_signature = {}
+        self._verify_reuse_rounds = self._verify_reuse_hits = self._verify_reuse_replans = 0
+        self._verify_reuse_mismatches = 0
+        self._verify_plan_cache = {}
+        self._verify_plan_cache_hits = 0
+        self._verify_plan_cache_misses = 0
+        self._staged_verify = None
+        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_path if config.tokenizer_path else config.model, use_fast=True)
+        self.max_num_blocks = (config.max_model_len + self.block_size - 1) // self.block_size
+
+        assert self.hf_config is not None, "ERROR in ModelRunner: hf_config is None" # this implies boundedness to the end 
+        
+        # TODO: Get rid of this.
+        if self.is_draft:
+            should_use_dist = self.config.draft_async
+        else:
+            should_use_dist = self.config.num_gpus > 1
+
+        # determines whether we create a process group and our process is aware of others, etc
+        self.world_size = config.num_gpus if should_use_dist else 1
+        self.rank = rank
+        self.use_eagle = config.use_eagle
+
+        if config.draft_async:
+            self.draft_rank = config.num_gpus - 1
+            if self.is_draft:
+                # [N, 3] int64, {(seq_id, len(new_suffix), rec_token): (speculated_tokens, logits_q)}
+                self.prev_fork_keys: torch.Tensor | None = None
+                self.prev_fork_block_tables: torch.Tensor | None = None  # [N, M] int32 with -1 padding
+
+        self.num_tp_gpus = num_tp_gpus # will be in [1 if no dist, num_gpus if not async, num_gpus-1 if async]
+        
+        if self.world_size == 1: # sync speculation or genuine single gpu 
+            assert (config.speculate and not config.draft_async) or self.num_tp_gpus == 1, "ERROR in ModelRunner: draft and async must be False or num_tp_gpus=1"
+
+        self.verbose = config.verbose
+        self.draft_async = config.draft_async
+        self.event = event
+        self._exiting = False 
+        
+        self.cuda_device_index = cuda_device_for_rank(self.rank, run_config=self.run_config)
+        if self.cuda_device_index >= torch.cuda.device_count():
+            raise ValueError("SSD_RANK_DEVICE_MAP names an unavailable CUDA device")
+        torch.cuda.set_device(self.cuda_device_index)
+        self.device = torch.device(f'cuda:{self.cuda_device_index}')
+        print(f'SSD_RANK_DEVICE logical_rank={self.rank} cuda_device={self.cuda_device_index}'
+              f' visible={os.environ.get("CUDA_VISIBLE_DEVICES")}'
+              f' mps={bool(os.environ.get("CUDA_MPS_PIPE_DIRECTORY"))}', flush=True)
+        if not is_draft:
+            major, minor = torch.cuda.get_device_capability(self.device)
+            architecture = f'sm{major}{minor}'
+            qualifications = tuple(name for name in ('hybrid_verify_triton', 'hybrid_verify_flashinfer')
+                                   if setting(self, 'engine.engine_settings.' + name, '0') == '1')
+            bind_attention_backend(select_attention_backend(
+                self.model_spec.attention, self.model_spec.has_state, architecture,
+                requested=ATTENTION_BACKEND, qualifications=qualifications,
+                reference=self.engine.kind == 'reference'))
+        jetspec_target = bool(config.jetspec and not is_draft)
+        flashinfer_dtype_supported = self.hf_config.torch_dtype in {
+            torch.float16,
+            torch.bfloat16,
+        }
+        jetspec_verify_backend = resolve_jetspec_verify_backend(
+            config.jetspec_verify_backend,
+            jetspec_target=jetspec_target,
+            flashinfer_dtype_supported=flashinfer_dtype_supported,
+        )
+        self.jetspec_paged_flashinfer = (
+            jetspec_verify_backend == "flashinfer_paged")
+        if has_state(self) and jetspec_target:
+            require_hybrid_sdpa_verify(jetspec_verify_backend, ATTENTION_BACKEND, run_config=run_config,
+                                      attention=self.model_spec.attention,
+                                      has_state=self.model_spec.has_state, architecture=architecture)
+        if self._verify_plan_reuse_enabled and jetspec_target and (
+                self.enforce_eager or ATTENTION_BACKEND != "flashinfer" or
+                flashinfer.__version__ != "0.6.18"):
+            raise RuntimeError(
+                "JETSPEC_VERIFY_PLAN_REUSE requires FlashInfer 0.6.18 "
+                "target CUDA-graph mode")
+        if self.jetspec_paged_flashinfer:
+            print(
+                "W217_JETSPEC_ATTENTION=flashinfer_paged "
+                f"dtype={self.hf_config.torch_dtype}",
+                flush=True,
+            )
+        if jetspec_target and config.jetspec_verify_backend == "sdpa":
+            backend_label = "triton_paged" if ATTENTION_BACKEND == "triton" else "sdpa_serial"
+            print(
+                f"W220_JETSPEC_ATTENTION={backend_label} "
+                f"dtype={self.hf_config.torch_dtype}",
+                flush=True,
+            )
+        elif jetspec_target and not flashinfer_dtype_supported:
+            print(
+                "W217_FLASHINFER_FP32_CONTROL=fallback_sdpa "
+                f"dtype={self.hf_config.torch_dtype} "
+                "reason=flashinfer_paged_dtype_unsupported",
+                flush=True,
+            )
+        if ATTENTION_BACKEND == "flashinfer" or self.jetspec_paged_flashinfer:
+            self._init_flashinfer_attention_backend()
+        
+        # cudagraph logic for FlashInfer kernels, need diff wrapper for each batch size we make a graph for 
+        if is_draft and config.draft_async:
+            self._init_flashinfer_wrappers()
+        
+        if self.verbose: print(f'INSIDE MODEL RUNNER INIT, DRAFT={is_draft}', flush=True)
+        self.tp_pg = None 
+
+        if should_use_dist:
+            default_port = int(os.environ.get("SSD_DIST_PORT", "1223"))
+            shared_gpu = setting(self, 'hardware.hardware_settings.shared_gpu_dist') == "gloo"
+            kwargs = dict(
+                backend="gloo" if shared_gpu else "nccl",
+                init_method=f"tcp://localhost:{default_port}",
+                world_size=self.world_size,
+                rank=self.rank,
+            )
+            if not shared_gpu:
+                kwargs["device_id"] = self.device
+            dist.init_process_group(**kwargs)
+            if shared_gpu:
+                install_cpu_staging(dist)
+                print("SSD_SHARED_GPU_DIST backend=gloo staging=cpu", flush=True)
+
+            self.tp_pg = dist.new_group(ranks=list(range(self.num_tp_gpus))) # everyone should see the new_group init even if not in group 
+
+        default_dtype = torch.get_default_dtype()
+        torch.set_default_dtype(self.hf_config.torch_dtype)
+        torch.set_default_device("cuda")
+        
+        if self.is_draft:
+            assert num_tp_gpus == 1, "ERROR in ModelRunner: draft should have tp_size=1"
+            self.tp_pg = None # every rank is given an object from self.tp_pg, even tho draft doesnt participate it gets GROUP_NON_MEMBER object != None back, so we can't assert None here, we 
+        
+        print(f'[model_runner] about to setup and warmup model and cudagraphs, is use_eagle={self.use_eagle}', flush=True)
+        model_role = self.setup_and_warmup_model_and_cudagraphs(config, self.hf_config, init_q, is_draft)
+
+        if self.verbose: print(f'-----CAPTURED {model_role}CUDAGRAPH----', flush=True)
+        # None, not "cpu": factories already default to the CPU, and a "cpu" mode
+        # still routes every later torch call (the verify host path) through Python dispatch.
+        torch.set_default_device(None)
+        # torch 2.9's set_default_device(None) leaves device_context = None, which a
+        # later torch.get_default_device() (transformers from_pretrained, e.g. the
+        # DSpark head load) dereferences. Without the attribute it reports the CPU.
+        if getattr(getattr(torch, "_GLOBAL_DEVICE_CONTEXT", None), "device_context", False) is None:
+            del torch._GLOBAL_DEVICE_CONTEXT.device_context
+        torch.set_default_dtype(default_dtype)
+
+        if self.config.draft_async:
+            if self.config.fan_out_list is None:
+                self.config.fan_out_list = [
+                    self.config.async_fan_out] * (self.config.speculate_k + 1)
+
+            self.config.fan_out_t = torch.tensor(self.config.fan_out_list, device=self.device)
+            self.config.fan_out_t_miss = torch.tensor(self.config.fan_out_list_miss, device=self.device)
+            assert len(self.config.fan_out_list) == self.config.speculate_k + \
+                1, "ERROR in Config: fan_out_list must be length speculate_k + 1"
+            assert any(f > 0 for f in self.config.fan_out_list), "ERROR in Config: fan_out_list must be > 0"
+            self.config.MQ_LEN = sum(self.config.fan_out_list)
+            print(f'F={self.config.async_fan_out}, fan_out_list={self.config.fan_out_list}, fan_out_list_miss={self.config.fan_out_list_miss}, MQ_LEN={self.config.MQ_LEN}', flush=True)
+
+        if should_use_dist: # (draft model when async=False or just single gpu logic) doesn't even enter this loop 
+            if self.is_draft and self.draft_async: 
+                pass # handled on draft runner after this init, includes doing draft_loop
+            elif self.rank == 0: # target in a distributed setup 
+                # Try to clean up any existing shared memory first
+                try:
+                    existing_shm = SharedMemory(name=shm_name())
+                    existing_shm.close() # here we bind it 
+                    existing_shm.unlink()
+                except FileNotFoundError:
+                    # can proceed, nothing to clean up 
+                    pass
+                
+                self.shm = SharedMemory(name=shm_name(), create=True, size=2**28)
+                dist.barrier(group=self.tp_pg, **({} if shared_gpu else {"device_ids": [self.cuda_device_index]})) # leader on tp_group
+            else: 
+                dist.barrier(group=self.tp_pg, **({} if shared_gpu else {"device_ids": [self.cuda_device_index]})) # follower on tp_group, don't want them hooking onto shm before its been created
+                self.shm = SharedMemory(name=shm_name())
+                self.loop()
+                
+        if self.verbose: print(f'-----{model_role}MODEL RUNNER INITIALIZED----', flush=True)
+
     def run(
         self,
         seqs: list[Sequence],
@@ -1506,7 +1531,6 @@ class ModelRunner:
             token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None
             reset_context()
             if conditioning is not None:
-                # the verifier's lossless dumper asks for logits too (JETSPEC_LOGIT_DUMP_EAGLE=1)
                 return (token_ids, conditioning, logits) if draft_return_logits else (token_ids, conditioning)
             return (token_ids, logits) if draft_return_logits else token_ids
         else:

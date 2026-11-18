@@ -5,7 +5,7 @@ reverse channel carries ordered chain commands; other keys keep their store.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import transport_enabled
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import transport_enabled
 
 import atexit
 import hashlib

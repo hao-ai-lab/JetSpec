@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 import os
 
@@ -174,13 +174,13 @@ def slot_check_errors(count: int) -> list[float]:
 
 
 def native_enabled(device: torch.device) -> bool:
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return (kernel_enabled('attn_sm100', '1')
             and device.type == "cuda" and torch.cuda.get_device_capability(device) == (10, 0))
 
 
 def flashinfer_enabled(device: torch.device, dtype: torch.dtype, *, chain=False) -> bool:
-    from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+    from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
     return ((((kernel_enabled('attn_sm100', 'flashinfer'))))
             and device.type == "cuda" and dtype in (torch.float16, torch.bfloat16)
             and torch.cuda.get_device_capability(device) == (10, 0))

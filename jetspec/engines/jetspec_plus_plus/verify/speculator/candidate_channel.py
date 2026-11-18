@@ -54,8 +54,6 @@ class CandidateChannel:
             message, buffers = buffers, buffers.cpu()
             if timing is not None:
                 timing.mark(4)
-            from jetspec.engines.jetspec_plus_plus.trace.host_census import note_candidate
-            note_candidate(message, run_config=getattr(self, 'run_config', None))
         delivery = (buffers if isinstance(buffers, CandidateDelivery) else
                     unpack_candidate_delivery(buffers, run_config=getattr(self, 'run_config', None)))
         if setting(self, 'engine.engine_settings.chain_tail_trace', '0') == '1':
@@ -96,7 +94,7 @@ class CandidateChannel:
 
     def _post_jetspec_candidate_receive(self) -> None:
         from jetspec.engines.jetspec_plus_plus.serving.settings import setting
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.runtime.engine import current_engine
         if self.jetspec_mailbox_store is None:
             raise RuntimeError("JetSpec mailbox requires its readiness store")

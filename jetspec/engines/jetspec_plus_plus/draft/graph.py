@@ -6,7 +6,7 @@ may omit B2 or C without violating CUDA graph pool replay order.
 """
 from __future__ import annotations
 
-from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled, kernel_value
+from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled, kernel_value
 
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -183,8 +183,6 @@ class ChainGraph:
         self.fallback_counts = {"capacity": 0}
         self.round_syncs = 0
         self._prewarmed = False
-        from jetspec.engines.jetspec_plus_plus.trace.kprofile import ChainKernelProfile
-        self.kernel_profile = ChainKernelProfile(run_config=run_config)
 
     @staticmethod
     def _cuda_capture(body):
@@ -212,7 +210,7 @@ class ChainGraph:
 
     @staticmethod
     def _wrap_intake(buffers, bodies, *, max_length=None, run_config=None):
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if not {"packet", "tokens", "row_ring", "intake_err"} <= set(buffers):
             return bodies
@@ -290,7 +288,7 @@ class ChainGraph:
                     wrong_miss.to(torch.int64) * (CHAIN_ERR_AFTER_MISS | CHAIN_ERR_DRIFT))
 
         def intake_common():
-            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+            from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
             if 'prior_draft_top16_ids' in buffers:
                 values = buffers['row_ring'].select_pending_candidates(buffers['packet'])
                 buffers['prior_draft_top16_ids'].copy_(values[0])
@@ -376,7 +374,7 @@ class ChainGraph:
             buffers["err"].bitwise_or_(buffers["intake_err"])
 
         def with_error_home():
-            from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+            from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
             if '_t14_publication' in buffers:
                 buffers['publisher'].home.copy_(buffers['publisher'].wire, non_blocking=True)
                 buffers['err_host'].copy_(buffers['err'], non_blocking=True)
@@ -440,7 +438,7 @@ class ChainGraph:
         return wrapped
 
     def prepare(self, key: ChainKey, run_config=None) -> _Entry:
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if key in self.entries:
@@ -509,7 +507,7 @@ class ChainGraph:
 
     @staticmethod
     def chosen(J_round: int, refresh: bool, *, ctx_append=False, run_config=None) -> tuple[str, ...]:
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_enabled
         schedule = Schedule(J_round, int(refresh))
         names = (("A_inc" if ctx_append else "A",))
         return names + schedule_segments(schedule)[1:] + tail_segments(refresh, run_config=run_config) + ("P",)
@@ -519,8 +517,8 @@ class ChainGraph:
             before_a1=None, pre_a0_event=None, miss=False, after_redraft=None,
             ctx_append=False, run_config=None) -> dict:
         # prepare is deliberately outside the timed region, including its warm-up.
-        from jetspec.engines.jetspec_plus_plus.trace.anatomy_lite import enabled as anatomy_enabled
-        from jetspec.engines.jetspec_plus_plus.runtime.profiles import kernel_value
+        from jetspec.engines.jetspec_plus_plus.runtime.round_timing import enabled as anatomy_enabled
+        from jetspec.engines.jetspec_plus_plus.runtime.kernel_profiles import kernel_value
         run_config = run_config if run_config is not None else getattr(self, 'run_config', None)
         from jetspec.engines.jetspec_plus_plus.draft.config import setting, required_setting, as_run_config
         if self._hostpath_setting is not None:
@@ -542,13 +540,10 @@ class ChainGraph:
                     raise ValueError('draft_fuse_noev=1 requires draft_deadline=0 or '
                                      'a fixed chain schedule with chain_prepost=1: '
                                      'the served clock learns segment times to choose J/refresh')
-                timing = [name for name in ('chain_tail_trace', 'chain_glue2_profile',
-                                            'chain_miss_redraft_timing')
-                          if setting(run_config, 'engine.engine_settings.' + name, '0') == '1']
-                if anatomy_enabled(run_config) or timing or self.kernel_profile.enabled:
-                    raise ValueError('draft_fuse_noev=1 requires anatomy_lite, chain_tail_trace, '
-                                     'chain_glue2_profile, chain_miss_redraft_timing and '
-                                     'chain_kernel_profile off; they consume segment timings')
+                timing = setting(run_config, 'engine.engine_settings.chain_tail_trace', '0') == '1'
+                if anatomy_enabled(run_config) or timing:
+                    raise ValueError('draft_fuse_noev=1 requires anatomy_lite and chain_tail_trace '
+                                     'off; they consume segment timings')
                 self._noev_checked = run_config, engine
             self.last_ms.clear()
             self.last_span_ms.clear()
@@ -612,7 +607,6 @@ class ChainGraph:
                                      lambda intake=shadow_bodies['A0'], first=shadow_bodies['A1_miss']:
                                      (intake(), first())}
         cuda = entry.buffers["rp"].device.type == "cuda"
-        profiled = cuda and not self.check and self.kernel_profile.begin()
         events = []
         launch_name = ("A1_miss" if miss else
                        "A1_inc" if "A1_inc" in names else
@@ -626,8 +620,7 @@ class ChainGraph:
                 start.record()
             if name == launch_name and on_first_launch is not None:
                 on_first_launch()
-            with self.kernel_profile.segment(name):
-                entry.graphs[name]()
+            entry.graphs[name]()
             if cuda and not noev:
                 end.record()
                 events.append((name, start, end))
@@ -669,16 +662,6 @@ class ChainGraph:
                     or anatomy_enabled(run_config)):
                 # First segment start to publish end, launch gaps included.
                 self.last_span_ms[key] = events[0][1].elapsed_time(events[-1][2])
-            if setting(run_config, 'engine.engine_settings.chain_glue2_profile', "0") == "1":
-                print("CHAIN_SEGMENT_MS " + json.dumps(dict(
-                    glue=kernel_value('chain_sega_glue', "0"),
-                    key=str(key), segments=self.last_ms[key])), flush=True)
-            if profiled:
-                from jetspec.engines.jetspec_plus_plus.wire.contract import OutcomeOffset as _Outcome
-                self.kernel_profile.finish(
-                    names, key=key.L_bucket, J=J_round, miss=bool(miss),
-                    L=int(entry.buffers["packet"][_Outcome.L]),
-                    segments_ms=self.last_ms[key])
             if names[:2] in (("A0", "A1"), ("A0", "A1_miss")):
                 self.last_a0_to_a1_gap_ms[key] = events[0][2].elapsed_time(events[1][1])
         host_error = (int(entry.buffers['err_host'][0])

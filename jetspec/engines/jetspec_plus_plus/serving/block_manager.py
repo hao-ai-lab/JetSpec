@@ -1,6 +1,6 @@
 # Adaptation: package relocation and deferred optional dependencies.
 from collections import deque
-from jetspec.engines.jetspec_plus_plus.kernels._optional import xxhash
+from jetspec.engines.jetspec_plus_plus.runtime._optional import xxhash
 import numpy as np
 
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
