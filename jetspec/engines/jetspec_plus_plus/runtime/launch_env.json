@@ -179,6 +179,9 @@
       "JETSPEC_BLOCKHEAD_GLUE_LEAN": "engine_settings.blockhead_glue_lean",
       "JETSPEC_BLOCKHEAD_GRAPH": "engine_settings.blockhead_graph",
       "JETSPEC_BLOCKHEAD_LMHEAD_KN": "engine_settings.blockhead_lmhead_kn",
+      "JETSPEC_BLOCKHEAD_MARKOV_FUSED": "engine_settings.blockhead_markov_fused",
+      "JETSPEC_TP_CUSTOM_ALLREDUCE": "engine_settings.tp_custom_allreduce",
+      "JETSPEC_TP_VERIFY_PREISSUE": "engine_settings.tp_verify_preissue",
       "JETSPEC_BLOCKHEAD_QKV_FUSED": "engine_settings.blockhead_qkv_fused",
       "JETSPEC_BLOCKHEAD_TF32": "engine_settings.blockhead_tf32",
       "JETSPEC_C1_APPEND": "engine_settings.c1_append",
@@ -1596,6 +1599,39 @@
       },
       "JETSPEC_BLOCKHEAD_LMHEAD_KN": {
         "name": "JETSPEC_BLOCKHEAD_LMHEAD_KN",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": ""
+      },
+      "JETSPEC_BLOCKHEAD_MARKOV_FUSED": {
+        "name": "JETSPEC_BLOCKHEAD_MARKOV_FUSED",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": ""
+      },
+      "JETSPEC_TP_CUSTOM_ALLREDUCE": {
+        "name": "JETSPEC_TP_CUSTOM_ALLREDUCE",
+        "kind": "flag",
+        "default": "0",
+        "allowed": [
+          "0",
+          "1"
+        ],
+        "reader": "serve",
+        "note": ""
+      },
+      "JETSPEC_TP_VERIFY_PREISSUE": {
+        "name": "JETSPEC_TP_VERIFY_PREISSUE",
         "kind": "flag",
         "default": "0",
         "allowed": [
@@ -9747,6 +9783,18 @@
       },
       {
         "name": "JETSPEC_BLOCKHEAD_LMHEAD_KN",
+        "flag": "JETSPEC_BLOCKHEAD_GRAPH",
+        "values": [
+          "1"
+        ],
+        "when": [
+          "1"
+        ],
+        "why": "the optimized block head runs only in its N=1 graph",
+        "always": true
+      },
+      {
+        "name": "JETSPEC_BLOCKHEAD_MARKOV_FUSED",
         "flag": "JETSPEC_BLOCKHEAD_GRAPH",
         "values": [
           "1"

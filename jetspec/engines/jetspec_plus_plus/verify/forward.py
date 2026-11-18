@@ -644,7 +644,10 @@ class TargetRunner(ModelRunner):
             if kernel_profile is not None and kernel_profile.active is not None:
                 kernel_profile.step("logits")
             # lm_head keeps a leading batch dim; greedy accept wants [width, vocab].
-            logits = self.model.compute_logits(gv["outputs"][:width], last_only=False).reshape(width, -1)
+            logits = self.model.compute_logits(gv["outputs"][:width], last_only=False)
+            # Under target TP the head gathers to rank 0; followers only join the collectives.
+            if logits is not None:
+                logits = logits.reshape(width, -1)
             if timing is not None:
                 timing.gpu_end()
             ended = time.perf_counter()
@@ -1299,6 +1302,29 @@ class Verifier(VerifierBase):
             recovery_tokens=recovery_tokens,
             eagle_acts=None,
         )
+
+    def preissue_tp_verify(self, seqs: list[Sequence]) -> None:
+        """JETSPEC_TP_VERIFY_PREISSUE (target TP, N=1 device verify): send the TP followers this
+        step's verify command before drafting. Their part depends only on KV pages and counts, which
+        are already final; the draft's proposal IDs follow by broadcast when rank 0 calls the verify.
+        The followers stage and enqueue their verify graph while rank 0 drafts, so both ranks start
+        verify together instead of rank 1 waking up and unpickling after the draft."""
+        from jetspec.engines.jetspec_plus_plus.serving.model_runner import _DeviceArg
+        from jetspec.engines.jetspec_plus_plus.serving.settings import setting
+        runner = self.target_model_runner
+        if (runner.num_tp_gpus < 2 or len(seqs) != 1
+                or setting(self, 'engine.engine_settings.tp_verify_preissue', '0') != '1'
+                or setting(self, 'engine.engine_settings.ssd_verify_device', '0') != '1'):
+            return
+        seq, width = seqs[0], self.lookahead + 1
+        # A shadow of the sequence as the verify will see it: counts and pages only.
+        shadow = Sequence.__new__(Sequence)
+        shadow.__setstate__(seq.__getstate__())
+        shadow.jetspec_taps = None
+        shadow.token_ids = []  # never read on this path; len(seq) is num_tokens
+        shadow.num_tokens = seq.num_tokens + width
+        runner.preissue("run_jetspec_mixed_device", shadow,
+                        _DeviceArg(shape=(width,), dtype=torch.int64), True)
 
     def _verify_jetspec_device(self, seq: Sequence, speculate_result: SpeculateResult) -> VerifyResult:
         """N=1 verify with one small host outcome read after device commit."""

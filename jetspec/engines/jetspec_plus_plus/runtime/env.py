@@ -460,6 +460,7 @@ def validate_environment(environ=None, *, jetspec=True, max_num_seqs=1, warn=pri
             problems.append("JETSPEC_REFRESH_SWAP=1 requires N=1")
         for name in (_name('engine', 'engine_settings.blockhead_attn_len'), _name('engine', 'engine_settings.blockhead_glue_lean'),
                      _name('engine', 'engine_settings.blockhead_qkv_fused'), _name('engine', 'engine_settings.blockhead_lmhead_kn'),
+                     _name('engine', 'engine_settings.blockhead_markov_fused'),
                      _name('engine', 'engine_settings.blockhead_bench')):
             if environ.get(name) == "1":
                 problems.append(f"{name}=1 requires N=1")

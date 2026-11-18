@@ -12,6 +12,17 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 from transformers import AutoTokenizer, AutoConfig
 import os
+
+
+class _DeviceArg:
+    """A CUDA tensor argument of a TP command. Rank 0 sends the tensor by NCCL broadcast instead of
+    pickling it through host memory (which costs a device-to-host sync per command)."""
+
+    def __init__(self, tensor=None, *, shape=None, dtype=None):
+        self.shape = tuple(tensor.shape) if tensor is not None else tuple(shape)
+        self.dtype = tensor.dtype if tensor is not None else dtype
+
+
 from jetspec.engines.jetspec_plus_plus.kernels._optional import flashinfer
 from jetspec.engines.jetspec_plus_plus.runtime.config import Config
 from jetspec.engines.jetspec_plus_plus.serving.sequence import Sequence
@@ -271,6 +282,10 @@ class ModelRunner:
                 print("SSD_SHARED_GPU_DIST backend=gloo staging=cpu", flush=True)
 
             self.tp_pg = dist.new_group(ranks=list(range(self.num_tp_gpus))) # everyone should see the new_group init even if not in group 
+            if (not self.is_draft and self.num_tp_gpus > 1 and self.rank < self.num_tp_gpus
+                    and setting(self, 'engine.engine_settings.tp_custom_allreduce', '0') == '1'):
+                from jetspec.engines.jetspec_plus_plus.serving import tp_allreduce
+                tp_allreduce.init(self.tp_pg, self.rank, self.num_tp_gpus, int(self.hf_config.hidden_size))
 
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(self.hf_config.torch_dtype)
@@ -958,10 +973,27 @@ class ModelRunner:
         n = int.from_bytes(self.shm.buf[0:4], "little")
         method_name, *args = pickle.loads(self.shm.buf[4:n+4])
         self.event.clear()
+        # Acknowledge in this rank's slot: rank 0 may now overwrite the buffer with its next command.
+        self._tp_acked = getattr(self, '_tp_acked', 0) + 1
+        self.shm.buf[self.shm.size - 8 * self.rank:self.shm.size - 8 * (self.rank - 1)] = \
+            self._tp_acked.to_bytes(8, 'little')
+        if any(isinstance(a, _DeviceArg) for a in args):
+            received = []
+            for a in args:
+                if isinstance(a, _DeviceArg):
+                    # Enqueued on the stream; the host continues while rank 0's tensor is pending.
+                    t = torch.empty(a.shape, dtype=a.dtype, device=self.device)
+                    dist.broadcast(t, src=0, group=self.tp_pg)
+                    a = t
+                received.append(a)
+            args = received
         return method_name, args
 
     def write_shm(self, method_name, *args):
         assert self.world_size > 1 and not self.rank
+        device_args = [a for a in args if isinstance(a, torch.Tensor) and a.is_cuda]
+        if device_args:
+            args = tuple(_DeviceArg(a) if isinstance(a, torch.Tensor) and a.is_cuda else a for a in args)
         if self.config.jetspec_taps and not self.config.draft_async:
             # Sync-slot drafter under target TP: only rank 0 reads the accumulated taps, so the
             # followers get the sequences without them (pickling them grows with context).
@@ -971,15 +1003,42 @@ class ModelRunner:
         else:
             data = pickle.dumps([method_name, *args])
         n = len(data)
-        assert n + 4 <= self.shm.size, f"SHM overflow: {n+4} > {self.shm.size}. Increase SHM buffer size."
+        tail = 8 * (self.num_tp_gpus - 1)  # one ack counter per TP follower at the end of the buffer
+        assert n + 4 <= self.shm.size - tail, f"SHM overflow: {n+4} > {self.shm.size - tail}. Increase SHM buffer size."
+        # One command buffer: wait until every follower has read the previous command before
+        # overwriting it (a pre-issued command can be followed closely by the next one).
+        sent = getattr(self, '_tp_sent', 0)
+        if sent:
+            for rank in range(1, self.num_tp_gpus):
+                ack = self.shm.buf[self.shm.size - 8 * rank:self.shm.size - 8 * (rank - 1)]
+                while int.from_bytes(ack, 'little') != sent:
+                    pass
+        self._tp_sent = sent + 1
         self.shm.buf[0:4] = n.to_bytes(4, "little")
         self.shm.buf[4:n+4] = data
         for event in self.event:
             event.set()
+        for tensor in device_args:
+            dist.broadcast(tensor.contiguous(), src=0, group=self.tp_pg)
+
+    def preissue(self, method_name, *args):
+        """Send a TP command early: followers prepare and enqueue it, waiting on the GPU for the
+        _DeviceArg broadcasts that the matching call() sends later."""
+        if self.num_tp_gpus > 1 and self.rank == 0:
+            self.write_shm(method_name, *args)
+            self._preissued = method_name
 
     def call(self, method_name, *args):
         if self.num_tp_gpus > 1 and self.rank == 0:
-            self.write_shm(method_name, *args)
+            if getattr(self, '_preissued', None) is not None:
+                if self._preissued != method_name:
+                    raise RuntimeError(f'pre-issued {self._preissued} but called {method_name}')
+                self._preissued = None
+                for tensor in args:
+                    if isinstance(tensor, torch.Tensor) and tensor.is_cuda:
+                        dist.broadcast(tensor.contiguous(), src=0, group=self.tp_pg)
+            else:
+                self.write_shm(method_name, *args)
         method = getattr(self, method_name, None)
         if method is None:
             raise AttributeError(f"Method '{method_name}' not found")
