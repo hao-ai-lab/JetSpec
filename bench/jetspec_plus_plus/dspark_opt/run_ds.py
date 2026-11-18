@@ -38,6 +38,7 @@ def parser():
     p.add_argument('--stock-dir', type=Path, required=True, help='Table 3 output dir holding the stock DS reads')
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--reduce-only', action='store_true')
+    p.add_argument('--resume', action='store_true', help='keep groups whose read.json already exists; run the rest')
     p.add_argument('--retries', type=int, default=20)
     p.add_argument('--cpu-pin', default=None, help='override the plan\'s --cpu-pin (the protocol uses off for DS)')
     p.add_argument('--share-gpu', action='store_true',
@@ -91,6 +92,8 @@ def run_read(directory, env, share=False):
 
 
 def parity(directory, stock):
+    if not (stock / 'read.json').exists():
+        return None, []
     new = json.loads((directory / 'read.json').read_text())['outputs']
     old = json.loads((stock / 'read.json').read_text())['outputs']
     same, first = 0, []
@@ -131,9 +134,10 @@ def main():
     reads = []
     for offset in [int(o) for o in args.offsets.split(',')]:
         directory = out / 'gsm8k' / 'DS' / f'p{offset:03d}'
-        for attempt in range(1 if args.reduce_only else args.retries):
+        reduce_only = args.reduce_only or (args.resume and (directory / 'read.json').exists())
+        for attempt in range(1 if reduce_only else args.retries):
             # Pick the GPUs per attempt: a shared machine can take a free pair between check and launch.
-            devices = wait_for_devices(args.device) if not args.reduce_only else '0,1'
+            devices = wait_for_devices(args.device) if not reduce_only else '0,1'
             job = dict(model='8b', dataset='gsm8k', arm='DS', offset=offset,
                        devices=devices if args.placement == 'tp2' else devices.split(',')[0])
             source, argv = command.prepare(job, directory, cargs)
@@ -142,7 +146,10 @@ def main():
             if args.cpu_pin is not None:
                 argv[argv.index('--cpu-pin') + 1] = args.cpu_pin
             plan = command.launch_plan(job, argv)
-            if args.reduce_only:
+            if reduce_only:
+                plan = json.loads((directory / 'plan.json').read_text())
+                job = {k: plan[k] for k in job}
+                source, _ = command.prepare(job, directory, cargs)
                 break
             command.write_json(directory / 'plan.json', plan)
             print(f'[{args.label}] DS p{offset:03d} on GPUs {devices}', flush=True)
@@ -154,7 +161,7 @@ def main():
             raise SystemExit('GPUs stayed occupied')
         result = command.reduce_directory(directory, job, source)
         same, diff = parity(directory, args.stock_dir / 'gsm8k' / 'DS' / f'p{offset:03d}')
-        result['parity'] = dict(identical=same, of=32, diverged=diff[:8])
+        result['parity'] = dict(identical=same, of=32, diverged=diff[:8])  # identical=None: no stock read
         reads.append(result)
         v = result['values']
         print(f'  tok/s {v["tok_s"]:.1f}  tau {v["tau"]:.3f}  round {v["round"]:.3f}  verify {v["verify"]:.3f}  '
@@ -168,7 +175,7 @@ def main():
         command.write_json(out / 'pooled.json', row)
         print(f'[{args.label}] pooled: tok/s {row["tok_s"]:.1f} ({row["speedup"]:.2f}x vs stock AR {ar["tok_s"]:.1f})  '
               f'tau {row["tau"]:.3f}  round {row["round"]:.3f}  verify {row["verify"]:.3f}  exposed {row["exposed"]:.3f}  '
-              f'parity {sum(r["parity"]["identical"] for r in reads)}/128')
+              f'parity {sum(r["parity"]["identical"] or 0 for r in reads)}/128')
 
 
 if __name__ == '__main__':
