@@ -1,10 +1,10 @@
 # A fair DSpark baseline for Table 3
 
-*Qwen3-8B, NVIDIA B200 (NVLink), branch `ranonrkm/baseline-opt`.*
+*Qwen3-8B, NVIDIA B200 (NVLink)
 
-## The argument in one paragraph
+## TL; DR
 
-At batch size 1, decoding is memory-bound. Each layer reads its full weight matrices whether it processes 16 tokens or 128, so the cost is set by weight bytes and kernel launches, not token count. For example, the gate/up matmul takes 39.6 µs at 128 rows vs 24 µs at 16. So a 16-token DSpark draft should cost no more than a 128-token JetSpec++ drafter pass. In the released code it costs three times as much: 2.45 ms vs ~0.8 ms. The difference is implementation. The DSpark baseline runs with the repo's own optimized kernels forced off, without the device-side verify the 27B baseline uses, and on half as many GPUs. With those three gaps closed, synchronous DSpark matches or beats JetSpec++.
+At batch size 1, decoding is memory-bound. Each layer reads its full weight matrices whether it processes 16 tokens or 128, so the cost is mostly set by weight bytes and kernel launches, not much by token count. But more importantly, a 16-token DSpark draft should cost no more than a 128-token JetSpec++ drafter backbone pass. In the released code it costs three times as much: 2.45 ms for the stock DSpark query graph (5 layers + LM head on 16 tokens, Markov head excluded) vs ~0.8 ms for one JetSpec++ drafter pass (5 layers + LM head on 128 tokens). The full per-component breakdown is below. The difference is implementation. The DSpark baseline runs with the repo's own optimized kernels forced off, without the device-side verify the 27B baseline uses, and on half as many GPUs. With those three gaps closed, synchronous DSpark matches or beats JetSpec++.
 
 ## Setup
 
@@ -34,6 +34,18 @@ Where the stock DS draft spends its time (one round, Nsight Systems):
 | Runs ~15 tiny kernels per layer for RMSNorm and RoPE | ~0.6 ms | launch-bound |
 | Runs the Markov head as 15 positions × 7 kernels | 0.36 ms | launch-bound |
 | Launches outside the CUDA graphs | ~0.76 ms | host-bound |
+
+Draft cost per round by component. Like for like, DSpark's backbone compares with one JetSpec++ drafter pass; neither includes an autoregressive head. JetSpec++ has no Markov head, but it runs two drafter passes plus an adapter and an anchor decoder:
+
+| Per round | DS stock | DS, this branch | JetSpec++ j1-r1, 8 rows |
+|---|---|---|---|
+| Draft backbone (5 layers + LM head) | 2.85 ms on 16 tokens (context extension 0.4 + query graph 2.45) | 1.03 ms | 0.8 ms + 0.9 ms (two passes, 128 tokens each) |
+| Markov head (sequential AR correction) | 0.40 ms | 0.27 ms | — |
+| Adapter (12 layers) + anchor decoder (2 layers + LM head) | — | — | ~2.1 ms (first pass) + ~2.1 ms (adapter refresh 1.8, row compaction 0.3) |
+| Other host and glue time (rest of the exposed time) | ~0.3 ms | ~0.3 ms | — |
+| **Total draft** | **~3.6 ms, all exposed** | **~1.6 ms, all exposed** | **~6.1 ms, 2.24 ms exposed** (the rest overlaps verify on the second GPU) |
+
+DS rows come from the engine's per-round CUDA-event timing (group p000); JetSpec++ rows come from Nsight Systems kernel sums. Per token drafted, the backbone costs 178 µs in stock DS and 64 µs on this branch. A JetSpec++ drafter pass costs 6–7 µs per token, because one weight read serves 8 rows: batch size 1 decoding is memory-bound.
 
 ## What the branch changes (all opt-in, default off)
 
