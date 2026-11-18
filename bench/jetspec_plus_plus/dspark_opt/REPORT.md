@@ -1,19 +1,18 @@
 # A fair DSpark baseline for Table 3
 
-*Qwen3-8B, NVIDIA B200 (NVLink)
+*Qwen3-8B, NVIDIA B200 (NVLink)*
 
 ## TL; DR
 
-At batch size 1, decoding is memory-bound. Each layer reads its full weight matrices whether it processes 16 tokens or 128, so the cost is mostly set by weight bytes and kernel launches, not much by token count. But more importantly, a 16-token DSpark draft should cost no more than a 128-token JetSpec++ drafter backbone pass. In the released code it costs three times as much: 2.45 ms for the stock DSpark query graph (5 layers + LM head on 16 tokens, Markov head excluded) vs ~0.8 ms for one JetSpec++ drafter pass (5 layers + LM head on 128 tokens). The full per-component breakdown is below. The difference is implementation. The DSpark baseline runs with the repo's own optimized kernels forced off, without the device-side verify the 27B baseline uses, and on half as many GPUs. With those three gaps closed, synchronous DSpark matches or beats JetSpec++.
+At batch size 1, decoding is memory-bound. Each layer reads its full weight matrices whether it processes 16 tokens or 128, so the cost is mostly set by weight bytes and kernel launches, not much by token count. But more importantly, a 16-token DSpark draft should cost no more than a 128-token JetSpec++ drafter pass. In the released code it costs three times as much: 2.45 ms for the stock DSpark query graph (5 layers + LM head on 16 tokens, Markov head excluded) vs ~0.8 ms for one JetSpec++ drafter pass (5 layers + LM head on 128 tokens). The full per-component breakdown is below. The difference is implementation. The DSpark baseline runs with the repo's own optimized kernels forced off, without the device-side verify the 27B baseline uses, and on half as many GPUs. With those three gaps closed, synchronous DSpark matches or beats JetSpec++.
 
 ## Setup
 
 | | |
 |---|---|
-| Target | Qwen/Qwen3-8B, bf16 (no quantization or precision change anywhere) |
-| Task | GSM8K: the 128 sealed Table 3 prompts, run as 4 groups of 32 |
+| Target | Qwen/Qwen3-8B |
+| Task | GSM8K |
 | Decoding | batch size 1, temperature 0, 2048-token cap, EOS stop |
-| Metric | Table 3 reducer: rule A, steady rounds (first decode round of each request excluded) |
 | DSpark (DS) | released `dspark-qwen3-8b-800k`, block 15 (16-token verify), Table 3 recipe |
 | JetSpec++ | released `jetspec-plus-plus-qwen3-8b`, j1-r1, 8 rows per round, target and draft on 2 GPUs |
 
