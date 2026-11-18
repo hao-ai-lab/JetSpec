@@ -1,8 +1,10 @@
-"""Linear DFlash block baseline for HF reference benchmarks.
+"""Linear block baseline for HF reference benchmarks.
 
-This file intentionally contains no tree decoding. It uses the DFlash draft head
-to propose a linear block, verifies that block with the target model, accepts the
-longest greedy-agreeing prefix plus one correction, and repeats.
+This file intentionally contains no tree decoding. It uses the same JetSpec draft
+head as the tree runs to propose a linear block, verifies that block with the
+target model, accepts the longest greedy-agreeing prefix plus one correction, and
+repeats. It isolates the effect of tree decoding. It is not the DFlash method,
+which trains a bidirectional draft head.
 """
 from __future__ import annotations
 
