@@ -274,12 +274,15 @@ def load_adapter(root, dims: Dims):
 
 # --------------------------------------------------------------------------- caches
 
-def new_cache(dims: Dims, capacity: int):
+def new_cache(dims: Dims, capacity: int, *, adapter=True, draft=True):
     shape = lambda n: (n, dims.kv_heads, capacity, dims.head_dim)
     z = lambda n: jnp.zeros(shape(n), BF16)
-    return dict(tk=z(dims.target_layers), tv=z(dims.target_layers),
-                dk=z(dims.draft_layers), dv=z(dims.draft_layers),
-                ak=z(dims.adapter_layers), av=z(dims.adapter_layers))
+    cache = dict(tk=z(dims.target_layers), tv=z(dims.target_layers))
+    if draft:
+        cache.update(dk=z(dims.draft_layers), dv=z(dims.draft_layers))
+    if adapter:
+        cache.update(ak=z(dims.adapter_layers), av=z(dims.adapter_layers))
+    return cache
 
 
 # --------------------------------------------------------------------------- target
@@ -348,6 +351,10 @@ def write_context(dw, aw, cache, taps, pos, dims: Dims):
         kv = mm(ctx, w['kv'])
         dk.append(hm(rope(rms(kv[:, :kd].reshape(shape), w['k_norm'], dims.eps), cos, sin)))
         dv.append(hm(kv[:, kd:].reshape(shape)))
+    put = lambda buf, rows: jax.lax.dynamic_update_slice(buf, jnp.stack(rows), (0, 0, pos, 0))
+    cache = dict(cache, dk=put(cache['dk'], dk), dv=put(cache['dv'], dv))
+    if aw is None:                      # DFlash: drafter context only
+        return cache
     ak, av = [], []
     for i, (_, tap, _) in enumerate(adapter_layer_names(dims)):
         w = jax.tree.map(lambda a: a[i], aw)
@@ -355,25 +362,25 @@ def write_context(dw, aw, cache, taps, pos, dims: Dims):
         kv = mm(src, w['kv'])
         ak.append(hm(rope(rms(kv[:, :kd].reshape(shape), w['k_norm'], dims.eps), cos, sin)))
         av.append(hm(kv[:, kd:].reshape(shape)))
-    put = lambda buf, rows: jax.lax.dynamic_update_slice(buf, jnp.stack(rows), (0, 0, pos, 0))
-    return dict(cache, dk=put(cache['dk'], dk), dv=put(cache['dv'], dv),
-                ak=put(cache['ak'], ak), av=put(cache['av'], av))
+    return dict(cache, ak=put(cache['ak'], ak), av=put(cache['av'], av))
 
 
 # --------------------------------------------------------------------------- drafter
 
-def drafter_pass(dw, tw, cache, ids, length, dims: Dims, span: int, *, extra=None, extra_khat=None):
+def drafter_pass(dw, tw, cache, ids, length, dims: Dims, span: int, *, extra=None, extra_khat=None,
+                 causal_block=True):
     """One uncached-equivalent drafter pass over block ids [B] at positions length..length+B-1.
 
     ``extra`` [B, 5H] is the refreshed block (``method/refresh.inject``): extra entry j is
     visible to block query i iff j < i and j <= extra_khat. Returns bf16 logits [B, V].
+    ``causal_block=False`` is DFlash: the block attends to itself bidirectionally.
     """
     b = ids.shape[0]
     positions = length + jnp.arange(b)
     cos, sin = rope_tables(positions, dims.head_dim, dims.theta)
     ctx_allowed = jnp.broadcast_to(jnp.arange(span)[None, :] < length, (b, span))
     slots = jnp.arange(b)
-    causal = slots[None, :] <= slots[:, None]
+    causal = (slots[None, :] <= slots[:, None]) if causal_block else jnp.ones((b, b), bool)
     kd = dims.kv_heads * dims.head_dim
     shape = (b, dims.kv_heads, dims.head_dim)
     scale = dims.head_dim ** -0.5

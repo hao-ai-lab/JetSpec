@@ -38,6 +38,47 @@ Equality with AR: J1-R1 matched AR on 19/32 GSM8K and 14/32 MATH-500 outputs. Al
 were checked. In every one, the AR token and the JetSpec++ token are the target's top 2, with a logit
 gap of 0.001 to 0.13, about one bf16 step at that logit size. The cause is bf16 rounding, not the draft.
 
+## Serving frontier: AR vs DFlash vs JetSpec++ (v6e-1)
+
+`serve.py` batches B requests in one compiled round, mapped over the slots with `vmap`, and refills
+slots as requests finish (continuous batching). DFlash (`z-lab/Qwen3-8B-DFlash-b16`) runs in the
+same harness: one bidirectional drafter pass over [anchor, mask x 15]. The target code, caches and
+int8 draft weights are the same for every method.
+
+```bash
+for m in ar dflash jetspec; do
+  python -m jetspec.engines.jetspec_plus_plus_tpu.pareto --method $m --slots 1,2,4,8,16,32 \
+      --requests 128 --max-tokens 1024 --output out/$m.json
+done
+python -m jetspec.engines.jetspec_plus_plus_tpu.plot_pareto out/ar.json out/dflash.json out/jetspec.json \
+    --output out/pareto.png
+```
+
+![Serving frontier](assets/pareto_gsm8k_v6e.png)
+
+GSM8K, 128 requests, at most 1024 tokens, greedy. Total tok/s includes prefills. Per-user tok/s is
+each request's tokens over the time from its admission to its last token, averaged over requests.
+
+| B | AR total / per-user | DFlash total / per-user (τ 6.4) | JetSpec++ J1-R1 total / per-user (τ 8.4) | J1-R0 total (τ 6.7) | J0-R0 total (τ 5.8) |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 69 / 69 | **377 / 390** | 376 / 384 | 351 | 341 |
+| 2 | 138 / 69 | **761 / 393** | 756 / 387 | 723 | 684 |
+| 4 | 268 / 68 | **1411 / 368** | 1387 / 358 | 1331 | 1279 |
+| 8 | 509 / 65 | **2377 / 318** | 2245 / 297 | 2251 | 2141 |
+| 16 | 893 / 59 | **3253 / 226** | 2898 / 199 | 3079 | 3008 |
+| 32 | 1402 / 51 | **3394 / 141** | 2929 / 114 | 3307 | 3240 |
+| 64 | 1561 / 42 | | | | |
+
+On one chip, **DFlash is on the frontier at every concurrency**. At B=1 JetSpec++ J1-R1 ties it.
+At B=16 and above the refinement passes become compute-bound, and JetSpec++ falls 10 to 14% behind.
+JetSpec++ accepts more tokens per round (τ 8.4 vs 6.4), but each J or R pass is another full sweep
+of the draft weights. The two-GPU method hides that cost behind verification; one chip cannot. Both
+speculative methods beat AR by 2.2 to 5.5x in total throughput and by 3.4 to 5.6x per user.
+
+Losslessness: every output was compared with AR at B=1. Each one is either identical or first
+diverges where the two tokens are the target's top 2 (logit gap of at most 0.33). AR at B=2 already
+diverges from AR at B=1 on 41 of 128 requests in the same way, so batch shape alone flips these bf16 ties.
+
 ## How one chip changes the method
 
 The two-GPU engine hides drafting behind verification. While block t verifies, the draft GPU
