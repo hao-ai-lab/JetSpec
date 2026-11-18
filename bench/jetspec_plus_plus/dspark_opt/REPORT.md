@@ -72,15 +72,18 @@ Where the stock DS draft spends its time (one round, Nsight Systems):
 
 ## Headroom (sglang, same GPU, same DSpark checkpoint, block 15)
 
-| Median per step | sglang TP=1 | sglang TP=2 | this branch, 1 GPU | this branch, `tp2` |
-|---|---|---|---|---|
-| Draft (sglang) / beyond verify (here) | 1.71 ms | 1.69 ms | 1.63 ms | 2.00 ms |
-| Verify | 4.24 ms | 3.39 ms | 4.75 ms | 3.98 ms |
-| Round | 6.10 ms | 5.30 ms | 6.38 ms | 5.98 ms |
+sglang with `trtllm_mha` attention for target and draft. Its DSpark default, FlashInfer, adds a host-side plan before every step, so it isn't used here. 32 GSM8K prompts, batch size 1, median per step (CUDA events):
 
-- **Draft side:** an independent engine lands at the same cost.
-- **Verify:** about 0.5 ms of headroom remains, which would favor DS further.
-- **Draft sharding:** sglang shards its draft at TP=2, but the draft isn't faster at batch size 1. Sharding the DS draft is left as future work (JetSpec++'s draft isn't sharded either).
+| | sglang TP=1 | sglang TP=2 | TP=2 speedup | this branch, 1 GPU | this branch, `tp2` |
+|---|---|---|---|---|---|
+| Draft (sglang) / beyond verify (here) | 1.04 ms | 0.86 ms | 1.21× | 1.63 ms | 2.00 ms |
+| Verify | 3.86 ms | 3.02 ms | 1.28× | 4.75 ms | 3.98 ms |
+| Round | 5.02 ms | 4.00 ms | 1.25× | 6.38 ms | 5.98 ms |
+
+- **There is still headroom on both sides.** At 1 GPU, ~0.6 ms of draft-side time and ~0.9 ms of verify. Closing it would favor DSpark further.
+- **Sharding the draft at TP=2 helps sglang modestly** (1.04 → 0.86 ms). Only the weight-bound part halves. The replicated Markov head, the 10 all-reduces plus the logit all-gather, and the launch costs stay fixed.
+- **This branch doesn't shard the DS draft, and JetSpec++'s draft isn't sharded either.** An attempt with rank 0 driving rank 1 per round gained nothing, because rank 1 started late. sglang avoids that by running every rank as an equal.
+- **With FlashInfer attention**, sglang measured draft 1.71 / 1.69 ms and verify 4.24 / 3.39 ms (TP=1 / TP=2). The per-step overhead hides the TP=2 draft gain.
 
 ## Reproduce
 
