@@ -240,8 +240,11 @@ def main():
     ap.add_argument("--no-torch-compile", action="store_false", dest="torch_compile")
     ap.add_argument("--ignore-eos", action="store_true",
                     help="Ignore EOS during generation; useful for short performance probes")
-    ap.add_argument("--include-dflash-baseline", action="store_true",
-                    help="Also run the linear DFlash block baseline")
+    ap.add_argument("--include-linear-baseline", "--include-dflash-baseline",
+                    dest="include_dflash_baseline", action="store_true",
+                    help="Also run the linear block baseline: the same draft head, verified as one "
+                         "linear block per round. It isolates tree decoding; it is not the DFlash "
+                         "method, which trains a bidirectional head")
     ap.add_argument("--fused-moe", action="store_true",
                     help="Patch compatible Qwen3-MoE blocks with grouped-mm experts")
     ap.add_argument("--warmup-rounds", type=int, default=3,
@@ -396,7 +399,7 @@ def main():
             ),
             prompts,
             world_size,
-            desc=f"DFlash blocksize={bs}",
+            desc=f"Linear block blocksize={bs}",
             disable_progress=not show_progress,
         )
         dflash_ntok = int(_all_reduce_sum(
@@ -526,7 +529,7 @@ def main():
                     "decode_time_s": round(float(out.get("decode_time", 0.0)), 4),
                 }, ensure_ascii=False) + "\n")
 
-        # DFlash outputs
+        # Linear block baseline outputs
         if args.include_dflash_baseline:
             with open(os.path.join(out_dir, "dflash.jsonl"), "w") as f:
                 for i, (out, ptext) in enumerate(zip(dflash_outs, prompt_texts)):
@@ -577,7 +580,7 @@ def main():
         print(f"AR-greedy baseline: decode={ar_tps:.1f} tok/s/gpu  e2e={ar_e2e_tps:.1f} tok/s/gpu  "
               f"({ar_ntok} tok, avg_decode_ms={ar_avg_ms:.1f}, avg_wall_ms={ar_wall_avg_ms:.1f})\n")
         if dflash_block is not None:
-            print(f"DFlash blocksize={bs}: decode={dflash_block['tps']:.1f} tok/s/gpu  "
+            print(f"Linear block (same draft head) blocksize={bs}: decode={dflash_block['tps']:.1f} tok/s/gpu  "
                   f"e2e={dflash_block['e2e_tps']:.1f} tok/s/gpu  "
                   f"({dflash_block['tokens']} tok, accept_len={dflash_block['accept_len']:.2f}, "
                   f"speedup={dflash_block['speedup']:.2f}  e2e_speedup={dflash_block['e2e_speedup']:.2f})\n")

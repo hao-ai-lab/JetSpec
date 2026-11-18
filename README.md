@@ -176,7 +176,7 @@ print("tokens per forward:", out["tpf"])
 
 ### Evaluation
 
-HF reference benchmark. With `--include-dflash-baseline`, it reports the shared AR-greedy baseline, the linear DFlash block baseline using the draft head's `block_size`, and the JetSpec tree construction algorithms selected through `--algos`:
+HF reference benchmark. With `--include-linear-baseline`, it reports the shared AR-greedy baseline, a linear block baseline and the JetSpec tree construction algorithms selected through `--algos`. The linear block baseline runs the same draft head with one linear block of the head's `block_size` per round, so it isolates tree decoding. It is not the DFlash method, which trains a bidirectional draft head. `--include-dflash-baseline` is an alias of the same flag:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
@@ -193,7 +193,7 @@ python bench/jetspec/reference/benchmark.py \
   --budget 256 \
   --max-new 1024 \
   --warmup-rounds 3 \
-  --include-dflash-baseline
+  --include-linear-baseline
 ```
 
 Optimized engine, wall-clock latency and throughput. The headline throughput uses `--drafter graphed`, a CUDA-graph replay of the draft-head forward per context-capacity bucket. `--drafter eager` is correct but about 2x slower:
