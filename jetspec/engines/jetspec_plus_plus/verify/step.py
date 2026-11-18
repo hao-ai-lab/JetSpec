@@ -154,6 +154,9 @@ class SpecDecodeStep(InferenceStep):
         _census_mark("save", run_config=getattr(self, 'run_config', None))
         if timing is not None:
             timing.stamp('speculate_start')
+        preissue = getattr(self.verifier, 'preissue_tp_verify', None)
+        if preissue is not None and getattr(self.speculator, 'blockhead', False):
+            preissue(seqs)  # JETSPEC_TP_VERIFY_PREISSUE; a no-op unless enabled under target TP
         speculate_result = self.speculator.speculate(seqs, in_verify_result)
         if timing is not None:
             timing.stamp('speculate_end')

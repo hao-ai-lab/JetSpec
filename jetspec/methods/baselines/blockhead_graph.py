@@ -82,10 +82,21 @@ class StaticBlockheadGraph:
         self.hidden_size = int(self.head.config.hidden_size)
         self.target_hidden_size = int(self.head.fc.in_features)
         self.vocab_size = int(self.target.lm_head.weight.shape[0])
-        self.attn_len = not _force_stock and kernel_enabled('blockhead_attn_len', '1')
-        self.glue_lean = not _force_stock and kernel_enabled('blockhead_glue_lean', '1')
-        self.qkv_fused = not _force_stock and kernel_enabled('blockhead_qkv_fused', '1')
-        self.lmhead_kn = not _force_stock and kernel_enabled('blockhead_lmhead_kn', '1')
+        def enabled(name):
+            # The engine profile is frozen from the resolved recipe before per-read knobs apply,
+            # so a JETSPEC_BLOCKHEAD_* knob is also read from the read's own engine settings.
+            if _force_stock:
+                return False
+            settings = getattr(getattr(self.run_config, 'engine', None), 'engine_settings', None)
+            return kernel_enabled(name, '1') or getattr(settings, name, None) == '1'
+        self.attn_len = enabled('blockhead_attn_len')
+        self.glue_lean = enabled('blockhead_glue_lean')
+        self.qkv_fused = enabled('blockhead_qkv_fused')
+        self.lmhead_kn = enabled('blockhead_lmhead_kn')
+        self.markov_fused = enabled('blockhead_markov_fused')
+        print('BLOCKHEAD_OPT ' + json.dumps(dict(attn_len=self.attn_len, glue_lean=self.glue_lean,
+                                                  qkv_fused=self.qkv_fused, lmhead_kn=self.lmhead_kn,
+                                                  markov_fused=self.markov_fused)), flush=True)
         if self.glue_lean:
             import jetspec.engines.jetspec_plus_plus.kernels.fused_decoder as c1_fused
             from jetspec.engines.jetspec_plus_plus.draft.rows import kv_rotary_into_cache
@@ -441,6 +452,14 @@ class StaticBlockheadGraph:
             return
         if getattr(markov, "markov_head_type", None) != "vanilla":
             raise ValueError("BLOCKHEAD GRAPH requires the fixed order-1 Markov head")
+        if self.markov_fused:
+            # One vocab-tiled kernel per position instead of ~7 small ones (same math, fp32 GEMV).
+            if getattr(self, '_fused_markov', None) is None:
+                from jetspec.methods.baselines.blockhead_markov import FusedMarkov
+                self._fused_markov = FusedMarkov(markov, self.vocab_size, self.device)
+            self._fused_markov(self._markov_logits, self._markov_anchor,
+                               self._markov_corrected, self._markov_tokens)
+            return
         prev = self._markov_anchor
         corrected = []
         tokens = []

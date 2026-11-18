@@ -55,7 +55,8 @@ class VocabParallelEmbedding(nn.Module):
         y = F.embedding(x, self.weight)
         if self.tp_size > 1:
             y = mask.unsqueeze(1) * y
-            dist.all_reduce(y, group=self.tp_group)
+            from jetspec.engines.jetspec_plus_plus.serving import tp_allreduce
+            y = tp_allreduce.all_reduce(y, self.tp_group)
         # print(f'in vocab parallel embedding, shape of input: {x.shape}, shape of output: {y.shape}') # [nt] -> [nt, D]
         return y
 

@@ -873,7 +873,8 @@ class TargetLinear(LinearBase):
         bias = self.bias if self.layout != 'row' or self.tp_rank == 0 else None
         output = self.project(x, bias)
         if self.layout == 'row' and self.tp_size > 1:
-            dist.all_reduce(output, group=self.tp_group)
+            from jetspec.engines.jetspec_plus_plus.serving import tp_allreduce
+            output = tp_allreduce.all_reduce(output, self.tp_group)
         return output
 
     def head_forward(self, x: torch.Tensor, last_only: bool = True): # x is always [nt = B*S, D] -> [nt, V]
