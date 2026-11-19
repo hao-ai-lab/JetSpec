@@ -85,9 +85,9 @@ diverges from AR at B=1 on 41 of 128 requests in the same way, so batch shape al
 
 Static batch of B prompts, GSM8K, 128 new tokens, greedy. The previous runs are the torch_xla port in
 [HSA_dflash, branch tpu-pareto](https://github.com/haorany7/HSA_dflash/tree/tpu-pareto)
-(: EOS ignored, decode time only, DFlash at its best block size per B).
+(`docs/data/pareto_tpu.jsonl`: EOS ignored, decode time only, DFlash at its best block size per B).
 Ours: per-user is decode tok/s per request, total includes prefill, int8 draft weights, DFlash block 16.
-Data: .
+Data: `assets/frontier_static128_v6e.json`.
 
 | B | previous AR | AR (ours) | previous DFlash | DFlash (ours) | JetSpec++ J1-R1 (ours) |
 |---:|---:|---:|---:|---:|---:|
