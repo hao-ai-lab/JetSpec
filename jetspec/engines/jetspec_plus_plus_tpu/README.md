@@ -79,6 +79,24 @@ Losslessness: every output was compared with AR at B=1. Each one is either ident
 diverges where the two tokens are the target's top 2 (logit gap of at most 0.33). AR at B=2 already
 diverges from AR at B=1 on 41 of 128 requests in the same way, so batch shape alone flips these bf16 ties.
 
+### Against the earlier unoptimized DFlash on v6e-1
+
+![Static-batch frontier](assets/frontier_static128_v6e.png)
+
+Static batch of B prompts, GSM8K, 128 new tokens, greedy. Per-user is decode tok/s per request; total
+includes prefill. The previous DFlash curve is read off an earlier figure (about 3%); it used its best block
+size per B. Ours uses block 16 and int8 draft weights. Data: `assets/frontier_static128_v6e.json`.
+
+| B | previous DFlash total / per-user | DFlash (ours) total / per-user | JetSpec++ J1-R1 total / per-user |
+|---:|---:|---:|---:|
+| 1 | ~52 / ~51 | 316 / 369 | 309 / **377** |
+| 4 | ~214 / ~52 | 916 / 354 | 887 / **359** |
+| 16 | ~475 / ~29 | **2158 / 292** | 1868 / 277 |
+| 64 | ~1110 / ~17 | **2540 / 96** | 2029 / 82 |
+
+The same DFlash model runs about 7x faster per user at B=1 and 2.3x higher in total at B=64. JetSpec++ leads
+per user by 1-2% up to B=8 and trails by 13-20% from B=16, where the extra refinement passes become compute-bound.
+
 ## How one chip changes the method
 
 The two-GPU engine hides drafting behind verification. While block t verifies, the draft GPU
