@@ -79,26 +79,29 @@ Losslessness: every output was compared with AR at B=1. Each one is either ident
 diverges where the two tokens are the target's top 2 (logit gap of at most 0.33). AR at B=2 already
 diverges from AR at B=1 on 41 of 128 requests in the same way, so batch shape alone flips these bf16 ties.
 
-### Against the earlier unoptimized AR and DFlash on v6e-1
+### Against the earlier torch_xla AR and DFlash on v6e-1
 
 ![Static-batch frontier](assets/frontier_static128_v6e.png)
 
-Static batch of B prompts, GSM8K, 128 new tokens, greedy. Per-user is decode tok/s per request; total
-includes prefill. The previous AR and DFlash curves are read off an earlier figure (about 3%); the previous
-DFlash used its best block size per B. Ours uses block 16 and int8 draft weights.
-Data: `assets/frontier_static128_v6e.json`.
+Static batch of B prompts, GSM8K, 128 new tokens, greedy. The previous runs are the torch_xla port in
+[HSA_dflash, branch tpu-pareto](https://github.com/haorany7/HSA_dflash/tree/tpu-pareto)
+(: EOS ignored, decode time only, DFlash at its best block size per B).
+Ours: per-user is decode tok/s per request, total includes prefill, int8 draft weights, DFlash block 16.
+Data: .
 
 | B | previous AR | AR (ours) | previous DFlash | DFlash (ours) | JetSpec++ J1-R1 (ours) |
 |---:|---:|---:|---:|---:|---:|
-| 1 | ~17 / ~17 | 68 / 77 | ~52 / ~51 | 316 / 369 | 309 / **377** |
-| 4 | ~62 / ~15 | 261 / 76 | ~214 / ~52 | 916 / 354 | 887 / **359** |
-| 16 | ~200 / ~13 | 906 / 73 | ~475 / ~29 | **2158 / 292** | 1868 / 277 |
-| 64 | ~511 / ~8 | 2457 / 60 | ~1110 / ~17 | **2540 / 96** | 2029 / 82 |
+| 1 | 16.6 / 16.6 | 68 / 77 | 52.6 / 52.7 | 316 / 369 | 309 / **377** |
+| 4 | 62.0 / 15.5 | 261 / 76 | 214.4 / 53.6 | 916 / 354 | 887 / **359** |
+| 16 | 200.0 / 12.5 | 906 / 73 | 472.4 / 29.5 | **2158 / 292** | 1868 / 277 |
+| 64 | 515.0 / 8.1 | 2457 / 60 | 1115.1 / 17.4 | **2540 / 96** | 2029 / 82 |
 
-Each cell is total / per-user tok/s. Our AR is about 4.7x the previous AR per user at B=1, and the same DFlash
-model is about 7x the previous DFlash. JetSpec++ leads per user by 1-2% up to B=8 and trails DFlash by 13-20%
-from B=16, where the extra refinement passes become compute-bound. At B=64, AR (ours) nearly matches both
-speculative methods in total throughput, at well under their per-user speed.
+Each cell is total / per-user tok/s. Our AR is 4.6x the previous AR per user at B=1, and the same DFlash
+model is 7x the previous DFlash. The previous step costs about 60 ms at B=1 against 13 ms here: torch_xla
+re-traces the HF model on the host every step and syncs to the host after it, so the chip waits; its
+attention also scans the full cache length with K/V expanded for GQA, which adds about 1 ms per request.
+JetSpec++ leads DFlash per user by 1-2% up to B=8 and trails it by 13-20% from B=16, where the extra
+refinement passes become compute-bound.
 
 ## How one chip changes the method
 

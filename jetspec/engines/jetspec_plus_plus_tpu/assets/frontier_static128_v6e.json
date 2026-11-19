@@ -1,248 +1,398 @@
 {
- "setting": "Qwen3-8B, one TPU v6e chip, GSM8K, static batch, 128 new tokens, greedy; per_user = decode tok/s per request, total includes prefill",
- "previous_ar": {
-  "note": "read off the earlier figure (about 3%)",
-  "points": [
+ "setting": "Qwen3-8B, one TPU v6e chip, GSM8K, static batch, 128 new tokens, greedy",
+ "previous": {
+  "source": "github.com/haorany7/HSA_dflash, branch tpu-pareto, docs/data/pareto_tpu.jsonl (torch_xla); EOS ignored, decode time only",
+  "ar": [
    {
-    "slots": 1,
-    "per_user": 16.5,
-    "total": 16.5
+    "block": 1,
+    "batch": 1,
+    "tps_per_user": 16.61997197031647,
+    "throughput": 16.61997197031647,
+    "mean_accept": 1.0,
+    "ms_per_step": 60.642341488187235
    },
    {
-    "slots": 2,
-    "per_user": 16.2,
-    "total": 33.0
+    "block": 1,
+    "batch": 2,
+    "tps_per_user": 16.165894682005558,
+    "throughput": 32.331789364011115,
+    "mean_accept": 1.0,
+    "ms_per_step": 62.34569973228315
    },
    {
-    "slots": 4,
-    "per_user": 15.4,
-    "total": 62.1
+    "block": 1,
+    "batch": 4,
+    "tps_per_user": 15.492884743078305,
+    "throughput": 61.97153897231322,
+    "mean_accept": 1.0,
+    "ms_per_step": 65.05399300787515
    },
    {
-    "slots": 8,
-    "per_user": 14.8,
-    "total": 118.9
+    "block": 1,
+    "batch": 8,
+    "tps_per_user": 14.854397832461634,
+    "throughput": 118.83518265969307,
+    "mean_accept": 1.0,
+    "ms_per_step": 67.8502102283475
    },
    {
-    "slots": 16,
-    "per_user": 12.5,
-    "total": 199.9
+    "block": 1,
+    "batch": 16,
+    "tps_per_user": 12.50263476911093,
+    "throughput": 200.04215630577488,
+    "mean_accept": 1.0,
+    "ms_per_step": 80.61292954330634
    },
    {
-    "slots": 32,
-    "per_user": 10.8,
-    "total": 344.8
+    "block": 1,
+    "batch": 32,
+    "tps_per_user": 10.819914667821699,
+    "throughput": 346.23726937029437,
+    "mean_accept": 1.0,
+    "ms_per_step": 93.14990429133763
    },
    {
-    "slots": 64,
-    "per_user": 8.1,
-    "total": 513.5
+    "block": 1,
+    "batch": 64,
+    "tps_per_user": 8.04683660744417,
+    "throughput": 514.9975428764269,
+    "mean_accept": 1.0,
+    "ms_per_step": 125.25096070866434
    },
    {
-    "slots": 128,
-    "per_user": 5.1,
-    "total": 648.7
+    "block": 1,
+    "batch": 128,
+    "tps_per_user": 5.061653693469721,
+    "throughput": 647.8916727641243,
+    "mean_accept": 1.0,
+    "ms_per_step": 199.11951247244303
+   }
+  ],
+  "dflash": [
+   {
+    "block": 4,
+    "batch": 1,
+    "tps_per_user": 40.49724927180022,
+    "throughput": 40.49724927180022,
+    "mean_accept": 3.0714285714285716,
+    "ms_per_step": 75.2549642857156
+   },
+   {
+    "block": 4,
+    "batch": 2,
+    "tps_per_user": 39.741815457824146,
+    "throughput": 79.48363091564829,
+    "mean_accept": 3.1341463414634148,
+    "ms_per_step": 78.55582799999044
+   },
+   {
+    "block": 4,
+    "batch": 4,
+    "tps_per_user": 37.09940931326257,
+    "throughput": 148.39763725305028,
+    "mean_accept": 3.130952380952381,
+    "ms_per_step": 82.14737388095186
+   },
+   {
+    "block": 4,
+    "batch": 8,
+    "tps_per_user": 30.75570661263576,
+    "throughput": 246.04565290108607,
+    "mean_accept": 2.8392857142857144,
+    "ms_per_step": 84.93529122448976
+   },
+   {
+    "block": 4,
+    "batch": 16,
+    "tps_per_user": 28.49637824523907,
+    "throughput": 455.94205192382515,
+    "mean_accept": 2.825,
+    "ms_per_step": 89.83597767999527
+   },
+   {
+    "block": 4,
+    "batch": 32,
+    "tps_per_user": 22.951340700485858,
+    "throughput": 734.4429024155475,
+    "mean_accept": 2.7638221153846154,
+    "ms_per_step": 107.25031246154406
+   },
+   {
+    "block": 4,
+    "batch": 64,
+    "tps_per_user": 17.423574116224664,
+    "throughput": 1115.1087434383785,
+    "mean_accept": 2.7944711538461537,
+    "ms_per_step": 141.27632167307743
+   },
+   {
+    "block": 8,
+    "batch": 1,
+    "tps_per_user": 45.921610699803715,
+    "throughput": 45.921610699803715,
+    "mean_accept": 3.7941176470588234,
+    "ms_per_step": 81.98113752941669
+   },
+   {
+    "block": 8,
+    "batch": 2,
+    "tps_per_user": 46.009281683883714,
+    "throughput": 92.01856336776743,
+    "mean_accept": 4.044117647058823,
+    "ms_per_step": 81.82492194116682
+   },
+   {
+    "block": 8,
+    "batch": 4,
+    "tps_per_user": 43.01656934935956,
+    "throughput": 172.06627739743823,
+    "mean_accept": 3.9214285714285713,
+    "ms_per_step": 85.01707394286443
+   },
+   {
+    "block": 8,
+    "batch": 8,
+    "tps_per_user": 35.91471552034297,
+    "throughput": 287.3177241627438,
+    "mean_accept": 3.6414473684210527,
+    "ms_per_step": 93.78943989473125
+   },
+   {
+    "block": 8,
+    "batch": 16,
+    "tps_per_user": 26.4399645333745,
+    "throughput": 423.039432533992,
+    "mean_accept": 3.383522727272727,
+    "ms_per_step": 110.02627879545138
+   },
+   {
+    "block": 8,
+    "batch": 32,
+    "tps_per_user": 28.797171831913207,
+    "throughput": 921.5094986212226,
+    "mean_accept": 3.61484375,
+    "ms_per_step": 111.12202332500374
+   },
+   {
+    "block": 8,
+    "batch": 64,
+    "tps_per_user": 16.82466493502982,
+    "throughput": 1076.7785558419084,
+    "mean_accept": 3.5572916666666665,
+    "ms_per_step": 181.13995490476296
+   },
+   {
+    "block": 16,
+    "batch": 1,
+    "tps_per_user": 52.64818269479929,
+    "throughput": 52.64818269479929,
+    "mean_accept": 4.642857142857143,
+    "ms_per_step": 86.82975057143138
+   },
+   {
+    "block": 16,
+    "batch": 2,
+    "tps_per_user": 49.243888143490366,
+    "throughput": 98.48777628698073,
+    "mean_accept": 4.7,
+    "ms_per_step": 86.64357806666582
+   },
+   {
+    "block": 16,
+    "batch": 4,
+    "tps_per_user": 53.59187197902676,
+    "throughput": 214.36748791610705,
+    "mean_accept": 5.101851851851852,
+    "ms_per_step": 88.4600698888823
+   },
+   {
+    "block": 16,
+    "batch": 8,
+    "tps_per_user": 38.80243201626861,
+    "throughput": 310.4194561301489,
+    "mean_accept": 4.235714285714286,
+    "ms_per_step": 94.25035151429516
+   },
+   {
+    "block": 16,
+    "batch": 16,
+    "tps_per_user": 29.525952480313176,
+    "throughput": 472.4152396850108,
+    "mean_accept": 3.9786184210526314,
+    "ms_per_step": 114.08340018421146
+   },
+   {
+    "block": 16,
+    "batch": 32,
+    "tps_per_user": 23.94590598884583,
+    "throughput": 766.2689916430666,
+    "mean_accept": 4.20777027027027,
+    "ms_per_step": 144.46976702701915
+   },
+   {
+    "block": 16,
+    "batch": 64,
+    "tps_per_user": 14.305071993753831,
+    "throughput": 915.5246076002452,
+    "mean_accept": 3.929296875,
+    "ms_per_step": 223.6968818749915
    }
   ]
  },
- "previous_dflash_unoptimized": {
-  "note": "read off the earlier figure (about 3%)",
-  "points": [
+ "ours": {
+  "note": "per_user = decode tok/s per request, total includes prefill; int8 draft weights, DFlash block 16",
+  "ar": [
    {
     "slots": 1,
-    "per_user": 51.3,
-    "total": 52.2,
-    "block": 16
+    "requests": 32,
+    "per_user": 76.90031889062648,
+    "total": 67.75890753802221,
+    "tau": 1.0
    },
    {
     "slots": 2,
-    "per_user": 48.2,
-    "total": 98.3,
-    "block": 16
+    "requests": 32,
+    "per_user": 76.6960860920833,
+    "total": 133.86817259016283,
+    "tau": 1.0
    },
    {
     "slots": 4,
-    "per_user": 52.2,
-    "total": 214.2,
-    "block": 16
+    "requests": 32,
+    "per_user": 76.12289455173848,
+    "total": 261.0965244744084,
+    "tau": 1.0
    },
    {
     "slots": 8,
-    "per_user": 38.1,
-    "total": 310.8,
-    "block": 16
+    "requests": 32,
+    "per_user": 74.9089080257167,
+    "total": 497.59388730871694,
+    "tau": 1.0
    },
    {
     "slots": 16,
-    "per_user": 29.1,
-    "total": 470.9,
-    "block": 16
+    "requests": 32,
+    "per_user": 72.46195387710048,
+    "total": 906.0654704952301,
+    "tau": 1.0
    },
    {
     "slots": 32,
-    "per_user": 28.4,
-    "total": 925.1,
-    "block": 8
+    "requests": 64,
+    "per_user": 68.13472733240627,
+    "total": 1571.179603084573,
+    "tau": 1.0
    },
    {
     "slots": 64,
-    "per_user": 17.4,
-    "total": 1119.1,
-    "block": 4
+    "requests": 128,
+    "per_user": 60.08142165476321,
+    "total": 2456.9474594075105,
+    "tau": 1.0
+   }
+  ],
+  "dflash": [
+   {
+    "slots": 1,
+    "requests": 32,
+    "per_user": 368.47528660013177,
+    "total": 315.6519615279159,
+    "tau": 5.445019404915912
+   },
+   {
+    "slots": 2,
+    "requests": 32,
+    "per_user": 360.6024108727943,
+    "total": 538.0922749426572,
+    "tau": 5.402048655569782
+   },
+   {
+    "slots": 4,
+    "requests": 32,
+    "per_user": 353.881005148637,
+    "total": 916.3254082144917,
+    "tau": 5.41591784338896
+   },
+   {
+    "slots": 8,
+    "requests": 32,
+    "per_user": 344.08534510349034,
+    "total": 1482.939166485789,
+    "tau": 5.3951406649616365
+   },
+   {
+    "slots": 16,
+    "requests": 32,
+    "per_user": 292.0272855205725,
+    "total": 2158.399183912068,
+    "tau": 5.407455012853471
+   },
+   {
+    "slots": 32,
+    "requests": 64,
+    "per_user": 186.57068728265838,
+    "total": 2480.4191417369047,
+    "tau": 5.4073359073359075
+   },
+   {
+    "slots": 64,
+    "requests": 128,
+    "per_user": 96.36911570159647,
+    "total": 2540.2245905364007,
+    "tau": 5.464761286131861
+   }
+  ],
+  "jetspec": [
+   {
+    "slots": 1,
+    "requests": 32,
+    "per_user": 376.8705315461716,
+    "total": 309.0906103947985,
+    "tau": 7.213921901528013
+   },
+   {
+    "slots": 2,
+    "requests": 32,
+    "per_user": 368.5267576907943,
+    "total": 520.2361708979889,
+    "tau": 7.214650766609881
+   },
+   {
+    "slots": 4,
+    "requests": 32,
+    "per_user": 359.12284636449954,
+    "total": 886.6353141730522,
+    "tau": 7.212585034013605
+   },
+   {
+    "slots": 8,
+    "requests": 32,
+    "per_user": 348.77011517068087,
+    "total": 1408.7738556781949,
+    "tau": 7.189509306260575
+   },
+   {
+    "slots": 16,
+    "requests": 32,
+    "per_user": 276.6011300115792,
+    "total": 1868.0803318374767,
+    "tau": 7.206132879045996
+   },
+   {
+    "slots": 32,
+    "requests": 64,
+    "per_user": 161.70752983974052,
+    "total": 2059.527573323656,
+    "tau": 7.275387263339071
+   },
+   {
+    "slots": 64,
+    "requests": 128,
+    "per_user": 81.54349454642639,
+    "total": 2028.8061673663644,
+    "tau": 7.315925766076823
    }
   ]
- },
- "ar_ours": [
-  {
-   "slots": 1,
-   "requests": 32,
-   "per_user": 76.90031889062648,
-   "total": 67.75890753802221,
-   "tau": 1.0
-  },
-  {
-   "slots": 2,
-   "requests": 32,
-   "per_user": 76.6960860920833,
-   "total": 133.86817259016283,
-   "tau": 1.0
-  },
-  {
-   "slots": 4,
-   "requests": 32,
-   "per_user": 76.12289455173848,
-   "total": 261.0965244744084,
-   "tau": 1.0
-  },
-  {
-   "slots": 8,
-   "requests": 32,
-   "per_user": 74.9089080257167,
-   "total": 497.59388730871694,
-   "tau": 1.0
-  },
-  {
-   "slots": 16,
-   "requests": 32,
-   "per_user": 72.46195387710048,
-   "total": 906.0654704952301,
-   "tau": 1.0
-  },
-  {
-   "slots": 32,
-   "requests": 64,
-   "per_user": 68.13472733240627,
-   "total": 1571.179603084573,
-   "tau": 1.0
-  },
-  {
-   "slots": 64,
-   "requests": 128,
-   "per_user": 60.08142165476321,
-   "total": 2456.9474594075105,
-   "tau": 1.0
-  }
- ],
- "dflash_optimized": [
-  {
-   "slots": 1,
-   "requests": 32,
-   "per_user": 368.47528660013177,
-   "total": 315.6519615279159,
-   "tau": 5.445019404915912
-  },
-  {
-   "slots": 2,
-   "requests": 32,
-   "per_user": 360.6024108727943,
-   "total": 538.0922749426572,
-   "tau": 5.402048655569782
-  },
-  {
-   "slots": 4,
-   "requests": 32,
-   "per_user": 353.881005148637,
-   "total": 916.3254082144917,
-   "tau": 5.41591784338896
-  },
-  {
-   "slots": 8,
-   "requests": 32,
-   "per_user": 344.08534510349034,
-   "total": 1482.939166485789,
-   "tau": 5.3951406649616365
-  },
-  {
-   "slots": 16,
-   "requests": 32,
-   "per_user": 292.0272855205725,
-   "total": 2158.399183912068,
-   "tau": 5.407455012853471
-  },
-  {
-   "slots": 32,
-   "requests": 64,
-   "per_user": 186.57068728265838,
-   "total": 2480.4191417369047,
-   "tau": 5.4073359073359075
-  },
-  {
-   "slots": 64,
-   "requests": 128,
-   "per_user": 96.36911570159647,
-   "total": 2540.2245905364007,
-   "tau": 5.464761286131861
-  }
- ],
- "jetspec_optimized": [
-  {
-   "slots": 1,
-   "requests": 32,
-   "per_user": 376.8705315461716,
-   "total": 309.0906103947985,
-   "tau": 7.213921901528013
-  },
-  {
-   "slots": 2,
-   "requests": 32,
-   "per_user": 368.5267576907943,
-   "total": 520.2361708979889,
-   "tau": 7.214650766609881
-  },
-  {
-   "slots": 4,
-   "requests": 32,
-   "per_user": 359.12284636449954,
-   "total": 886.6353141730522,
-   "tau": 7.212585034013605
-  },
-  {
-   "slots": 8,
-   "requests": 32,
-   "per_user": 348.77011517068087,
-   "total": 1408.7738556781949,
-   "tau": 7.189509306260575
-  },
-  {
-   "slots": 16,
-   "requests": 32,
-   "per_user": 276.6011300115792,
-   "total": 1868.0803318374767,
-   "tau": 7.206132879045996
-  },
-  {
-   "slots": 32,
-   "requests": 64,
-   "per_user": 161.70752983974052,
-   "total": 2059.527573323656,
-   "tau": 7.275387263339071
-  },
-  {
-   "slots": 64,
-   "requests": 128,
-   "per_user": 81.54349454642639,
-   "total": 2028.8061673663644,
-   "tau": 7.315925766076823
-  }
- ]
+ }
 }
