@@ -79,27 +79,29 @@ Losslessness: every output was compared with AR at B=1. Each one is either ident
 diverges where the two tokens are the target's top 2 (logit gap of at most 0.33). AR at B=2 already
 diverges from AR at B=1 on 41 of 128 requests in the same way, so batch shape alone flips these bf16 ties.
 
-### Against the earlier torch_xla AR and DFlash on v6e-1
+### Against the same algorithms in PyTorch on torch_tpu
 
 ![Static-batch frontier](assets/frontier_static128_v6e.png)
 
-Static batch of B prompts, GSM8K, 128 new tokens, greedy. The previous runs are the torch_xla port in
-[HSA_dflash, branch tpu-pareto](https://github.com/haorany7/HSA_dflash/tree/tpu-pareto)
-(`docs/data/pareto_tpu.jsonl`: EOS ignored, decode time only, DFlash at its best block size per B).
-Ours: per-user is decode tok/s per request, total includes prefill, int8 draft weights, DFlash block 16.
-Data: `assets/frontier_static128_v6e.json`.
+Dashed: the batched AR / DFlash code of
+[HSA_dflash, branch tpu-pareto](https://github.com/haorany7/HSA_dflash/tree/tpu-pareto) (`dflash/batched_xla.py`,
+HF Qwen3 + DFlash, bf16), run on torch_tpu 0.2 with both model forwards under
+`torch.compile(backend="tpu", dynamic=False)`. Solid: this engine (JAX, int8 draft weights). Both use the same
+GSM8K prompts, static batches of B prompts (at least 32 requests per point), 128 new tokens, greedy, DFlash block
+16. Per-user is decode tok/s per request; total includes prefill. Data: `assets/frontier_static128_v6e.json`.
 
-| B | previous AR | AR (ours) | previous DFlash | DFlash (ours) | JetSpec++ J1-R1 (ours) |
+| B | AR, torch_tpu | AR (ours) | DFlash, torch_tpu | DFlash (ours) | JetSpec++ J1-R1 (ours) |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 16.6 / 16.6 | 68 / 77 | 52.6 / 52.7 | 316 / 369 | 309 / **377** |
-| 4 | 62.0 / 15.5 | 261 / 76 | 214.4 / 53.6 | 916 / 354 | 887 / **359** |
-| 16 | 200.0 / 12.5 | 906 / 73 | 472.4 / 29.5 | **2158 / 292** | 1868 / 277 |
-| 64 | 515.0 / 8.1 | 2457 / 60 | 1115.1 / 17.4 | **2540 / 96** | 2029 / 82 |
+| 1 | 62 / 66 | 68 / 77 | 162 / 189 | 316 / 368 | 309 / 377 |
+| 4 | 197 / 59 | 261 / 76 | 229 / 71 | 916 / 354 | 887 / 359 |
+| 16 | 363 / 33 | 906 / 72 | 246 / 19 | 2158 / 292 | 1868 / 277 |
+| 32 | 361 / 17 | 1571 / 68 | 218 / 9 | 2480 / 187 | 2060 / 162 |
+| 64 | 383 / 9 | 2457 / 60 | OOM | 2540 / 96 | 2029 / 82 |
 
-Each cell is total / per-user tok/s. Our AR is 4.6x the previous AR per user at B=1, and the same DFlash
-model is 7x the previous DFlash. The previous step costs about 60 ms at B=1 against 13 ms here: torch_xla
-re-traces the HF model on the host every step and syncs to the host after it, so the chip waits; its
-attention also scans the full cache length with K/V expanded for GQA, which adds about 1 ms per request.
+Each cell is total / per-user tok/s. At B=1 the compiled PyTorch AR is within 15% of ours (15.3 vs 13.0 ms
+per step), and its DFlash accepts as many tokens (tau 5.4) at 1.9x our round time. Its step time grows almost
+linearly with B (AR 15 to 107 ms from B=1 to 64, DFlash 28 to 460 ms from B=1 to 32), so DFlash peaks at about
+250 tok/s in total and runs out of HBM at B=64. Ours stays at 13 to 17 ms per AR step up to B=64.
 JetSpec++ leads DFlash per user by 1-2% up to B=8 and trails it by 13-20% from B=16, where the extra
 refinement passes become compute-bound.
 
