@@ -1,5 +1,50 @@
 {
  "setting": "Qwen3-8B, one TPU v6e chip, GSM8K, static batch, 128 new tokens, greedy; per_user = decode tok/s per request, total includes prefill",
+ "previous_ar": {
+  "note": "read off the earlier figure (about 3%)",
+  "points": [
+   {
+    "slots": 1,
+    "per_user": 16.5,
+    "total": 16.5
+   },
+   {
+    "slots": 2,
+    "per_user": 16.2,
+    "total": 33.0
+   },
+   {
+    "slots": 4,
+    "per_user": 15.4,
+    "total": 62.1
+   },
+   {
+    "slots": 8,
+    "per_user": 14.8,
+    "total": 118.9
+   },
+   {
+    "slots": 16,
+    "per_user": 12.5,
+    "total": 199.9
+   },
+   {
+    "slots": 32,
+    "per_user": 10.8,
+    "total": 344.8
+   },
+   {
+    "slots": 64,
+    "per_user": 8.1,
+    "total": 513.5
+   },
+   {
+    "slots": 128,
+    "per_user": 5.1,
+    "total": 648.7
+   }
+  ]
+ },
  "previous_dflash_unoptimized": {
   "note": "read off the earlier figure (about 3%)",
   "points": [
@@ -47,6 +92,57 @@
    }
   ]
  },
+ "ar_ours": [
+  {
+   "slots": 1,
+   "requests": 32,
+   "per_user": 76.90031889062648,
+   "total": 67.75890753802221,
+   "tau": 1.0
+  },
+  {
+   "slots": 2,
+   "requests": 32,
+   "per_user": 76.6960860920833,
+   "total": 133.86817259016283,
+   "tau": 1.0
+  },
+  {
+   "slots": 4,
+   "requests": 32,
+   "per_user": 76.12289455173848,
+   "total": 261.0965244744084,
+   "tau": 1.0
+  },
+  {
+   "slots": 8,
+   "requests": 32,
+   "per_user": 74.9089080257167,
+   "total": 497.59388730871694,
+   "tau": 1.0
+  },
+  {
+   "slots": 16,
+   "requests": 32,
+   "per_user": 72.46195387710048,
+   "total": 906.0654704952301,
+   "tau": 1.0
+  },
+  {
+   "slots": 32,
+   "requests": 64,
+   "per_user": 68.13472733240627,
+   "total": 1571.179603084573,
+   "tau": 1.0
+  },
+  {
+   "slots": 64,
+   "requests": 128,
+   "per_user": 60.08142165476321,
+   "total": 2456.9474594075105,
+   "tau": 1.0
+  }
+ ],
  "dflash_optimized": [
   {
    "slots": 1,
