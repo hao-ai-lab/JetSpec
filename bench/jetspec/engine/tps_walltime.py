@@ -34,6 +34,7 @@ from jetspec.methods.jetspec.draft_head_adapter import (
     DraftHeadTreeDrafter,
     GraphedDraftHead,
 )
+from jetspec.methods.jetspec.draft_head_cache import CachedGraphedDraftHead
 
 GSM8K_FMT = ("{question}\n"
              "Please reason step by step, and put your final answer within \\boxed{{}}.")
@@ -149,6 +150,12 @@ def _build_drafter(head, eng: JetSpecEngine, block_size: int, target_layer_ids,
     graphed = CUDA-graph replay per ctx bucket. graphed is the production headline
     config — at bs=1 the tree round is host-launch-bound, so replaying the draft-head
     forward as a CUDA graph (instead of an eager per-round forward) is ~2x."""
+    if drafter == "cached":
+        graphed = GraphedDraftHead(
+            head, target=eng.model, block_size=block_size,
+            target_layer_ids=target_layer_ids, draft_shift=False,
+        )
+        return CachedGraphedDraftHead(graphed)
     if drafter == "graphed":
         return GraphedDraftHead(
             head, target=eng.model, block_size=block_size,
@@ -188,7 +195,7 @@ def main():
                     help="Maximum draft tree depth excluding root. Defaults to draft-head block_size - 1.")
     ap.add_argument("--tree-width", type=int, default=7)
     ap.add_argument("--algo", default="accum_logp")
-    ap.add_argument("--drafter", default="eager", choices=["eager", "compiled", "graphed"],
+    ap.add_argument("--drafter", default="eager", choices=["eager", "compiled", "graphed", "cached"],
                     help="graphed = CUDA-graph draft head (the production headline config); "
                          "eager is correct but ~2x slower at bs=1 (host-launch-bound)")
     ap.add_argument("--session", action="store_true",
