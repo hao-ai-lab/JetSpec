@@ -1,11 +1,11 @@
 """JAX models for JetSpec++ on one TPU chip: Qwen3 target, drafter, adapter, anchor decoder.
 
-Every module mirrors the torch reference in ``jetspec/methods/jetspec_plus_plus``:
+Every module mirrors the torch reference in ``jetspec/engines/jetspec_plus_plus/draft``:
 
 - target: Qwen3 with a persistent KV cache; verify returns the five taps (layers 1, 9, 17, 25, 33).
-- drafter (``dflash.py``): five layers whose keys are [context | refreshed block | noise block].
-- adapter (``models/adapter.py``, C1 tap-aligned H2H): twelve stream layers, window causal.
-- anchor decoder (``models/decoder.py``): target layers 34 and 35, final norm and LM head.
+- drafter (the checkpoint's ``dflash.py``): five layers whose keys are [context | refreshed block | noise block].
+- adapter (``method/adapter.py``, C1 tap-aligned H2H): twelve stream layers, window causal.
+- anchor decoder (``reference/models/decoder.py``): target layers 34 and 35, final norm and LM head.
 
 The reference recomputes every context projection on each pass. Here every projection that
 depends only on committed positions is cached once per position: the drafter's context K/V,

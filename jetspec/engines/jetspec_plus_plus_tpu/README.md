@@ -3,7 +3,8 @@
 A JAX port of JetSpec++ for Qwen3-8B on a single TPU chip (developed on a v6e-1, 32 GB HBM), and a
 two-chip variant that drafts on one chip while the other verifies (v5e, below).
 The output is the target's greedy decode. The drafter, adapter and anchor decoder follow the torch
-reference in `jetspec/methods/jetspec_plus_plus/`.
+reference in `jetspec/engines/jetspec_plus_plus/draft/` (`reference/round.py`, `method/adapter.py`,
+`method/decoder/`).
 
 ```bash
 pip install --no-deps -e .            # plus jax[tpu], safetensors, transformers, huggingface_hub
