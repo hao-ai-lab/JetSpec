@@ -43,9 +43,13 @@ class TwoChipServer:
     group: int = 0          # redraft group size (0: whole batch, as before)
     exact_tail: bool = False  # predict the block over the exact cache prefix (16 tokens) instead of re-running
                               # the adapter over the drafted tail as well (32 tokens)
+    redraft_schedule: str = ''   # J/R schedule of a miss redraft ('' = schedule). The redraft runs between verifies
+                                 # on the critical path; J0-R0 (one drafter pass) shortens it at large B
 
     def __post_init__(self):
         self.ops = schedule_ops(self.schedule)
+        self.redraft_ops = schedule_ops(self.redraft_schedule) if self.redraft_schedule else self.ops
+        self.redraft_r = any(op.startswith('R') for op in self.redraft_ops)
         self.has_r = any(op.startswith('R') for op in self.ops)
         self.one = TwoChipJetSpecPP(self.w0, self.w1, self.coef, self.temperature, dims=self.dims,
                                     schedule=self.schedule, rows=self.rows, capacity=self.capacity)
@@ -170,14 +174,15 @@ class TwoChipServer:
                     hit & ~fresh, jnp.where(fresh, -1, emitted))
 
         def redraft(w1, c1, tokens, length, new_length, corr, taps, mk, mv, key):
-            if self.has_r:
+            if self.redraft_r:
                 scratch = write_context(w1['drafter'], w1['adapter'], c1, taps, length, dims)
                 scratch = dict(scratch, mk=jax.lax.dynamic_update_slice(c1['mk'], mk, (0, 0, length, 0)),
                                mv=jax.lax.dynamic_update_slice(c1['mv'], mv, (0, 0, length, 0)))
             else:
                 scratch = write_context(w1['drafter'], None, c1, taps, length, dims)
             init = _sample_init(key, tokens, new_length + 1, n - 1)
-            return draft_jr(w1['drafter'], self.one._tw1(w1), corr, init, new_length, dims, span, scratch, self.ops,
+            return draft_jr(w1['drafter'], self.one._tw1(w1), corr, init, new_length, dims, span, scratch,
+                            self.redraft_ops,
                             self.one._exact_refresh(w1, scratch, new_length, span))
 
         @jax.jit

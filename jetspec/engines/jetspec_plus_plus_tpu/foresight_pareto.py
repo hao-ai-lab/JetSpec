@@ -19,6 +19,7 @@ def main():
     ap.add_argument('--slots', default='1,4,8,16')
     ap.add_argument('--rows', default='8')
     ap.add_argument('--exact-tail', action='store_true')
+    ap.add_argument('--redraft-schedule', default='', help='J/R schedule of a miss redraft (default: --schedule)')
     ap.add_argument('--group', default='0', help='redraft group sizes to sweep (0: whole batch)')
     ap.add_argument('--schedule', default='J1-R0')
     ap.add_argument('--dataset', default='gsm8k')
@@ -62,7 +63,8 @@ def main():
     rows = load_rows(args.dataset, args.requests)
     lens = [len(ids) for _, ids in rows]
     capacity = -(-(max(lens) + args.max_tokens + 4 * dims.block) // 128) * 128
-    out = dict(schedule=args.schedule, exact_tail=args.exact_tail, int8_target=args.int8_target, requests=len(rows),
+    out = dict(schedule=args.schedule, exact_tail=args.exact_tail,
+               redraft_schedule=args.redraft_schedule, int8_target=args.int8_target, requests=len(rows),
                max_tokens=args.max_tokens, capacity=capacity, points=[])
     path = Path(args.output)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,7 +83,8 @@ def main():
             del srv
         for r, g in [(int(x), int(y)) for x in args.rows.split(',') for y in args.group.split(',')]:
             srv = TwoChipServer(w0, w1, coef, temperature, slots=slots, capacity=capacity, dims=dims,
-                                schedule=args.schedule, rows=r, group=g, exact_tail=args.exact_tail)
+                                schedule=args.schedule, rows=r, group=g, exact_tail=args.exact_tail,
+                                redraft_schedule=args.redraft_schedule)
             try:
                 t = time.perf_counter()
                 srv.warmup(lens, args.max_tokens)

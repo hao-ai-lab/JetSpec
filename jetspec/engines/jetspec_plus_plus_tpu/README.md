@@ -124,15 +124,19 @@ chip 1: resolve   look up (acceptance, correction) among the rows drafted last r
 
 Verification is unchanged, so the output is still the target's greedy decode; only the time per round moves.
 `--exact-tail` runs the adapter once over the block from the exact prefix (16 positions) instead of once per
-row with the row's tail (32 positions), which matters at large B.
+row with the row's tail (32 positions). `--redraft-schedule J0-R0` makes a miss redraft a single drafter pass:
+the redraft runs on chip 1 between two verifies, so it is on the critical path, and at large B some slot
+misses almost every round.
 
 ```bash
-python -m jetspec.engines.jetspec_plus_plus_tpu.foresight_pareto --slots 1,4,8,16 --rows 1,2,4,8 --group 4 \
-    --exact-tail --int8-target --requests 32 --max-tokens 256 --output out/fsp_exact.json
+python -m jetspec.engines.jetspec_plus_plus_tpu.foresight_pareto --slots 4,8,16 --rows 1,2 --group 4 \
+    --exact-tail --redraft-schedule J0-R0 --int8-target --requests 32 --max-tokens 256 --output out/fsp.json
+python -m jetspec.engines.jetspec_plus_plus_tpu.foresight_pareto --slots 1 --rows 8 --group 4 \
+    --exact-tail --redraft-schedule J0-R0 --int8-target --requests 32 --max-tokens 256 --output out/fsp_b1.json
 python -m jetspec.engines.jetspec_plus_plus_tpu.pareto --method dflash --slots 1,4,8,16 --int8-target \
     --requests 32 --max-tokens 256 --output out/dflash_v5e.json
-python -m jetspec.engines.jetspec_plus_plus_tpu.plot_two_chip out/fsp_exact.json --baseline out/dflash_v5e.json \
-    --output out/frontier_two_chip_v5e.png
+python -m jetspec.engines.jetspec_plus_plus_tpu.plot_two_chip out/fsp_b1.json out/fsp.json \
+    --baseline out/dflash_v5e.json --output out/frontier_two_chip_v5e.png
 ```
 
 ![Two-chip frontier](assets/frontier_two_chip_v5e.png)
@@ -142,25 +146,27 @@ TPU v5e (16 GB HBM per chip, so the target's layers are weight-only int8 with `-
 baseline (`serve.py`) runs on a third chip of the same host. DFlash runs on one chip with the same requests
 and int8 target. Data: `assets/frontier_two_chip_v5e.json`. Cells are per-user / total tok/s.
 
-| B | DFlash, one chip (τ 6.0) | JetSpec++, one chip (τ 6.5) | JetSpec++, two chips (τ 6.3-6.5) | Rows | Two chips vs one-chip JetSpec++ | Two chips vs DFlash |
+| B | DFlash, one chip (τ 6.0) | JetSpec++, one chip (τ 6.5-6.6) | JetSpec++, two chips (τ 6.1-6.4) | Rows | Two chips vs one-chip JetSpec++ | Two chips vs DFlash |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 404 / 393 | 375 / 362 | **467 / 452** | 8 | +25% / +25% | +15% / +15% |
-| 4 | 343 / 1233 | 310 / 1124 | **348 / 1280** | 2 | +12% / +14% | +2% / +4% |
-| 8 | **263 / 1724** | 239 / 1566 | 245 / 1638 | 1 | +3% / +5% | −7% / −5% |
-| 16 | 147 / 1579 | 138 / 1526 | **147 / 1664** | 1 | +7% / +9% | 0% / +5% |
+| 1 | 404 / 393 | 375 / 362 | **473 / 458** | 8 | +26% / +26% | +17% / +17% |
+| 4 | 343 / 1233 | 310 / 1122 | **366 / 1369** | 2 | +18% / +22% | +7% / +11% |
+| 8 | 263 / 1724 | 239 / 1564 | **262 / 1815** | 1 | +9% / +16% | −1% / +5% |
+| 16 | 147 / 1579 | 138 / 1525 | **147 / 1734** | 1 | +7% / +14% | 0% / +10% |
 
-On one v5e chip, as on v6e, DFlash leads JetSpec++ at every B. The second chip moves JetSpec++ ahead of
-one-chip DFlash at B = 1 (+15% per user), roughly level at B = 4 and 16, and still behind at B = 8. These
-comparisons give JetSpec++ two chips against DFlash's one: per chip, DFlash serves about twice the total.
+On one v5e chip, as on v6e, DFlash leads JetSpec++ at every B. With a second chip JetSpec++ is ahead of
+one-chip DFlash in total throughput at every B (+5% to +17%) and per user up to B = 4 (+17% at B = 1), and
+level per user at B = 8 and 16. This compares two chips with one: per chip, DFlash serves more.
 
-The gain is largest at B=1, where the draft chip is idle during verify. As B grows, the best number of rows
-falls to 1, and the gain shrinks: for Qwen3-8B the drafter, adapter and decoder together cost about as much
-compute per round as the target's verify, so chip 1 becomes the bottleneck (at B=16, before `--exact-tail`,
-foresight took 40 ms per round against 27 ms for verify). Without `--exact-tail` the two-chip
-engine reached 217 / 1449 (B=8) and 120 / 1382 (B=16), below one chip. A larger target makes the draft side
-relatively cheaper, which is where a separate draft chip pays most.
+Where a round goes at B = 8 (`foresight_round_prof.py` in steady state, rows 1): verify 15.7 ms on chip 0;
+on chip 1, resolve 5.8 ms (a redraft in 97% of rounds, 31% of slots miss) then foresight 16.7 ms (exact
+context write 3.0, adapter 5.2, decoder 1.9, row selection and predicted-context write 1.4, row drafts 6.5).
+Chip 1 is the bottleneck, so the round was 22.0 ms. A J0 redraft cuts resolve to 3.1 ms and the round to
+20.2 ms, for 3% fewer tokens per round. Moving the context projections to chip 0 did not help (verify grew by
+1 ms, foresight shrank by 0.5 ms). Without `--exact-tail` and the J0 redraft the two-chip engine reached
+217 / 1449 (B=8) and 120 / 1382 (B=16), below one chip. A larger target makes the draft side relatively
+cheaper, which is where a separate draft chip pays most.
 
-Equality: 22 to 26 of 32 two-chip outputs per point are identical to the one-chip run. We have not yet checked
+Equality: 21 to 26 of 32 two-chip outputs per point are identical to the one-chip run. We have not yet checked
 whether the divergent ones at B > 1 are near-ties of the target, as the bf16 divergences above are
 (`foresight_divcheck.py` does this check at B = 1).
 
