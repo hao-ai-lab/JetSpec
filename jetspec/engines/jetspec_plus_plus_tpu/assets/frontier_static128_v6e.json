@@ -1,0 +1,348 @@
+{
+ "setting": "Qwen3-8B, one TPU v6e chip, GSM8K (JetSpec prompt file), static batch of B prompts, max(2, 32 // B) batches per point, 128 new tokens, greedy, DFlash block 16. per_user = decode tok/s per request; total = tokens / (prefill + decode).",
+ "hsa_dflash_torch_tpu": {
+  "source": "github.com/haorany7/HSA_dflash branch tpu-pareto, dflash/batched_xla.py, run on torch_tpu 0.2 (torch 2.14) with both model forwards under torch.compile(backend=\"tpu\", dynamic=False); bf16",
+  "ar": [
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 1,
+    "waves": 32,
+    "max_new_tokens": 128,
+    "per_user": 65.95220913100863,
+    "total": 62.21691149859207,
+    "decode_only_total": 65.95220913100863,
+    "ms_per_step": 15.281884094981152,
+    "tau": 1.0,
+    "warmup_s": 15.446333912997943,
+    "prefill_ms": 116.51917109350052
+   },
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 2,
+    "waves": 16,
+    "max_new_tokens": 128,
+    "per_user": 64.19309738060122,
+    "total": 115.63275739593197,
+    "decode_only_total": 128.38619476120243,
+    "ms_per_step": 15.700660302654367,
+    "tau": 1.0,
+    "warmup_s": 35.08808238100028,
+    "prefill_ms": 219.9216624997007
+   },
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 4,
+    "waves": 8,
+    "max_new_tokens": 128,
+    "per_user": 58.93549480954781,
+    "total": 196.86003710541684,
+    "decode_only_total": 235.74197923819125,
+    "ms_per_step": 17.10130743798814,
+    "tau": 1.0,
+    "warmup_s": 37.26888874499855,
+    "prefill_ms": 428.9665444998718
+   },
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 8,
+    "waves": 4,
+    "max_new_tokens": 128,
+    "per_user": 48.68558008123936,
+    "total": 293.8061195762246,
+    "decode_only_total": 389.48464064991487,
+    "ms_per_step": 20.701694712607697,
+    "tau": 1.0,
+    "warmup_s": 41.076275344999885,
+    "prefill_ms": 856.1763694988258
+   },
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 16,
+    "waves": 2,
+    "max_new_tokens": 128,
+    "per_user": 32.53900492337752,
+    "total": 363.1578327782098,
+    "decode_only_total": 520.6240787740403,
+    "ms_per_step": 30.974334283465705,
+    "tau": 1.0,
+    "warmup_s": 41.5284980869983,
+    "prefill_ms": 1705.6807980006852
+   },
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 32,
+    "waves": 2,
+    "max_new_tokens": 128,
+    "per_user": 17.09490548461028,
+    "total": 360.5742520555685,
+    "decode_only_total": 547.036975507529,
+    "ms_per_step": 58.95756584646647,
+    "tau": 1.0,
+    "warmup_s": 62.70892855400234,
+    "prefill_ms": 3872.0466190006846
+   },
+   {
+    "system": "torchtpu_ar",
+    "block": 1,
+    "batch": 64,
+    "waves": 2,
+    "max_new_tokens": 128,
+    "per_user": 9.42872173398117,
+    "total": 383.01415673798004,
+    "decode_only_total": 603.4381909747949,
+    "ms_per_step": 106.89402489370828,
+    "tau": 1.0,
+    "warmup_s": 72.06673471899921,
+    "prefill_ms": 7812.702212500881
+   }
+  ],
+  "dflash": [
+   {
+    "system": "torchtpu_dflash",
+    "block": 16,
+    "batch": 1,
+    "waves": 32,
+    "max_new_tokens": 128,
+    "per_user": 189.46733290336698,
+    "total": 161.7189685161107,
+    "decode_only_total": 189.46733290336698,
+    "ms_per_step": 27.68054090526318,
+    "tau": 5.39820742637644,
+    "warmup_s": 16.548059299999295,
+    "prefill_ms": 115.91831359339722
+   },
+   {
+    "system": "torchtpu_dflash",
+    "block": 16,
+    "batch": 2,
+    "waves": 16,
+    "max_new_tokens": 128,
+    "per_user": 120.34321254768808,
+    "total": 199.45906595155103,
+    "decode_only_total": 240.68642509537617,
+    "ms_per_step": 39.85478554097823,
+    "tau": 5.621779859484778,
+    "warmup_s": 40.49521992299924,
+    "prefill_ms": 219.84677768773508
+   },
+   {
+    "system": "torchtpu_dflash",
+    "block": 16,
+    "batch": 4,
+    "waves": 8,
+    "max_new_tokens": 128,
+    "per_user": 70.72103816511684,
+    "total": 228.68236278117777,
+    "decode_only_total": 282.88415266046735,
+    "ms_per_step": 64.06825421239837,
+    "tau": 5.700221238938053,
+    "warmup_s": 44.46716897999795,
+    "prefill_ms": 428.98519062509877
+   },
+   {
+    "system": "torchtpu_dflash",
+    "block": 16,
+    "batch": 8,
+    "waves": 4,
+    "max_new_tokens": 128,
+    "per_user": 38.18414202572103,
+    "total": 243.31041093882112,
+    "decode_only_total": 305.47313620576824,
+    "ms_per_step": 116.59745844346774,
+    "tau": 5.619565217391305,
+    "warmup_s": 51.26205071499862,
+    "prefill_ms": 856.4387062488095
+   },
+   {
+    "system": "torchtpu_dflash",
+    "block": 16,
+    "batch": 16,
+    "waves": 2,
+    "max_new_tokens": 128,
+    "per_user": 19.300129009957455,
+    "total": 245.61646584406756,
+    "decode_only_total": 308.8020641593193,
+    "ms_per_step": 217.44524657375135,
+    "tau": 5.778688524590164,
+    "warmup_s": 58.294577664000826,
+    "prefill_ms": 1706.1231735006004
+   },
+   {
+    "system": "torchtpu_dflash",
+    "block": 16,
+    "batch": 32,
+    "waves": 2,
+    "max_new_tokens": 128,
+    "per_user": 8.567723145913492,
+    "total": 217.9301557946795,
+    "decode_only_total": 274.16714066923174,
+    "ms_per_step": 459.6859015385025,
+    "tau": 4.945192307692308,
+    "warmup_s": 96.27374770900133,
+    "prefill_ms": 3855.220689500129
+   }
+  ]
+ },
+ "ours": {
+  "note": "JAX, bf16 target, int8 draft weights",
+  "ar": [
+   {
+    "slots": 1,
+    "requests": 32,
+    "per_user": 76.90031889062648,
+    "total": 67.75890753802221,
+    "tau": 1.0
+   },
+   {
+    "slots": 2,
+    "requests": 32,
+    "per_user": 76.6960860920833,
+    "total": 133.86817259016283,
+    "tau": 1.0
+   },
+   {
+    "slots": 4,
+    "requests": 32,
+    "per_user": 76.12289455173848,
+    "total": 261.0965244744084,
+    "tau": 1.0
+   },
+   {
+    "slots": 8,
+    "requests": 32,
+    "per_user": 74.9089080257167,
+    "total": 497.59388730871694,
+    "tau": 1.0
+   },
+   {
+    "slots": 16,
+    "requests": 32,
+    "per_user": 72.46195387710048,
+    "total": 906.0654704952301,
+    "tau": 1.0
+   },
+   {
+    "slots": 32,
+    "requests": 64,
+    "per_user": 68.13472733240627,
+    "total": 1571.179603084573,
+    "tau": 1.0
+   },
+   {
+    "slots": 64,
+    "requests": 128,
+    "per_user": 60.08142165476321,
+    "total": 2456.9474594075105,
+    "tau": 1.0
+   }
+  ],
+  "dflash": [
+   {
+    "slots": 1,
+    "requests": 32,
+    "per_user": 368.47528660013177,
+    "total": 315.6519615279159,
+    "tau": 5.445019404915912
+   },
+   {
+    "slots": 2,
+    "requests": 32,
+    "per_user": 360.6024108727943,
+    "total": 538.0922749426572,
+    "tau": 5.402048655569782
+   },
+   {
+    "slots": 4,
+    "requests": 32,
+    "per_user": 353.881005148637,
+    "total": 916.3254082144917,
+    "tau": 5.41591784338896
+   },
+   {
+    "slots": 8,
+    "requests": 32,
+    "per_user": 344.08534510349034,
+    "total": 1482.939166485789,
+    "tau": 5.3951406649616365
+   },
+   {
+    "slots": 16,
+    "requests": 32,
+    "per_user": 292.0272855205725,
+    "total": 2158.399183912068,
+    "tau": 5.407455012853471
+   },
+   {
+    "slots": 32,
+    "requests": 64,
+    "per_user": 186.57068728265838,
+    "total": 2480.4191417369047,
+    "tau": 5.4073359073359075
+   },
+   {
+    "slots": 64,
+    "requests": 128,
+    "per_user": 96.36911570159647,
+    "total": 2540.2245905364007,
+    "tau": 5.464761286131861
+   }
+  ],
+  "jetspec": [
+   {
+    "slots": 1,
+    "requests": 32,
+    "per_user": 376.8705315461716,
+    "total": 309.0906103947985,
+    "tau": 7.213921901528013
+   },
+   {
+    "slots": 2,
+    "requests": 32,
+    "per_user": 368.5267576907943,
+    "total": 520.2361708979889,
+    "tau": 7.214650766609881
+   },
+   {
+    "slots": 4,
+    "requests": 32,
+    "per_user": 359.12284636449954,
+    "total": 886.6353141730522,
+    "tau": 7.212585034013605
+   },
+   {
+    "slots": 8,
+    "requests": 32,
+    "per_user": 348.77011517068087,
+    "total": 1408.7738556781949,
+    "tau": 7.189509306260575
+   },
+   {
+    "slots": 16,
+    "requests": 32,
+    "per_user": 276.6011300115792,
+    "total": 1868.0803318374767,
+    "tau": 7.206132879045996
+   },
+   {
+    "slots": 32,
+    "requests": 64,
+    "per_user": 161.70752983974052,
+    "total": 2059.527573323656,
+    "tau": 7.275387263339071
+   },
+   {
+    "slots": 64,
+    "requests": 128,
+    "per_user": 81.54349454642639,
+    "total": 2028.8061673663644,
+    "tau": 7.315925766076823
+   }
+  ]
+ }
+}
