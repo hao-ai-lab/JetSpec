@@ -147,8 +147,11 @@ class Server:
         b, dims = self.slots, self.dims
         one = new_cache(dims, self.capacity, adapter=self.method == 'jetspec', draft=self.method != 'ar')
         cache = jax.tree.map(lambda a: jnp.zeros((b,) + a.shape, a.dtype), one)
-        return dict(cache=cache, tokens=jnp.zeros((b, self.capacity), jnp.int32),
-                    block=jnp.zeros((b, dims.block), jnp.int32), length=jnp.zeros((b,), jnp.int32))
+        state = dict(cache=cache, tokens=jnp.zeros((b, self.capacity), jnp.int32),
+                     block=jnp.zeros((b, dims.block), jnp.int32), length=jnp.zeros((b,), jnp.int32))
+        # commit to the weights' chip so the first jitted call does not compile an uncommitted variant
+        device = next(iter(jax.tree.leaves(self.weights)[0].devices()))
+        return jax.device_put(state, device)
 
     @staticmethod
     def pad_len(p):

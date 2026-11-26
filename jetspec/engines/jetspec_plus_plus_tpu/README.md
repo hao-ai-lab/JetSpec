@@ -1,6 +1,7 @@
-# JetSpec++ on one TPU chip
+# JetSpec++ on TPU
 
-A JAX port of JetSpec++ for Qwen3-8B on a single TPU chip (developed on a v6e-1, 32 GB HBM).
+A JAX port of JetSpec++ for Qwen3-8B on a single TPU chip (developed on a v6e-1, 32 GB HBM), and a
+two-chip variant that drafts on one chip while the other verifies (v5e, below).
 The output is the target's greedy decode. The drafter, adapter and anchor decoder follow the torch
 reference in `jetspec/methods/jetspec_plus_plus/`.
 
@@ -104,6 +105,56 @@ linearly with B (AR 15 to 107 ms from B=1 to 64, DFlash 28 to 460 ms from B=1 to
 250 tok/s in total and runs out of HBM at B=64. Ours stays at 13 to 17 ms per AR step up to B=64.
 JetSpec++ leads DFlash per user by 1-2% up to B=8 and trails it by 13-20% from B=16, where the extra
 refinement passes become compute-bound.
+
+## Two chips: one verifies while the other drafts ahead (v5e)
+
+With a second chip the method gets back what the two-GPU engine has: drafting overlaps verification.
+`foresight.py` (B = 1) and `foresight_serve.py` (continuous batching, every program `vmap`-ed over the slots)
+split each round across two chips:
+
+```
+chip 0: verify block t (16 tokens per slot) -> acceptance, correction, taps
+chip 1: resolve   look up (acceptance, correction) among the rows drafted last round; on a miss, redraft
+                  from the exact context (missed slots only, `group` at a time)
+        foresight exact taps -> drafter / adapter caches; adapter predicts block t's states; anchor decoder
+                  scores the (accepted length k, next token a) outcomes; the top `rows` outcomes each draft
+                  block t+1 from exact[<L] + predicted[L..L+k], while chip 0 verifies
+```
+
+Verification is unchanged, so the output is still the target's greedy decode; only the time per round moves.
+`--exact-tail` runs the adapter once over the block from the exact prefix (16 positions) instead of once per
+row with the row's tail (32 positions), which matters at large B.
+
+```bash
+python -m jetspec.engines.jetspec_plus_plus_tpu.foresight_pareto --slots 1,4,8,16 --rows 1,2,4,8 --group 4 \
+    --exact-tail --int8-target --requests 32 --max-tokens 256 --output out/fsp_exact.json
+python -m jetspec.engines.jetspec_plus_plus_tpu.plot_two_chip out/fsp_exact.json \
+    --output out/frontier_two_chip_v5e.png
+```
+
+![Two-chip frontier](assets/frontier_two_chip_v5e.png)
+
+TPU v5e (16 GB HBM per chip, so the target's layers are weight-only int8 with `--int8-target`), J1-R0,
+32 GSM8K requests, at most 256 tokens, greedy, continuous batching. Two chips use chips 0 and 1; the one-chip
+baseline (`serve.py`) runs on a third chip of the same host. Data: `assets/frontier_two_chip_v5e.json`.
+
+| B | One chip, per-user / total | Two chips, per-user / total | Rows | Gain, per-user / total |
+|---:|---:|---:|---:|---:|
+| 1 | 375 / 362 | **467 / 452** | 8 | +25% / +25% |
+| 4 | 310 / 1124 | **348 / 1280** | 2 | +12% / +14% |
+| 8 | 239 / 1566 | **245 / 1638** | 1 | +3% / +5% |
+| 16 | 138 / 1526 | **147 / 1664** | 1 | +7% / +9% |
+
+The gain is largest at B=1, where the draft chip is idle during verify. As B grows, the best number of rows
+falls to 1, and the gain shrinks: for Qwen3-8B the drafter, adapter and decoder together cost about as much
+compute per round as the target's verify, so chip 1 becomes the bottleneck (at B=16, before `--exact-tail`,
+foresight took 40 ms per round against 27 ms for verify). Without `--exact-tail` the two-chip
+engine reached 217 / 1449 (B=8) and 120 / 1382 (B=16), below one chip. A larger target makes the draft side
+relatively cheaper, which is where a separate draft chip pays most.
+
+Equality: 22 to 26 of 32 two-chip outputs per point are identical to the one-chip run. We have not yet checked
+whether the divergent ones at B > 1 are near-ties of the target, as the bf16 divergences above are
+(`foresight_divcheck.py` does this check at B = 1).
 
 ## How one chip changes the method
 
