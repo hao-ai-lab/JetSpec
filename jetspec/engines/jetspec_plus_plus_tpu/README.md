@@ -129,7 +129,9 @@ row with the row's tail (32 positions), which matters at large B.
 ```bash
 python -m jetspec.engines.jetspec_plus_plus_tpu.foresight_pareto --slots 1,4,8,16 --rows 1,2,4,8 --group 4 \
     --exact-tail --int8-target --requests 32 --max-tokens 256 --output out/fsp_exact.json
-python -m jetspec.engines.jetspec_plus_plus_tpu.plot_two_chip out/fsp_exact.json \
+python -m jetspec.engines.jetspec_plus_plus_tpu.pareto --method dflash --slots 1,4,8,16 --int8-target \
+    --requests 32 --max-tokens 256 --output out/dflash_v5e.json
+python -m jetspec.engines.jetspec_plus_plus_tpu.plot_two_chip out/fsp_exact.json --baseline out/dflash_v5e.json \
     --output out/frontier_two_chip_v5e.png
 ```
 
@@ -137,14 +139,19 @@ python -m jetspec.engines.jetspec_plus_plus_tpu.plot_two_chip out/fsp_exact.json
 
 TPU v5e (16 GB HBM per chip, so the target's layers are weight-only int8 with `--int8-target`), J1-R0,
 32 GSM8K requests, at most 256 tokens, greedy, continuous batching. Two chips use chips 0 and 1; the one-chip
-baseline (`serve.py`) runs on a third chip of the same host. Data: `assets/frontier_two_chip_v5e.json`.
+baseline (`serve.py`) runs on a third chip of the same host. DFlash runs on one chip with the same requests
+and int8 target. Data: `assets/frontier_two_chip_v5e.json`. Cells are per-user / total tok/s.
 
-| B | One chip, per-user / total | Two chips, per-user / total | Rows | Gain, per-user / total |
-|---:|---:|---:|---:|---:|
-| 1 | 375 / 362 | **467 / 452** | 8 | +25% / +25% |
-| 4 | 310 / 1124 | **348 / 1280** | 2 | +12% / +14% |
-| 8 | 239 / 1566 | **245 / 1638** | 1 | +3% / +5% |
-| 16 | 138 / 1526 | **147 / 1664** | 1 | +7% / +9% |
+| B | DFlash, one chip (τ 6.0) | JetSpec++, one chip (τ 6.5) | JetSpec++, two chips (τ 6.3-6.5) | Rows | Two chips vs one-chip JetSpec++ | Two chips vs DFlash |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 404 / 393 | 375 / 362 | **467 / 452** | 8 | +25% / +25% | +15% / +15% |
+| 4 | 343 / 1233 | 310 / 1124 | **348 / 1280** | 2 | +12% / +14% | +2% / +4% |
+| 8 | **263 / 1724** | 239 / 1566 | 245 / 1638 | 1 | +3% / +5% | −7% / −5% |
+| 16 | 147 / 1579 | 138 / 1526 | **147 / 1664** | 1 | +7% / +9% | 0% / +5% |
+
+On one v5e chip, as on v6e, DFlash leads JetSpec++ at every B. The second chip moves JetSpec++ ahead of
+one-chip DFlash at B = 1 (+15% per user), roughly level at B = 4 and 16, and still behind at B = 8. These
+comparisons give JetSpec++ two chips against DFlash's one: per chip, DFlash serves about twice the total.
 
 The gain is largest at B=1, where the draft chip is idle during verify. As B grows, the best number of rows
 falls to 1, and the gain shrinks: for Qwen3-8B the drafter, adapter and decoder together cost about as much

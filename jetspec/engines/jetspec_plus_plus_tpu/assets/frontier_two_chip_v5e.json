@@ -622,5 +622,58 @@
     "31": 86
    }
   }
+ ],
+ "baselines": [
+  {
+   "method": "dflash",
+   "requests": 32,
+   "max_tokens": 256,
+   "points": [
+    {
+     "slots": 1,
+     "compile_seconds": 10.960242209985154,
+     "requests": 32,
+     "tokens": 7607,
+     "wall": 19.377607411006466,
+     "total_tok_s": 392.56652478567764,
+     "per_user_tok_s_mean": 404.4197907398244,
+     "per_user_tok_s_p50": 401.17100218370535,
+     "tau": 6.03770620581304
+    },
+    {
+     "slots": 4,
+     "compile_seconds": 11.232183945016004,
+     "requests": 32,
+     "tokens": 7628,
+     "wall": 6.187704728014069,
+     "total_tok_s": 1232.7672917980674,
+     "per_user_tok_s_mean": 342.7433180504916,
+     "per_user_tok_s_p50": 335.59543497745517,
+     "tau": 5.985225505443235
+    },
+    {
+     "slots": 8,
+     "compile_seconds": 11.88397688101395,
+     "requests": 32,
+     "tokens": 7628,
+     "wall": 4.424476059008157,
+     "total_tok_s": 1724.0459431280058,
+     "per_user_tok_s_mean": 262.8945880714411,
+     "per_user_tok_s_p50": 264.28979611619394,
+     "tau": 5.986780715396579
+    },
+    {
+     "slots": 16,
+     "compile_seconds": 12.64819568101666,
+     "requests": 32,
+     "tokens": 7568,
+     "wall": 4.79225547000533,
+     "total_tok_s": 1579.2146406567895,
+     "per_user_tok_s_mean": 146.7506095017994,
+     "per_user_tok_s_p50": 146.0996621186626,
+     "tau": 6.001569858712716
+    }
+   ]
+  }
  ]
 }
